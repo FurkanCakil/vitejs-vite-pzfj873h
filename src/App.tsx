@@ -1,9 +1,9 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye, Dice5 } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 // --- FIREBASE INITIALIZATION ---
 const firebaseConfig = {
@@ -36,17 +36,14 @@ const GAMES = [
 
 function createInitialBoard() {
   const board = Array(24).fill(null).map(() => ({ count: 0, color: null }));
-  // Beyaz pullar
-  board[0] = { count: 2, color: 'white' };   // Nokta 1
-  board[11] = { count: 5, color: 'white' };  // Nokta 12
-  board[16] = { count: 3, color: 'white' };  // Nokta 17
-  board[18] = { count: 5, color: 'white' };  // Nokta 19
-
-  // Siyah pullar
-  board[23] = { count: 2, color: 'black' };  // Nokta 24
-  board[12] = { count: 5, color: 'black' };  // Nokta 13
-  board[7] = { count: 3, color: 'black' };   // Nokta 8
-  board[5] = { count: 5, color: 'black' };   // Nokta 6
+  board[0] = { count: 2, color: 'white' };
+  board[11] = { count: 5, color: 'white' };
+  board[16] = { count: 3, color: 'white' };
+  board[18] = { count: 5, color: 'white' };
+  board[23] = { count: 2, color: 'black' };
+  board[12] = { count: 5, color: 'black' };
+  board[7] = { count: 3, color: 'black' };
+  board[5] = { count: 5, color: 'black' };
   return board;
 }
 
@@ -238,10 +235,17 @@ export default function App() {
     if (!user || !roomCode) return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    
+    // Oda dinleyicisi
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
+        // Host self-healing (Oda kurucu, odada 2 kişi varsa ve hala waiting ise force playing yap)
+        if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
+           updateDoc(roomRef, { status: 'playing' }).catch(console.error);
+        }
+
         if (data.status === 'closed') {
           if (currentView === 'room' && data.players.includes(user.uid)) {
             setLeftOverlayTimer(5);
@@ -262,9 +266,6 @@ export default function App() {
           }
         } 
         else {
-          if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
-            updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
-          }
           setRoomData(data);
           setDisconnectCountdown(null);
           setCurrentView('room');
@@ -352,7 +353,7 @@ export default function App() {
       winner: null,
       rematchRequestedBy: null,
       abandonedBy: null,
-      createdAt: new Date().toISOString()
+      createdAt: serverTimestamp()
     };
 
     if (gameId === 'tavla') {
@@ -409,7 +410,8 @@ export default function App() {
           scores: { ...data.scores, [user.uid]: 0 },
           status: 'playing', 
           turn: startingPlayer,
-          startingPlayer: startingPlayer
+          startingPlayer: startingPlayer,
+          updatedAt: serverTimestamp()
         };
 
         if (data.gameId === 'tavla') {
@@ -425,6 +427,7 @@ export default function App() {
           };
         }
 
+        // FORCE THE UPDATE AND AWAIT IT CAREFULLY
         await updateDoc(roomRef, updatePayload);
       }
       
@@ -433,6 +436,7 @@ export default function App() {
       setErrorMsg('');
       setDisconnectCountdown(null);
     } catch (err) {
+      console.error(err);
       setErrorMsg("Odaya katılırken bir hata oluştu.");
     }
   };
@@ -697,7 +701,7 @@ export default function App() {
 }
 
 // ==========================================
-// TAVLA OYUNU BİLEŞENİ (Tamamen Esnek/Responsive)
+// TAVLA OYUNU BİLEŞENİ
 // ==========================================
 function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const p1Uid = roomData.players[0];
@@ -747,31 +751,23 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     if (!isMyTurn || myPhase !== 'rolling' || rollingDice) return;
     setRollingDice(true);
 
-    let steps = 0;
-    const interval = setInterval(() => {
-      setDiceAnim([rollDie(), rollDie()]);
-      steps++;
-      if (steps >= 8) {
-        clearInterval(interval);
-        const d1 = rollDie(), d2 = rollDie();
-        const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
-        setDiceAnim([d1, d2]);
-        setTimeout(async () => {
-          const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-          const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
-          if (moves.length === 0) {
-            const oppUid = roomData.players.find(id => id !== user.uid);
-            await updateDoc(roomRef, {
-              dice: finalDice, usedDice: finalDice,
-              phase: 'rolling', turn: oppUid
-            });
-          } else {
-            await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' });
-          }
-          setRollingDice(false);
-        }, 300);
+    const d1 = rollDie(), d2 = rollDie();
+    const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+    
+    setTimeout(async () => {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+      const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
+      if (moves.length === 0) {
+        const oppUid = roomData.players.find(id => id !== user.uid);
+        await updateDoc(roomRef, {
+          dice: finalDice, usedDice: finalDice,
+          phase: 'rolling', turn: oppUid
+        });
+      } else {
+        await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' });
       }
-    }, 80);
+      setRollingDice(false);
+    }, 500); // Zar atışını hissettirmek için kısa bir gecikme
   };
 
   const handlePointClick = async (pointIdx) => {
@@ -916,7 +912,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       <div className={`absolute ${isTop ? 'top-1' : 'bottom-1'} flex flex-col ${isTop ? '' : 'flex-col-reverse'} items-center gap-[1px] w-full z-10 pointer-events-none`}>
         {Array.from({ length: showCount }).map((_, i) => (
           <div key={i} className={`
-            w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full flex items-center justify-center text-[8px] sm:text-[10px] md:text-xs font-bold shadow-md
+            w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full flex items-center justify-center text-[8px] sm:text-[10px] md:text-xs font-bold shadow-md
             ${color === 'white' ? 'bg-slate-100 border-2 border-slate-400 text-slate-800' : 'bg-slate-800 border-2 border-slate-600 text-slate-100'}
             ${isSelected ? 'ring-2 ring-yellow-400' : ''}
           `}>
@@ -965,6 +961,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     );
   };
 
+  // Zar renderını sabitledim ki mavi parlama veya kayma yapmasın
   const renderDie = (value, used = false) => {
     const dots = {
       1: [[50, 50]], 2: [[25, 25], [75, 75]], 3: [[25, 25], [50, 50], [75, 75]],
@@ -973,12 +970,16 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     };
     const positions = value ? (dots[value] || []) : [];
     return (
-      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg relative border-2 transition-all ${used ? 'border-slate-600 bg-slate-700 opacity-40' : 'border-slate-300 bg-slate-100 shadow-lg'}`}>
-        <svg viewBox="0 0 100 100" className="w-full h-full">
-          {positions.map(([cx, cy], i) => (
-            <circle key={i} cx={cx} cy={cy} r="10" fill={used ? '#64748b' : '#0f172a'} />
-          ))}
-        </svg>
+      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg relative border-2 transition-all flex items-center justify-center ${used ? 'border-slate-600 bg-slate-700 opacity-40' : 'border-slate-300 bg-slate-100 shadow-lg'}`}>
+         {value ? (
+            <svg viewBox="0 0 100 100" className="w-full h-full absolute inset-0">
+              {positions.map(([cx, cy], i) => (
+                <circle key={i} cx={cx} cy={cy} r="10" fill={used ? '#64748b' : '#0f172a'} />
+              ))}
+            </svg>
+         ) : (
+            <span className="text-slate-400 font-bold">?</span>
+         )}
       </div>
     );
   };
@@ -1037,7 +1038,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         )}
       </div>
 
-      {/* ANA TAHTA (Tamamen Responsive SVG Board) */}
+      {/* ANA TAHTA */}
       <div className="relative w-full aspect-[3/4] sm:aspect-square md:aspect-[4/3] max-w-3xl bg-amber-950/80 border-4 border-amber-900 rounded-xl overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.5)] flex flex-col p-1 sm:p-2">
         
         {/* Üst Sıra */}
@@ -1048,10 +1049,10 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           {/* BAR Üst (Siyah Pullar) */}
           <div 
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')}
-            className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'black' ? 'bg-yellow-500/20' : ''}`}
+            className={`w-6 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'black' ? 'bg-yellow-500/20' : ''}`}
           >
              {Array.from({ length: Math.min(bar.black, 4) }).map((_, i) => (
-                <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">
+                <div key={i} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">
                   {i === 3 && bar.black > 4 ? `+${bar.black - 3}` : ''}
                 </div>
              ))}
@@ -1074,10 +1075,10 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           {/* BAR Alt (Beyaz Pullar) */}
           <div 
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')}
-            className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'white' ? 'bg-yellow-500/20' : ''}`}
+            className={`w-6 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'white' ? 'bg-yellow-500/20' : ''}`}
           >
              {Array.from({ length: Math.min(bar.white, 4) }).map((_, i) => (
-                <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">
+                <div key={i} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">
                   {i === 3 && bar.white > 4 ? `+${bar.white - 3}` : ''}
                 </div>
              ))}
@@ -1318,8 +1319,8 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
+        {/* OYUN TAHTASI (ASPECT-RATIO ILE KARE VE SABIT TUTULUYOR) */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[300px] mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
             return (
@@ -1328,14 +1329,15 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null || roomData.status === 'abandoned'}
                 className={`
-                  w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] flex-shrink-0 flex items-center justify-center rounded-xl transition-all m-0 p-0 box-border
+                  aspect-square w-full flex items-center justify-center rounded-xl transition-all m-0 p-0 box-border
                   ${cell === null && isMyTurn && !isSpectator && !roomData.winner && roomData.status !== 'abandoned' ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
                   ${(cell !== null || !isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned') ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.6)]' : 'border border-slate-700 shadow-sm'}
                   ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]' : 'text-purple-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]'}
                 `}
               >
-                <span className="leading-none text-6xl sm:text-7xl font-black select-none pointer-events-none mt-2">{cell}</span>
+                {/* Metni kareye tam oturt, yüksekliği esnetmesin */}
+                <span className="leading-none flex items-center justify-center h-full text-5xl sm:text-6xl font-black select-none pointer-events-none">{cell}</span>
               </button>
             )
           })}
