@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
@@ -35,6 +35,10 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   
+  // Yeni eklenen stateler: İsim ve Kopyalama bildirimi
+  const [nickname, setNickname] = useState(localStorage.getItem('nickname') || '');
+  const [copySuccess, setCopySuccess] = useState(false);
+
   const [currentView, setCurrentView] = useState('lobby'); 
   const [roomCode, setRoomCode] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
@@ -153,11 +157,13 @@ export default function App() {
       gameId: gameId,
       host: user.uid,
       players: [user.uid],
+      playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, // İsim kaydı
+      scores: { [user.uid]: 0 }, // Skor kaydı
       status: 'waiting', 
       board: Array(9).fill(null),
       turn: user.uid,
       winner: null,
-      rematchRequestedBy: null, // Rövanş isteği için
+      rematchRequestedBy: null,
       createdAt: new Date().toISOString()
     };
 
@@ -199,6 +205,8 @@ export default function App() {
         const updatedPlayers = [...data.players, user.uid];
         await updateDoc(roomRef, {
           players: updatedPlayers,
+          playerNames: { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' },
+          scores: { ...data.scores, [user.uid]: 0 },
           status: updatedPlayers.length === 2 ? 'playing' : 'waiting'
         });
       }
@@ -234,7 +242,8 @@ export default function App() {
     textArea.select();
     try {
       document.execCommand('copy');
-      alert('Oda kodu kopyalandı! Arkadaşına gönderebilirsin.');
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000); // 2 saniye sonra yazıyı sil
     } catch (err) {
       console.error('Kopyalama başarısız', err);
     }
@@ -276,8 +285,8 @@ export default function App() {
             Masa Oyunları Portalı
           </h1>
         </div>
-        <div className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-full">
-          Oyuncu: {user?.uid.substring(0,6)}
+        <div className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-full truncate max-w-[120px]">
+          {nickname || `Oyuncu: ${user?.uid.substring(0,4)}`}
         </div>
       </header>
 
@@ -291,6 +300,26 @@ export default function App() {
 
       {currentView === 'lobby' ? (
         <main className="max-w-4xl mx-auto">
+          
+          {/* İsim Belirleme Alanı */}
+          <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold mb-1">Oyuncu İsmin</h2>
+              <p className="text-sm text-slate-400">Oyunlarda bu isimle görüneceksin.</p>
+            </div>
+            <input 
+              type="text" 
+              placeholder="İsmini yaz..." 
+              value={nickname}
+              onChange={(e) => {
+                setNickname(e.target.value);
+                localStorage.setItem('nickname', e.target.value);
+              }}
+              className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-center w-full md:w-64 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+              maxLength={15}
+            />
+          </div>
+
           <div className="bg-slate-800 p-6 rounded-xl mb-8 shadow-xl border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold mb-1">Davet Kodun Var Mı?</h2>
@@ -357,8 +386,9 @@ export default function App() {
             <div className="flex items-center gap-4 bg-slate-800 px-4 py-2 rounded-full border border-slate-700">
               <span className="text-sm text-slate-400">Oda Kodu:</span>
               <span className="font-mono font-bold tracking-wider text-indigo-300 text-lg">{roomCode}</span>
-              <button onClick={copyToClipboard} className="text-slate-400 hover:text-white" title="Kodu Kopyala">
-                <Copy className="w-5 h-5" />
+              <button onClick={copyToClipboard} className="text-slate-400 hover:text-white relative" title="Kodu Kopyala">
+                {copySuccess ? <Check className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
+                {copySuccess && <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-700 text-white text-xs px-2 py-1 rounded shadow-lg">Kopyalandı!</span>}
               </button>
             </div>
           </div>
@@ -400,6 +430,16 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   const mySymbol = isPlayer1 ? 'X' : 'O';
   const isMyTurn = roomData.turn === user.uid;
 
+  // İsim ve Skor Verileri
+  const p1Uid = roomData.players[0];
+  const p2Uid = roomData.players[1];
+  
+  const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
+  const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
+
+  const p1Score = roomData.scores?.[p1Uid] || 0;
+  const p2Score = roomData.scores?.[p2Uid] || 0;
+
   const handleMove = async (index) => {
     if (!isMyTurn || roomData.board[index] || roomData.winner) return;
 
@@ -409,24 +449,33 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
     const winnerInfo = calculateWinner(newBoard);
     const nextTurn = roomData.players.find(id => id !== user.uid) || user.uid;
 
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    await updateDoc(roomRef, {
+    let updatePayload = {
       board: newBoard,
       turn: winnerInfo ? null : nextTurn,
       winner: winnerInfo ? winnerInfo.winner : (newBoard.every(cell => cell) ? 'Draw' : null),
       winningLine: winnerInfo ? winnerInfo.line : null
-    });
+    };
+
+    // Eğer kazanan varsa, skoru artır
+    if (winnerInfo && winnerInfo.winner) {
+      const winnerUid = winnerInfo.winner === 'X' ? p1Uid : p2Uid;
+      updatePayload.scores = {
+        ...roomData.scores,
+        [winnerUid]: (roomData.scores?.[winnerUid] || 0) + 1
+      };
+    }
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, updatePayload);
   };
 
   // Rövanş İsteği Gönder
   const requestRematch = async () => {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    await updateDoc(roomRef, {
-      rematchRequestedBy: user.uid
-    });
+    await updateDoc(roomRef, { rematchRequestedBy: user.uid });
   };
 
-  // Rövanşı Kabul Et (Tahtayı Sıfırla)
+  // Rövanşı Kabul Et (Tahtayı Sıfırla ama SKORU KORU)
   const acceptRematch = async () => {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
     await updateDoc(roomRef, {
@@ -434,7 +483,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
       turn: roomData.players[0], 
       winner: null,
       winningLine: null,
-      rematchRequestedBy: null // İsteği sıfırla
+      rematchRequestedBy: null 
     });
   };
 
@@ -479,17 +528,29 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
 
   return (
     <div className="flex flex-col items-center w-full max-w-md">
+      
+      {/* İSİM, SKOR ve TAÇ TABLOSU */}
       <div className="flex justify-between w-full mb-6 bg-slate-900 p-4 rounded-xl border border-slate-700">
-        <div className={`text-center ${isPlayer1 ? 'text-indigo-400 font-bold' : 'text-slate-500'}`}>
-          <div className="text-2xl mb-1">X</div>
-          <div className="text-xs">Oyuncu 1 {isPlayer1 ? '(Sen)' : ''}</div>
+        <div className={`text-center flex flex-col items-center ${isPlayer1 ? 'text-indigo-400 font-bold' : 'text-slate-500'}`}>
+          <div className="flex items-center gap-1 mb-1">
+            {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
+            <span className="text-2xl">X</span>
+          </div>
+          <div className="text-xs max-w-[80px] truncate">{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
+          <div className="text-xl font-mono font-bold text-white mt-1">{p1Score}</div>
         </div>
-        <div className={`text-center font-bold text-xl flex items-center ${statusColor}`}>
+
+        <div className={`text-center font-bold text-xl flex items-center px-4 ${statusColor}`}>
           {statusMsg}
         </div>
-        <div className={`text-center ${!isPlayer1 ? 'text-purple-400 font-bold' : 'text-slate-500'}`}>
-          <div className="text-2xl mb-1">O</div>
-          <div className="text-xs">Oyuncu 2 {!isPlayer1 ? '(Sen)' : ''}</div>
+
+        <div className={`text-center flex flex-col items-center ${!isPlayer1 ? 'text-purple-400 font-bold' : 'text-slate-500'}`}>
+          <div className="flex items-center gap-1 mb-1">
+            {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
+            <span className="text-2xl">O</span>
+          </div>
+          <div className="text-xs max-w-[80px] truncate">{p2Name} {!isPlayer1 ? '(Sen)' : ''}</div>
+          <div className="text-xl font-mono font-bold text-white mt-1">{p2Score}</div>
         </div>
       </div>
 
@@ -497,12 +558,13 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
         {roomData.board.map((cell, index) => {
           const isWinningCell = roomData.winningLine?.includes(index);
           return (
-            <div key={index} className="w-full h-full">
+            <div key={index} className="w-full h-full aspect-square">
               <button
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || cell !== null || roomData.winner !== null}
+                // Kutunun büyüyüp küçülmemesi için "overflow-hidden" eklendi
                 className={`
-                  w-full h-full flex items-center justify-center text-5xl font-bold rounded-lg transition-all
+                  w-full h-full flex items-center justify-center text-6xl md:text-7xl font-bold rounded-lg transition-all overflow-hidden
                   ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-600 bg-slate-800 cursor-pointer' : 'bg-slate-800'}
                   ${cell === null && (!isMyTurn || roomData.winner) ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/30 border-2 border-indigo-400' : 'border border-slate-700'}
