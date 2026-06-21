@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
@@ -19,7 +19,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = firebaseConfig.projectId; // App ID'yi projeden otomatik alır
+const appId = firebaseConfig.projectId;
 
 // Games catalog
 const GAMES = [
@@ -35,11 +35,12 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   
-  const [currentView, setCurrentView] = useState('lobby'); // 'lobby', 'room'
+  const [currentView, setCurrentView] = useState('lobby'); 
   const [roomCode, setRoomCode] = useState('');
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [disconnectCountdown, setDisconnectCountdown] = useState(null);
 
   // 1. Initialize Auth
   useEffect(() => {
@@ -64,19 +65,44 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Room Listener
+  // 2. Sadece arayüzü lobiye döndüren fonksiyon
+  const leaveRoomLocal = () => {
+    setRoomCode('');
+    setRoomData(null);
+    setCurrentView('lobby');
+    setDisconnectCountdown(null);
+  };
+
+  // 3. Room Listener & Disconnect Logic
   useEffect(() => {
     if (!user || !roomCode) return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
-        setRoomData(docSnap.data());
-        setCurrentView('room');
+        const data = docSnap.data();
+        
+        // Bilerek çıkıldıysa
+        if (data.status === 'closed') {
+          setErrorMsg("Rakibiniz oyundan ayrıldı. Oda kapatıldı.");
+          leaveRoomLocal();
+        } 
+        // İnternet koptuysa veya sekme kapatıldıysa
+        else if (data.status === 'abandoned') {
+          setRoomData(data);
+          if (disconnectCountdown === null) {
+            setDisconnectCountdown(10); // 10 saniyelik sayacı başlat
+          }
+        } 
+        // Normal oyun durumu
+        else {
+          setRoomData(data);
+          setDisconnectCountdown(null);
+          setCurrentView('room');
+        }
       } else {
         setErrorMsg("Oda bulunamadı veya kapandı.");
-        setCurrentView('lobby');
-        setRoomCode('');
+        leaveRoomLocal();
       }
     }, (err) => {
       console.error("Listen Error:", err);
@@ -84,7 +110,38 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, roomCode]);
+  }, [user, roomCode, disconnectCountdown]);
+
+  // 4. 10 Saniyelik Geri Sayım Efekti
+  useEffect(() => {
+    if (disconnectCountdown === null) return;
+    
+    if (disconnectCountdown === 0) {
+      setErrorMsg("Rakip geri dönmedi. Lobiye aktarıldınız.");
+      leaveRoomLocal();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setDisconnectCountdown(prev => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [disconnectCountdown]);
+
+  // 5. Sekme Kapatma Yakalayıcı (Abandoned)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (roomCode && user) {
+        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+        // Sekme kapanırken status'ü abandoned yap ki karşı tarafta 10sn saysın
+        updateDoc(roomRef, { status: 'abandoned' }).catch(() => {});
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [roomCode, user]);
 
   // Create Room
   const createRoom = async (gameId) => {
@@ -92,21 +149,22 @@ export default function App() {
     const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
     
-    // Initial State for XOX
     const initialState = {
       gameId: gameId,
       host: user.uid,
       players: [user.uid],
-      status: 'waiting', // waiting, playing, finished
+      status: 'waiting', 
       board: Array(9).fill(null),
       turn: user.uid,
       winner: null,
+      rematchRequestedBy: null, // Rövanş isteği için
       createdAt: new Date().toISOString()
     };
 
     try {
       await setDoc(roomRef, initialState);
       setRoomCode(newCode);
+      setDisconnectCountdown(null);
     } catch (err) {
       setErrorMsg("Oda kurulamadı.");
     }
@@ -126,6 +184,12 @@ export default function App() {
       }
       
       const data = roomSnap.data();
+
+      if (data.status === 'closed' || data.status === 'abandoned') {
+        setErrorMsg("Bu oda kapalı veya terk edilmiş.");
+        return;
+      }
+
       if (data.players.length >= 2 && !data.players.includes(user.uid)) {
         setErrorMsg("Oda şu an dolu.");
         return;
@@ -141,16 +205,26 @@ export default function App() {
       setRoomCode(cleanCode);
       setJoinCodeInput('');
       setErrorMsg('');
+      setDisconnectCountdown(null);
     } catch (err) {
       setErrorMsg("Odaya katılırken bir hata oluştu.");
     }
   };
 
-  // Leave Room
-  const leaveRoom = () => {
-    setRoomCode('');
-    setRoomData(null);
-    setCurrentView('lobby');
+  // Leave Room (Bilerek çıkış)
+  const leaveRoom = async () => {
+    const currentCode = roomCode;
+    leaveRoomLocal(); // Önce hemen kendi ekranını lobiye at
+
+    // Arkada odayı "closed" yap ki karşı taraf anında atılsın
+    if (currentCode && user) {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentCode);
+      try {
+        await updateDoc(roomRef, { status: 'closed' });
+      } catch (err) {
+        console.error("Oda kapatılamadı:", err);
+      }
+    }
   };
 
   const copyToClipboard = () => {
@@ -172,7 +246,28 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
+      
+      {/* Bağlantı Kopma (Abandoned) Ekranı */}
+      {disconnectCountdown !== null && (
+        <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
+          <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
+          <h2 className="text-2xl font-bold text-center mb-2">Rakibin Bağlantısı Koptu!</h2>
+          <p className="text-slate-300 text-center mb-8 max-w-md">
+            Rakibinizin interneti kesilmiş veya tarayıcıyı kapatmış olabilir. Geri dönmesi için bekliyoruz...
+          </p>
+          <div className="text-5xl font-mono font-bold text-yellow-400 mb-8">
+            {disconnectCountdown}
+          </div>
+          <button 
+            onClick={leaveRoom}
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-6 py-3 rounded-lg font-medium transition-colors"
+          >
+            Hemen Lobiye Dön
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <header className="max-w-4xl mx-auto flex items-center justify-between mb-8 pb-4 border-b border-slate-700">
         <div className="flex items-center gap-3">
@@ -188,15 +283,14 @@ export default function App() {
 
       {errorMsg && (
         <div className="max-w-4xl mx-auto mb-4 bg-red-500/20 border border-red-500 text-red-200 p-3 rounded-lg flex items-center gap-2">
-          <AlertCircle className="w-5 h-5" />
-          {errorMsg}
-          <button onClick={() => setErrorMsg('')} className="ml-auto text-sm underline">Kapat</button>
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')} className="ml-auto text-sm underline shrink-0">Kapat</button>
         </div>
       )}
 
       {currentView === 'lobby' ? (
         <main className="max-w-4xl mx-auto">
-          {/* Join existing room */}
           <div className="bg-slate-800 p-6 rounded-xl mb-8 shadow-xl border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold mb-1">Davet Kodun Var Mı?</h2>
@@ -220,7 +314,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Game Selection */}
           <h2 className="text-2xl font-semibold mb-6 flex items-center gap-2">
             <Users className="w-6 h-6 text-slate-400" /> Oda Kur & Oyun Seç
           </h2>
@@ -256,7 +349,6 @@ export default function App() {
           </div>
         </main>
       ) : (
-        // Room / Game View
         <main className="max-w-4xl mx-auto flex flex-col items-center">
           <div className="w-full flex items-center justify-between mb-8">
             <button onClick={leaveRoom} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
@@ -289,7 +381,7 @@ export default function App() {
                    {GAMES.find(g => g.id === roomData.gameId)?.name}
                  </h2>
                  {roomData?.gameId === 'xox' && (
-                   <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} />
+                   <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} />
                  )}
               </div>
             )}
@@ -303,10 +395,9 @@ export default function App() {
 // ==========================================
 // XOX (Tic-Tac-Toe) Game Implementation
 // ==========================================
-function TicTacToeGame({ roomData, roomCode, user }) {
+function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   const isPlayer1 = roomData.players[0] === user.uid;
   const mySymbol = isPlayer1 ? 'X' : 'O';
-  const opponentSymbol = isPlayer1 ? 'O' : 'X';
   const isMyTurn = roomData.turn === user.uid;
 
   const handleMove = async (index) => {
@@ -327,21 +418,37 @@ function TicTacToeGame({ roomData, roomCode, user }) {
     });
   };
 
-  const resetGame = async () => {
+  // Rövanş İsteği Gönder
+  const requestRematch = async () => {
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, {
+      rematchRequestedBy: user.uid
+    });
+  };
+
+  // Rövanşı Kabul Et (Tahtayı Sıfırla)
+  const acceptRematch = async () => {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
     await updateDoc(roomRef, {
       board: Array(9).fill(null),
-      turn: roomData.players[0], // Player 1 starts
+      turn: roomData.players[0], 
       winner: null,
-      winningLine: null
+      winningLine: null,
+      rematchRequestedBy: null // İsteği sıfırla
     });
+  };
+
+  // Rövanşı Reddet (Odayı Kapat)
+  const rejectRematch = async () => {
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, { status: 'closed' });
   };
 
   const calculateWinner = (squares) => {
     const lines = [
-      [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
-      [0, 3, 6], [1, 4, 7], [2, 5, 8], // cols
-      [0, 4, 8], [2, 4, 6]             // diagonals
+      [0, 1, 2], [3, 4, 5], [6, 7, 8], 
+      [0, 3, 6], [1, 4, 7], [2, 5, 8], 
+      [0, 4, 8], [2, 4, 6]             
     ];
     for (let i = 0; i < lines.length; i++) {
       const [a, b, c] = lines[i];
@@ -352,7 +459,6 @@ function TicTacToeGame({ roomData, roomCode, user }) {
     return null;
   };
 
-  // Status message
   let statusMsg = "";
   let statusColor = "text-slate-300";
   if (roomData.winner) {
@@ -391,31 +497,60 @@ function TicTacToeGame({ roomData, roomCode, user }) {
         {roomData.board.map((cell, index) => {
           const isWinningCell = roomData.winningLine?.includes(index);
           return (
-            <button
-              key={index}
-              onClick={() => handleMove(index)}
-              disabled={!isMyTurn || cell !== null || roomData.winner !== null}
-              className={`
-                flex items-center justify-center text-5xl font-bold rounded-lg transition-all
-                ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-600 bg-slate-800 cursor-pointer' : 'bg-slate-800'}
-                ${cell === null && (!isMyTurn || roomData.winner) ? 'cursor-default' : ''}
-                ${isWinningCell ? 'bg-indigo-500/30 border-2 border-indigo-400' : 'border border-slate-700'}
-                ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}
-              `}
-            >
-              {cell}
-            </button>
+            <div key={index} className="w-full h-full">
+              <button
+                onClick={() => handleMove(index)}
+                disabled={!isMyTurn || cell !== null || roomData.winner !== null}
+                className={`
+                  w-full h-full flex items-center justify-center text-5xl font-bold rounded-lg transition-all
+                  ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-600 bg-slate-800 cursor-pointer' : 'bg-slate-800'}
+                  ${cell === null && (!isMyTurn || roomData.winner) ? 'cursor-default' : ''}
+                  ${isWinningCell ? 'bg-indigo-500/30 border-2 border-indigo-400' : 'border border-slate-700'}
+                  ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}
+                `}
+              >
+                {cell}
+              </button>
+            </div>
           )
         })}
       </div>
 
+      {/* RÖVANŞ SİSTEMİ EKRANI */}
       {roomData.winner && (
-        <button 
-          onClick={resetGame}
-          className="bg-indigo-500 hover:bg-indigo-600 px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-colors"
-        >
-          Yeniden Oyna
-        </button>
+        <div className="w-full flex flex-col items-center bg-slate-800 p-4 rounded-xl border border-slate-700">
+          {!roomData.rematchRequestedBy ? (
+            <button 
+              onClick={requestRematch}
+              className="bg-indigo-500 hover:bg-indigo-600 w-full py-3 rounded-xl font-bold text-lg shadow-lg transition-colors"
+            >
+              Yeniden Oyna
+            </button>
+          ) : roomData.rematchRequestedBy === user.uid ? (
+            <div className="flex items-center gap-3 text-slate-400 py-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Rakibin cevabı bekleniyor...</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center w-full">
+              <span className="text-slate-300 font-medium mb-3">Rakibiniz rövanş istiyor!</span>
+              <div className="flex gap-4 w-full">
+                <button 
+                  onClick={acceptRematch}
+                  className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 py-2 rounded-lg font-bold transition-colors"
+                >
+                  <Check className="w-5 h-5" /> Kabul Et
+                </button>
+                <button 
+                  onClick={rejectRematch}
+                  className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 py-2 rounded-lg font-bold transition-colors"
+                >
+                  <X className="w-5 h-5" /> Reddet
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
