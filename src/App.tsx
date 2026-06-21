@@ -5,7 +5,6 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
-// --- FIREBASE INITIALIZATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyC2jyw68o1Qd8bwPfPE1u8D3absXrw9rVQ",
   authDomain: "oyun-odasi-8ecee.firebaseapp.com",
@@ -29,10 +28,6 @@ const GAMES = [
   { id: 'blof', name: 'Blöf', desc: 'Yalan söyleyebilen kazanır.', available: false, icon: '🤫' },
   { id: 'dostkazigi', name: 'Dost Kazığı', desc: 'Arkadaşlıkları bitiren oyun.', available: false, icon: '🤝' },
 ];
-
-// ==========================================
-// TAVLA OYUN MANTIĞI
-// ==========================================
 
 function createInitialBoard() {
   const board = Array(24).fill(null).map(() => ({ count: 0, color: null }));
@@ -164,10 +159,6 @@ function applyMove(board, bar, borneOff, color, from, to, die) {
   return { board: newBoard, bar: newBar, borneOff: newBorneOff };
 }
 
-// ==========================================
-// ANA APP BİLEŞENİ
-// ==========================================
-
 export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -175,8 +166,10 @@ export default function App() {
   const [nickname, setNickname] = useState(localStorage.getItem('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
 
-  const [currentView, setCurrentView] = useState('lobby'); 
-  const [roomCode, setRoomCode] = useState('');
+  // F5 Sayfa Yenileme Desteği: Session Storage kontrolü
+  const savedRoomCode = sessionStorage.getItem('activeRoomCode') || '';
+  const [currentView, setCurrentView] = useState(savedRoomCode ? 'room' : 'lobby'); 
+  const [roomCode, setRoomCode] = useState(savedRoomCode);
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -219,6 +212,7 @@ export default function App() {
     setCurrentView('lobby');
     setDisconnectCountdown(null);
     setSpectatePrompt(null);
+    sessionStorage.removeItem('activeRoomCode');
   };
 
   useEffect(() => {
@@ -235,21 +229,15 @@ export default function App() {
     if (!user || !roomCode) return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    
-    // Oda dinleyicisi
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
-        // Host self-healing (Oda kurucu, odada 2 kişi varsa ve hala waiting ise force playing yap)
-        if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
-           updateDoc(roomRef, { status: 'playing' }).catch(console.error);
-        }
-
         if (data.status === 'closed') {
-          if (currentView === 'room' && data.players.includes(user.uid)) {
+          // Kapamayı BİZ yaptıysak (Reddet gibi), overlay gösterme.
+          if (currentView === 'room' && data.players.includes(user.uid) && data.closedBy !== user.uid) {
             setLeftOverlayTimer(5);
-          } else {
+          } else if (data.closedBy !== user.uid) {
              setErrorMsg("Oda kapatıldı.");
           }
           leaveRoomLocal();
@@ -266,9 +254,13 @@ export default function App() {
           }
         } 
         else {
+          if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
+             updateDoc(roomRef, { status: 'playing' }).catch(console.error);
+          }
           setRoomData(data);
           setDisconnectCountdown(null);
           setCurrentView('room');
+          sessionStorage.setItem('activeRoomCode', roomCode);
         }
       } else {
         setErrorMsg("Oda bulunamadı veya kapandı.");
@@ -286,7 +278,7 @@ export default function App() {
     if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
     if (disconnectCountdown === 0) {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-      updateDoc(roomRef, { status: 'closed' }).catch(()=>{});
+      updateDoc(roomRef, { status: 'closed', closedBy: user.uid }).catch(()=>{});
       setLeftOverlayTimer(5); 
       leaveRoomLocal();
       return;
@@ -365,6 +357,7 @@ export default function App() {
     try {
       await setDoc(roomRef, initialState);
       setRoomCode(newCode);
+      sessionStorage.setItem('activeRoomCode', newCode);
       setDisconnectCountdown(null);
     } catch (err) {
       setErrorMsg("Oda kurulamadı.");
@@ -393,6 +386,7 @@ export default function App() {
       if (data.players.length >= 2 && !data.players.includes(user.uid)) {
         if (data.spectators && data.spectators.includes(user.uid)) {
            setRoomCode(cleanCode);
+           sessionStorage.setItem('activeRoomCode', cleanCode);
            setJoinCodeInput('');
            return;
         }
@@ -427,11 +421,11 @@ export default function App() {
           };
         }
 
-        // FORCE THE UPDATE AND AWAIT IT CAREFULLY
         await updateDoc(roomRef, updatePayload);
       }
       
       setRoomCode(cleanCode);
+      sessionStorage.setItem('activeRoomCode', cleanCode);
       setJoinCodeInput('');
       setErrorMsg('');
       setDisconnectCountdown(null);
@@ -451,6 +445,7 @@ export default function App() {
         const updatedSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
         await updateDoc(roomRef, { spectators: updatedSpectators });
         setRoomCode(spectatePrompt);
+        sessionStorage.setItem('activeRoomCode', spectatePrompt);
         setSpectatePrompt(null);
         setJoinCodeInput('');
         setErrorMsg('');
@@ -468,7 +463,7 @@ export default function App() {
     if (currentCode && user && isPlayer) {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentCode);
       try {
-        await updateDoc(roomRef, { status: 'closed' });
+        await updateDoc(roomRef, { status: 'closed', closedBy: user.uid });
       } catch (err) {
         console.error("Oda kapatılamadı:", err);
       }
@@ -622,7 +617,6 @@ export default function App() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {GAMES.map(game => {
-              // XOX ve Tavla için aynı parlayan temayı uyguladık
               const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla');
               return (
                 <div 
@@ -753,7 +747,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
     const d1 = rollDie(), d2 = rollDie();
     const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+    setDiceAnim([d1, d2]);
     
+    // Güvenli Firebase güncellemesi, telefon çökmesini engeller
     setTimeout(async () => {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
@@ -767,7 +763,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' });
       }
       setRollingDice(false);
-    }, 500); // Zar atışını hissettirmek için kısa bir gecikme
+    }, 600); 
   };
 
   const handlePointClick = async (pointIdx) => {
@@ -881,7 +877,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const rejectRematch = async () => {
     if (isSpectator) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    await updateDoc(roomRef, { status: 'closed' });
+    await updateDoc(roomRef, { status: 'closed', closedBy: user.uid });
   };
 
   const isWhitePlayer = myColor === 'white' || isSpectator;
@@ -961,7 +957,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     );
   };
 
-  // Zar renderını sabitledim ki mavi parlama veya kayma yapmasın
   const renderDie = (value, used = false) => {
     const dots = {
       1: [[50, 50]], 2: [[25, 25], [75, 75]], 3: [[25, 25], [50, 50], [75, 75]],
@@ -1135,11 +1130,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
       {/* OYUN İÇİ BAĞLANTI KOPMA EKRANI */}
       {roomData.status === 'abandoned' && (
-        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4" />
+        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
+          <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
           <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
           <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
-          <button onClick={leaveRoom} className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium">Lobiye Dön</button>
+          <button onClick={leaveRoom} className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors">Lobiye Dön</button>
         </div>
       )}
     </div>
@@ -1218,7 +1213,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const rejectRematch = async () => {
     if (isSpectator) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    await updateDoc(roomRef, { status: 'closed' });
+    await updateDoc(roomRef, { status: 'closed', closedBy: user.uid });
   };
 
   const calculateWinner = (squares) => {
@@ -1319,7 +1314,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (ASPECT-RATIO ILE KARE VE SABIT TUTULUYOR) */}
+        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER - Responsive Çözüm) */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[300px] mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
@@ -1329,15 +1324,15 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null || roomData.status === 'abandoned'}
                 className={`
-                  aspect-square w-full flex items-center justify-center rounded-xl transition-all m-0 p-0 box-border
+                  relative aspect-square w-full rounded-xl transition-all m-0 p-0 box-border overflow-hidden
                   ${cell === null && isMyTurn && !isSpectator && !roomData.winner && roomData.status !== 'abandoned' ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
                   ${(cell !== null || !isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned') ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.6)]' : 'border border-slate-700 shadow-sm'}
                   ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]' : 'text-purple-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]'}
                 `}
               >
-                {/* Metni kareye tam oturt, yüksekliği esnetmesin */}
-                <span className="leading-none flex items-center justify-center h-full text-5xl sm:text-6xl font-black select-none pointer-events-none">{cell}</span>
+                {/* Harfin yüksekliğini kutudan tamamen koparan mutlak kapsayıcı (absolute inset-0) */}
+                <span className="absolute inset-0 flex items-center justify-center leading-none text-6xl sm:text-7xl font-black select-none pointer-events-none mt-2">{cell}</span>
               </button>
             )
           })}
