@@ -333,7 +333,7 @@ export default function App() {
       
       {/* 5 Saniyelik ZARİF Ayrılma Mesajı (Lobi üzerinde) */}
       {leftOverlayTimer !== null && currentView === 'lobby' && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
+        <div className="fixed inset-0 z-[9999] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
             <button 
               onClick={() => setLeftOverlayTimer(null)} 
@@ -353,7 +353,7 @@ export default function App() {
 
       {/* Bağlantı Kopma (10sn) Ekranı */}
       {disconnectCountdown !== null && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
+        <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
           <h2 className="text-2xl font-bold text-center mb-2">Rakibin Bağlantısı Koptu!</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
@@ -373,7 +373,7 @@ export default function App() {
 
       {/* Seyirci Modu Onay Ekranı */}
       {spectatePrompt && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
+        <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <Eye className="w-16 h-16 text-indigo-500 mb-4" />
           <h2 className="text-2xl font-bold text-center mb-2">Bu Oda Dolu</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
@@ -392,10 +392,10 @@ export default function App() {
 
       {/* EN ÜSTTE ÇIKAN SABİT HATA MESAJI (TOAST NOTIFICATION) */}
       {errorMsg && (
-        <div className="fixed top-4 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[100] bg-red-500/90 border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl animate-in slide-in-from-top-4">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-[99999] bg-red-500/95 backdrop-blur-sm border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl animate-in slide-in-from-top-4">
           <AlertCircle className="w-6 h-6 shrink-0" />
-          <span className="font-medium text-sm md:text-base">{errorMsg}</span>
-          <button onClick={() => setErrorMsg('')} className="ml-auto bg-black/20 hover:bg-black/40 p-1 rounded transition-colors shrink-0">
+          <span className="font-medium text-sm md:text-base flex-grow text-center">{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')} className="bg-black/20 hover:bg-black/40 p-1 rounded transition-colors shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -688,14 +688,15 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
                 className={`
-                  w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center text-5xl md:text-7xl font-black rounded-xl transition-all overflow-hidden leading-none m-0 p-0 box-border
+                  w-[85px] h-[85px] sm:w-[100px] sm:h-[100px] flex-shrink-0 flex items-center justify-center text-5xl md:text-7xl font-black rounded-xl transition-all m-0 p-0 box-border
                   ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
                   ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.6)]' : 'border border-slate-700 shadow-sm'}
                   ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]' : 'text-purple-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]'}
                 `}
               >
-                {cell}
+                {/* Harfin yüksekliğini tamamen yoksayan span */}
+                <span className="leading-none flex items-center justify-center select-none pointer-events-none mt-1">{cell}</span>
               </button>
             )
           })}
