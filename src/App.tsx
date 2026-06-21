@@ -45,9 +45,8 @@ export default function App() {
   
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const [spectatePrompt, setSpectatePrompt] = useState(null);
-  const [leftOverlayTimer, setLeftOverlayTimer] = useState(null); // 5s Ayrılma Mesajı
+  const [leftOverlayTimer, setLeftOverlayTimer] = useState(null); 
 
-  // Anlık verileri tutan referans (Olay dinleyicileri için)
   const roomStateRef = useRef({ roomCode, user, roomData });
 
   useEffect(() => {
@@ -103,7 +102,6 @@ export default function App() {
         const data = docSnap.data();
         
         if (data.status === 'closed') {
-          // Eğer odadaydık ve oda kapandıysa (Rakip çıktıysa) 5sn mesajı göster
           if (currentView === 'room' && data.players.includes(user.uid)) {
             setLeftOverlayTimer(5);
           } else {
@@ -114,20 +112,20 @@ export default function App() {
         else if (data.status === 'abandoned') {
           setRoomData(data);
           if (data.players.includes(user.uid)) {
-            // Alta alan/Kopan kişi biz değilsek sayacı başlat
             if (data.abandonedBy !== user.uid && disconnectCountdown === null) {
               setDisconnectCountdown(10); 
             }
           } else if (!data.players.includes(user.uid)) {
-            // Seyirci ise direkt lobiye at
             setErrorMsg("Oyuncular oyundan ayrıldı. Oda kapandı.");
             leaveRoomLocal();
           }
         } 
         else {
-          // Self-heal: İki oyuncu varsa ama statüs 'waiting' kaldıysa düzelt (Senkronizasyon hatası için)
-          if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
-            updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
+          // Self-heal: Eğer iki kişi var ama oyun 'waiting' kaldıysa zorla 'playing' yap
+          if (data.status === 'waiting' && data.players.length === 2) {
+             if (data.host === user.uid) {
+                 updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
+             }
           }
           setRoomData(data);
           setDisconnectCountdown(null);
@@ -148,10 +146,9 @@ export default function App() {
   useEffect(() => {
     if (disconnectCountdown === null) return;
     if (disconnectCountdown === 0) {
-      // 10 saniye doldu, odayı tamamen kapat
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       updateDoc(roomRef, { status: 'closed' }).catch(()=>{});
-      setLeftOverlayTimer(5); // Kapanınca diğer kişiye 5sn mesajı göster
+      setLeftOverlayTimer(5); 
       leaveRoomLocal();
       return;
     }
@@ -175,13 +172,11 @@ export default function App() {
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       
-      // Telefondan oyunu alta alırsa veya sekmeyi küçültürse
       if (document.visibilityState === 'hidden') {
         if (data.status === 'playing' && data.players.includes(u.uid)) {
           updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {});
         }
       } 
-      // Oyuna geri dönerse iptal et (Eli çarptıysa)
       else if (document.visibilityState === 'visible') {
         if (data.status === 'abandoned' && data.abandonedBy === u.uid) {
           updateDoc(roomRef, { status: 'playing', abandonedBy: null }).catch(() => {});
@@ -268,7 +263,7 @@ export default function App() {
           players: updatedPlayers,
           playerNames: { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' },
           scores: { ...data.scores, [user.uid]: 0 },
-          status: 'playing', // Kesin olarak playing yap!
+          status: 'playing', // Hemen playing yap!
           turn: startingPlayer,
           startingPlayer: startingPlayer
         });
@@ -339,7 +334,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
       
-      {/* 5 Saniyelik ZARİF Ayrılma Mesajı (Lobi üzerinde) */}
       {leftOverlayTimer !== null && currentView === 'lobby' && (
         <div className="absolute inset-0 z-50 bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4">
           <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
@@ -359,7 +353,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Bağlantı Kopma (10sn) Ekranı */}
       {disconnectCountdown !== null && (
         <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
@@ -379,7 +372,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Seyirci Modu Onay Ekranı */}
       {spectatePrompt && (
         <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
           <Eye className="w-16 h-16 text-indigo-500 mb-4" />
@@ -681,7 +673,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (Sabit Kareler) */}
+        {/* OYUN TAHTASI (SABİT KARELER) */}
         <div className="grid grid-cols-3 gap-2 md:gap-3 w-full max-w-[300px] mb-8 p-3 bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-inner border border-slate-700 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
@@ -691,7 +683,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
                 className={`
-                  aspect-square w-full flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
+                  aspect-square w-full h-full min-h-[80px] sm:min-h-[90px] m-0 p-0 flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
                   ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
                   ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-700 shadow-sm'}
