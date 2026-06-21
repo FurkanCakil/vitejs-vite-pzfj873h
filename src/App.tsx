@@ -682,25 +682,24 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
         </div>
 
         {/* OYUN TAHTASI (Sabit Kareler) */}
-        <div className="grid grid-cols-3 gap-2 md:gap-3 w-full max-w-[300px] aspect-square mb-8 p-3 bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-inner border border-slate-700">
+        <div className="grid grid-cols-3 gap-2 md:gap-3 w-full max-w-[300px] mb-8 p-3 bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-inner border border-slate-700 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
             return (
-              <div key={index} className="w-full h-full">
-                <button
-                  onClick={() => handleMove(index)}
-                  disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
-                  className={`
-                    w-full h-full flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
-                    ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
-                    ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
-                    ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-700 shadow-sm'}
-                    ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]' : 'text-purple-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]'}
-                  `}
-                >
-                  {cell}
-                </button>
-              </div>
+              <button
+                key={index}
+                onClick={() => handleMove(index)}
+                disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
+                className={`
+                  aspect-square w-full flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
+                  ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
+                  ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
+                  ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-700 shadow-sm'}
+                  ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]' : 'text-purple-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]'}
+                `}
+              >
+                {cell}
+              </button>
             )
           })}
         </div>
