@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
@@ -42,10 +42,17 @@ export default function App() {
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
-  const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   
-  // Seyirci Modu Sorusu İçin State
+  const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const [spectatePrompt, setSpectatePrompt] = useState(null);
+  const [leftOverlayTimer, setLeftOverlayTimer] = useState(null); // 5s Ayrılma Mesajı
+
+  // Anlık verileri tutan referans (Olay dinleyicileri için)
+  const roomStateRef = useRef({ roomCode, user, roomData });
+
+  useEffect(() => {
+    roomStateRef.current = { roomCode, user, roomData };
+  }, [roomCode, user, roomData]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -78,6 +85,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (leftOverlayTimer === null) return;
+    if (leftOverlayTimer <= 0) {
+      setLeftOverlayTimer(null);
+      return;
+    }
+    const timer = setTimeout(() => setLeftOverlayTimer(prev => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [leftOverlayTimer]);
+
+  useEffect(() => {
     if (!user || !roomCode) return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
@@ -86,14 +103,21 @@ export default function App() {
         const data = docSnap.data();
         
         if (data.status === 'closed') {
-          setErrorMsg("Oda kapatıldı.");
+          // Eğer odadaydık ve oda kapandıysa (Rakip çıktıysa) 5sn mesajı göster
+          if (currentView === 'room' && data.players.includes(user.uid)) {
+            setLeftOverlayTimer(5);
+          } else {
+             setErrorMsg("Oda kapatıldı.");
+          }
           leaveRoomLocal();
         } 
         else if (data.status === 'abandoned') {
           setRoomData(data);
-          // Eğer seyirci değilsek ve sayaç henüz başlamadıysa başlat
-          if (data.players.includes(user.uid) && disconnectCountdown === null) {
-            setDisconnectCountdown(10); 
+          if (data.players.includes(user.uid)) {
+            // Alta alan/Kopan kişi biz değilsek sayacı başlat
+            if (data.abandonedBy !== user.uid && disconnectCountdown === null) {
+              setDisconnectCountdown(10); 
+            }
           } else if (!data.players.includes(user.uid)) {
             // Seyirci ise direkt lobiye at
             setErrorMsg("Oyuncular oyundan ayrıldı. Oda kapandı.");
@@ -101,6 +125,10 @@ export default function App() {
           }
         } 
         else {
+          // Self-heal: İki oyuncu varsa ama statüs 'waiting' kaldıysa düzelt (Senkronizasyon hatası için)
+          if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
+            updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
+          }
           setRoomData(data);
           setDisconnectCountdown(null);
           setCurrentView('room');
@@ -115,12 +143,15 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [user, roomCode, disconnectCountdown]);
+  }, [user, roomCode, currentView]);
 
   useEffect(() => {
     if (disconnectCountdown === null) return;
     if (disconnectCountdown === 0) {
-      setErrorMsg("Rakip geri dönmedi. Lobiye aktarıldınız.");
+      // 10 saniye doldu, odayı tamamen kapat
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+      updateDoc(roomRef, { status: 'closed' }).catch(()=>{});
+      setLeftOverlayTimer(5); // Kapanınca diğer kişiye 5sn mesajı göster
       leaveRoomLocal();
       return;
     }
@@ -128,28 +159,46 @@ export default function App() {
       setDisconnectCountdown(prev => prev - 1);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [disconnectCountdown]);
+  }, [disconnectCountdown, roomCode]);
 
-  // Mobil cihazlar (pagehide) ve Masaüstü (beforeunload) kopma yakalayıcı
   useEffect(() => {
-    const handleUnload = () => {
-      if (roomCode && user && roomData && roomData.status === 'playing') {
-        // Seyirciler çıkınca odayı abandoned yapmamalıyız, sadece oyuncular yapabilir
-        if (roomData.players.includes(user.uid)) {
-          const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-          updateDoc(roomRef, { status: 'abandoned' }).catch(() => {});
+    const handleDisconnect = () => {
+      const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
+      if (code && u && data && data.status === 'playing' && data.players.includes(u.uid)) {
+        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+        updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {});
+      }
+    };
+
+    const handleVisibility = () => {
+      const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
+      if (!code || !u || !data) return;
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+      
+      // Telefondan oyunu alta alırsa veya sekmeyi küçültürse
+      if (document.visibilityState === 'hidden') {
+        if (data.status === 'playing' && data.players.includes(u.uid)) {
+          updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {});
+        }
+      } 
+      // Oyuna geri dönerse iptal et (Eli çarptıysa)
+      else if (document.visibilityState === 'visible') {
+        if (data.status === 'abandoned' && data.abandonedBy === u.uid) {
+          updateDoc(roomRef, { status: 'playing', abandonedBy: null }).catch(() => {});
         }
       }
     };
     
-    window.addEventListener('beforeunload', handleUnload);
-    window.addEventListener('pagehide', handleUnload); // Mobilde sekmeyi alta alınca/kapatınca daha iyi çalışır
+    window.addEventListener('beforeunload', handleDisconnect);
+    window.addEventListener('pagehide', handleDisconnect); 
+    window.addEventListener('visibilitychange', handleVisibility); 
     
     return () => {
-      window.removeEventListener('beforeunload', handleUnload);
-      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('beforeunload', handleDisconnect);
+      window.removeEventListener('pagehide', handleDisconnect);
+      window.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [roomCode, user, roomData]);
+  }, []);
 
   const createRoom = async (gameId) => {
     if (!user) return;
@@ -165,10 +214,11 @@ export default function App() {
       scores: { [user.uid]: 0 }, 
       status: 'waiting', 
       board: Array(9).fill(null),
-      turn: null, // İkinci oyuncu gelince rastgele seçilecek
+      turn: null, 
       startingPlayer: null,
       winner: null,
       rematchRequestedBy: null,
+      abandonedBy: null,
       createdAt: new Date().toISOString()
     };
 
@@ -195,35 +245,30 @@ export default function App() {
       
       const data = roomSnap.data();
 
-      if (data.status === 'closed' || data.status === 'abandoned') {
-        setErrorMsg("Bu oda kapalı veya terk edilmiş.");
+      if (data.status === 'closed') {
+        setErrorMsg("Bu oda kapalı.");
         return;
       }
 
-      // Eğer oda doluysa (2 kişi varsa) ve biz içerde değilsek
       if (data.players.length >= 2 && !data.players.includes(user.uid)) {
-        // Zaten seyirciysek odaya direkt gir
         if (data.spectators && data.spectators.includes(user.uid)) {
            setRoomCode(cleanCode);
            setJoinCodeInput('');
            return;
         }
-        // Değilsek seyirci olmak istiyor musun diye sor
         setSpectatePrompt(cleanCode);
         return;
       }
 
-      // İkinci oyuncu olarak katılıyorsak (veya ilk defa giriyoruz)
       if (!data.players.includes(user.uid)) {
         const updatedPlayers = [...data.players, user.uid];
-        // RASTGELE BAŞLANGIÇ SEÇİMİ
         const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
         
         await updateDoc(roomRef, {
           players: updatedPlayers,
           playerNames: { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' },
           scores: { ...data.scores, [user.uid]: 0 },
-          status: updatedPlayers.length === 2 ? 'playing' : 'waiting',
+          status: 'playing', // Kesin olarak playing yap!
           turn: startingPlayer,
           startingPlayer: startingPlayer
         });
@@ -238,7 +283,6 @@ export default function App() {
     }
   };
 
-  // Seyirci olarak katılmayı onaylama
   const acceptSpectate = async () => {
     if (!spectatePrompt || !user) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', spectatePrompt);
@@ -263,7 +307,6 @@ export default function App() {
     const isPlayer = roomData?.players?.includes(user?.uid);
     leaveRoomLocal();
 
-    // Sadece asıl oyunculardan biri çıkarsa odayı kapat (Seyirci çıkarsa oda kapanmasın)
     if (currentCode && user && isPlayer) {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentCode);
       try {
@@ -296,13 +339,33 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
       
-      {/* Bağlantı Kopma Ekranı */}
+      {/* 5 Saniyelik ZARİF Ayrılma Mesajı (Lobi üzerinde) */}
+      {leftOverlayTimer !== null && currentView === 'lobby' && (
+        <div className="absolute inset-0 z-50 bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4">
+          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
+            <button 
+              onClick={() => setLeftOverlayTimer(null)} 
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <Users className="w-16 h-16 text-red-400 mb-4 opacity-80" />
+            <h2 className="text-xl font-bold text-center mb-2">Rakibiniz Ayrıldı</h2>
+            <p className="text-slate-400 text-center mb-6 text-sm">Oyun sonlandırıldı ve lobiye döndünüz.</p>
+            <div className="w-12 h-12 rounded-full border-4 border-slate-700 flex items-center justify-center font-mono font-bold text-lg text-slate-300">
+              {leftOverlayTimer}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bağlantı Kopma (10sn) Ekranı */}
       {disconnectCountdown !== null && (
         <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
           <h2 className="text-2xl font-bold text-center mb-2">Rakibin Bağlantısı Koptu!</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
-            Rakibinizin interneti kesilmiş veya sekmeyi kapatmış olabilir. Geri dönmesi için bekliyoruz...
+            Rakibiniz oyunu alta almış veya interneti kopmuş olabilir. Geri dönmesi için bekliyoruz...
           </p>
           <div className="text-5xl font-mono font-bold text-yellow-400 mb-8">
             {disconnectCountdown}
@@ -322,26 +385,19 @@ export default function App() {
           <Eye className="w-16 h-16 text-indigo-500 mb-4" />
           <h2 className="text-2xl font-bold text-center mb-2">Bu Oda Dolu</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
-            Odaya zaten iki oyuncu bağlanmış durumda. Devam eden maçı seyirci olarak izlemek ister misiniz?
+            Odaya zaten iki oyuncu bağlanmış durumda. Maçı seyirci olarak izlemek ister misiniz?
           </p>
           <div className="flex gap-4">
-            <button 
-              onClick={acceptSpectate}
-              className="bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-lg font-bold transition-colors shadow-lg shadow-indigo-500/20"
-            >
-              Seyirci Olarak İzle
+            <button onClick={acceptSpectate} className="bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-lg font-bold transition-colors">
+              İzle
             </button>
-            <button 
-              onClick={() => setSpectatePrompt(null)}
-              className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-6 py-3 rounded-lg font-medium transition-colors"
-            >
+            <button onClick={() => setSpectatePrompt(null)} className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-6 py-3 rounded-lg font-medium transition-colors">
               Vazgeç
             </button>
           </div>
         </div>
       )}
 
-      {/* Header */}
       <header className="max-w-4xl mx-auto flex items-center justify-between mb-8 pb-4 border-b border-slate-700">
         <div className="flex items-center gap-3">
           <Gamepad2 className="w-8 h-8 text-indigo-400" />
@@ -364,44 +420,28 @@ export default function App() {
 
       {currentView === 'lobby' ? (
         <main className="max-w-4xl mx-auto">
-          
-          {/* İsim Belirleme */}
           <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold mb-1">Oyuncu İsmin</h2>
               <p className="text-sm text-slate-400">Oyunlarda bu isimle görüneceksin.</p>
             </div>
             <input 
-              type="text" 
-              placeholder="İsmini yaz..." 
-              value={nickname}
-              onChange={(e) => {
-                setNickname(e.target.value);
-                localStorage.setItem('nickname', e.target.value);
-              }}
-              className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-center w-full md:w-64 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-              maxLength={15}
+              type="text" placeholder="İsmini yaz..." value={nickname}
+              onChange={(e) => { setNickname(e.target.value); localStorage.setItem('nickname', e.target.value); }}
+              className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-center w-full md:w-64 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" maxLength={15}
             />
           </div>
 
           <div className="bg-slate-800 p-6 rounded-xl mb-8 shadow-xl border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold mb-1">Davet Kodun Var Mı?</h2>
-              <p className="text-sm text-slate-400">Arkadaşının sana gönderdiği 6 haneli kodu gir ve masaya otur.</p>
+              <p className="text-sm text-slate-400">Arkadaşının gönderdiği 6 haneli kodu gir ve masaya otur.</p>
             </div>
             <div className="flex w-full md:w-auto gap-2">
-              <input 
-                type="text" 
-                placeholder="Örn: AB12CD" 
-                value={joinCodeInput}
-                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 uppercase tracking-widest text-center w-full md:w-40 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono"
-                maxLength={6}
+              <input type="text" placeholder="Örn: AB12CD" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 uppercase tracking-widest text-center w-full md:w-40 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono" maxLength={6}
               />
-              <button 
-                onClick={() => joinRoom(joinCodeInput)}
-                className="bg-indigo-500 hover:bg-indigo-600 px-6 py-2 rounded-lg font-medium transition-colors"
-              >
+              <button onClick={() => joinRoom(joinCodeInput)} className="bg-indigo-500 hover:bg-indigo-600 px-6 py-2 rounded-lg font-medium transition-colors">
                 Katıl
               </button>
             </div>
@@ -413,29 +453,16 @@ export default function App() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {GAMES.map(game => (
-              <div 
-                key={game.id} 
-                className={`p-6 rounded-xl border flex flex-col transition-all duration-300 ${
-                  game.available 
-                    ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer' 
-                    : 'bg-slate-800/50 border-slate-700 opacity-70 grayscale'
-                }`}
-              >
+              <div key={game.id} className={`p-6 rounded-xl border flex flex-col transition-all duration-300 ${game.available ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer' : 'bg-slate-800/50 border-slate-700 opacity-70 grayscale'}`}>
                 <div className="text-4xl mb-4">{game.icon}</div>
                 <h3 className="text-xl font-bold mb-2">{game.name}</h3>
                 <p className="text-sm text-slate-400 flex-grow mb-6">{game.desc}</p>
-                
                 {game.available ? (
-                  <button 
-                    onClick={() => createRoom(game.id)}
-                    className="w-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500 hover:text-white py-2 rounded-lg font-medium transition-colors"
-                  >
+                  <button onClick={() => createRoom(game.id)} className="w-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500 hover:text-white py-2 rounded-lg font-medium transition-colors">
                     Oda Kur
                   </button>
                 ) : (
-                  <button disabled className="w-full bg-slate-700 text-slate-400 py-2 rounded-lg font-medium cursor-not-allowed">
-                    Çok Yakında
-                  </button>
+                  <button disabled className="w-full bg-slate-700 text-slate-400 py-2 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button>
                 )}
               </div>
             ))}
@@ -463,7 +490,7 @@ export default function App() {
                 <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mx-auto mb-4" />
                 <h2 className="text-2xl font-bold mb-2">Rakip Bekleniyor...</h2>
                 <p className="text-slate-400 max-w-sm mx-auto mb-6">
-                  Arkadaşına oda kodunu gönder. O da "Davet Kodun Var Mı?" bölümüne bu kodu yazarak masaya katılabilir.
+                  Arkadaşına oda kodunu gönder. O da bu kodu yazarak masaya katılabilir.
                 </p>
                 <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">
                   {roomCode}
@@ -471,7 +498,7 @@ export default function App() {
               </div>
             ) : (
               <div className="w-full flex flex-col items-center">
-                 <h2 className="text-2xl font-bold mb-6 text-slate-200">
+                 <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10">
                    {GAMES.find(g => g.id === roomData.gameId)?.name}
                  </h2>
                  {roomData?.gameId === 'xox' && (
@@ -492,7 +519,7 @@ export default function App() {
 function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   const isPlayer1 = roomData.players[0] === user.uid;
   const isPlayer2 = roomData.players[1] === user.uid;
-  const isSpectator = !isPlayer1 && !isPlayer2; // Üçüncü kişiler seyirci
+  const isSpectator = !isPlayer1 && !isPlayer2; 
   
   const mySymbol = isPlayer1 ? 'X' : (isPlayer2 ? 'O' : null);
   const isMyTurn = roomData.turn === user.uid;
@@ -543,7 +570,6 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   const acceptRematch = async () => {
     if (isSpectator) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    // Sırayı diğer oyuncuya geçir (Dönüşümlü Sıra Sistemi)
     const nextStarter = roomData.players.find(id => id !== roomData.startingPlayer) || roomData.players[0];
     
     await updateDoc(roomRef, {
@@ -607,112 +633,113 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   }
 
   return (
-    <div className="flex flex-col items-center w-full max-w-md">
+    <div className="relative flex flex-col items-center w-full max-w-md bg-slate-900/60 p-4 md:p-6 rounded-3xl border border-indigo-500/20 shadow-[0_0_50px_rgba(99,102,241,0.15)] overflow-hidden">
       
-      {/* İSİM ve SKOR TABLOSU (Mobil Uyumlu Yukarıdan Aşağı Düzen) */}
-      <div className="flex flex-col w-full mb-6 bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-md">
-        
-        {isSpectator && (
-          <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1">
-            <Eye className="w-4 h-4" /> SEYİRCİ MODU
-          </div>
-        )}
-
-        {/* Oyun Durumu (Kazanma, Kaybetme, Sıra Kimde) */}
-        <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor}`}>
-          {statusMsg}
-        </div>
-        
-        <div className="flex justify-between items-center w-full px-2">
-          {/* Oyuncu 1 Kısım */}
-          <div className="text-center flex flex-col items-center text-indigo-400 w-1/3">
-            <div className="flex items-center gap-1 mb-1">
-              {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
-              <span className="text-2xl font-bold">X</span>
-            </div>
-            <div className="text-xs truncate w-full" title={p1Name}>{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
-            <div className="text-xl font-mono font-bold text-white mt-1">{p1Score}</div>
-          </div>
-
-          <div className="text-slate-600 font-bold text-xl md:text-2xl w-1/3 text-center">
-            VS
-          </div>
-
-          {/* Oyuncu 2 Kısım */}
-          <div className="text-center flex flex-col items-center text-purple-400 w-1/3">
-            <div className="flex items-center gap-1 mb-1">
-              {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
-              <span className="text-2xl font-bold">O</span>
-            </div>
-            <div className="text-xs truncate w-full" title={p2Name}>{p2Name} {isPlayer2 ? '(Sen)' : ''}</div>
-            <div className="text-xl font-mono font-bold text-white mt-1">{p2Score}</div>
-          </div>
-        </div>
+      {/* Estetik Arka Plan Işıkları (Tema) */}
+      <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden z-0">
+        <div className="absolute -top-24 -left-24 w-48 h-48 bg-indigo-500/20 blur-[80px] rounded-full"></div>
+        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 blur-[80px] rounded-full"></div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 md:gap-3 w-full aspect-square mb-8 p-3 bg-slate-700 rounded-xl shadow-inner">
-        {roomData.board.map((cell, index) => {
-          const isWinningCell = roomData.winningLine?.includes(index);
-          return (
-            <div key={index} className="w-full h-full aspect-square">
-              <button
-                onClick={() => handleMove(index)}
-                disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
-                className={`
-                  w-full h-full flex items-center justify-center text-5xl md:text-7xl font-bold rounded-lg transition-all overflow-hidden
-                  ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-600 bg-slate-800 cursor-pointer' : 'bg-slate-800'}
-                  ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
-                  ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-600 shadow-sm'}
-                  ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]' : 'text-purple-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]'}
-                `}
-              >
-                {cell}
-              </button>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* RÖVANŞ SİSTEMİ EKRANI */}
-      {roomData.winner && (
-        <div className="w-full flex flex-col items-center bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-md">
-          {isSpectator ? (
-            <div className="text-slate-400 text-sm py-2 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Oyuncuların rövanş kararı bekleniyor...
-            </div>
-          ) : !roomData.rematchRequestedBy ? (
-            <button 
-              onClick={requestRematch}
-              className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20 transition-all hover:scale-[1.02]"
-            >
-              Yeniden Oyna
-            </button>
-          ) : roomData.rematchRequestedBy === user.uid ? (
-            <div className="flex items-center gap-3 text-slate-400 py-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>Rakibin cevabı bekleniyor...</span>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center w-full">
-              <span className="text-slate-300 font-medium mb-3 text-center">Rakibiniz rövanş istiyor!</span>
-              <div className="flex gap-4 w-full">
-                <button 
-                  onClick={acceptRematch}
-                  className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 py-3 rounded-lg font-bold transition-colors"
-                >
-                  <Check className="w-5 h-5" /> Kabul Et
-                </button>
-                <button 
-                  onClick={rejectRematch}
-                  className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 py-3 rounded-lg font-bold transition-colors"
-                >
-                  <X className="w-5 h-5" /> Reddet
-                </button>
-              </div>
+      {/* İçerik */}
+      <div className="relative z-10 w-full flex flex-col items-center">
+        {/* İSİM ve SKOR TABLOSU */}
+        <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-sm p-4 rounded-xl border border-slate-700 shadow-md">
+          
+          {isSpectator && (
+            <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1">
+              <Eye className="w-4 h-4" /> SEYİRCİ MODU
             </div>
           )}
+
+          <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor}`}>
+            {statusMsg}
+          </div>
+          
+          <div className="flex justify-between items-center w-full px-2">
+            <div className="text-center flex flex-col items-center text-indigo-400 w-1/3">
+              <div className="flex items-center gap-1 mb-1">
+                {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
+                <span className="text-2xl font-bold">X</span>
+              </div>
+              <div className="text-xs truncate w-full px-1" title={p1Name}>{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
+              <div className="text-xl font-mono font-bold text-white mt-1">{p1Score}</div>
+            </div>
+
+            <div className="text-slate-600 font-bold text-xl md:text-2xl w-1/3 text-center">
+              VS
+            </div>
+
+            <div className="text-center flex flex-col items-center text-purple-400 w-1/3">
+              <div className="flex items-center gap-1 mb-1">
+                {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
+                <span className="text-2xl font-bold">O</span>
+              </div>
+              <div className="text-xs truncate w-full px-1" title={p2Name}>{p2Name} {isPlayer2 ? '(Sen)' : ''}</div>
+              <div className="text-xl font-mono font-bold text-white mt-1">{p2Score}</div>
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* OYUN TAHTASI (Sabit Kareler) */}
+        <div className="grid grid-cols-3 gap-2 md:gap-3 w-full max-w-[300px] aspect-square mb-8 p-3 bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-inner border border-slate-700">
+          {roomData.board.map((cell, index) => {
+            const isWinningCell = roomData.winningLine?.includes(index);
+            return (
+              <div key={index} className="w-full h-full">
+                <button
+                  onClick={() => handleMove(index)}
+                  disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
+                  className={`
+                    w-full h-full flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
+                    ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
+                    ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
+                    ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-700 shadow-sm'}
+                    ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]' : 'text-purple-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]'}
+                  `}
+                >
+                  {cell}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* RÖVANŞ EKRANI */}
+        {roomData.winner && (
+          <div className="w-full flex flex-col items-center bg-slate-900/80 backdrop-blur-sm p-4 rounded-xl border border-slate-700 shadow-md">
+            {isSpectator ? (
+              <div className="text-slate-400 text-sm py-2 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Oyuncuların kararı bekleniyor...
+              </div>
+            ) : !roomData.rematchRequestedBy ? (
+              <button 
+                onClick={requestRematch}
+                className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20 transition-all hover:scale-[1.02]"
+              >
+                Yeniden Oyna
+              </button>
+            ) : roomData.rematchRequestedBy === user.uid ? (
+              <div className="flex items-center gap-3 text-slate-400 py-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Rakibin cevabı bekleniyor...</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center w-full">
+                <span className="text-slate-300 font-medium mb-3 text-center">Rakibiniz rövanş istiyor!</span>
+                <div className="flex gap-4 w-full">
+                  <button onClick={acceptRematch} className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 py-3 rounded-lg font-bold transition-colors">
+                    <Check className="w-5 h-5" /> Kabul Et
+                  </button>
+                  <button onClick={rejectRematch} className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 py-3 rounded-lg font-bold transition-colors">
+                    <X className="w-5 h-5" /> Reddet
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
