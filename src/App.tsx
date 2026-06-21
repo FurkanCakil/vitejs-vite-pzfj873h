@@ -121,11 +121,8 @@ export default function App() {
           }
         } 
         else {
-          // Self-heal: Eğer iki kişi var ama oyun 'waiting' kaldıysa zorla 'playing' yap
-          if (data.status === 'waiting' && data.players.length === 2) {
-             if (data.host === user.uid) {
-                 updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
-             }
+          if (data.status === 'waiting' && data.players.length === 2 && data.host === user.uid) {
+            updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
           }
           setRoomData(data);
           setDisconnectCountdown(null);
@@ -263,7 +260,7 @@ export default function App() {
           players: updatedPlayers,
           playerNames: { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' },
           scores: { ...data.scores, [user.uid]: 0 },
-          status: 'playing', // Hemen playing yap!
+          status: 'playing', 
           turn: startingPlayer,
           startingPlayer: startingPlayer
         });
@@ -334,8 +331,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
       
+      {/* 5 Saniyelik ZARİF Ayrılma Mesajı (Lobi üzerinde) */}
       {leftOverlayTimer !== null && currentView === 'lobby' && (
-        <div className="absolute inset-0 z-50 bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[100] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
             <button 
               onClick={() => setLeftOverlayTimer(null)} 
@@ -353,8 +351,9 @@ export default function App() {
         </div>
       )}
 
+      {/* Bağlantı Kopma (10sn) Ekranı */}
       {disconnectCountdown !== null && (
-        <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
           <h2 className="text-2xl font-bold text-center mb-2">Rakibin Bağlantısı Koptu!</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
@@ -372,8 +371,9 @@ export default function App() {
         </div>
       )}
 
+      {/* Seyirci Modu Onay Ekranı */}
       {spectatePrompt && (
-        <div className="absolute inset-0 z-50 bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[100] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <Eye className="w-16 h-16 text-indigo-500 mb-4" />
           <h2 className="text-2xl font-bold text-center mb-2">Bu Oda Dolu</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
@@ -390,7 +390,18 @@ export default function App() {
         </div>
       )}
 
-      <header className="max-w-4xl mx-auto flex items-center justify-between mb-8 pb-4 border-b border-slate-700">
+      {/* EN ÜSTTE ÇIKAN SABİT HATA MESAJI (TOAST NOTIFICATION) */}
+      {errorMsg && (
+        <div className="fixed top-4 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[100] bg-red-500/90 border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl animate-in slide-in-from-top-4">
+          <AlertCircle className="w-6 h-6 shrink-0" />
+          <span className="font-medium text-sm md:text-base">{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')} className="ml-auto bg-black/20 hover:bg-black/40 p-1 rounded transition-colors shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      <header className="max-w-4xl mx-auto flex items-center justify-between mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
         <div className="flex items-center gap-3">
           <Gamepad2 className="w-8 h-8 text-indigo-400" />
           <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
@@ -401,14 +412,6 @@ export default function App() {
           {nickname || `Oyuncu: ${user?.uid.substring(0,4)}`}
         </div>
       </header>
-
-      {errorMsg && (
-        <div className="max-w-4xl mx-auto mb-4 bg-red-500/20 border border-red-500 text-red-200 p-3 rounded-lg flex items-center gap-2 shadow-lg">
-          <AlertCircle className="w-5 h-5 shrink-0" />
-          <span>{errorMsg}</span>
-          <button onClick={() => setErrorMsg('')} className="ml-auto text-sm underline shrink-0">Kapat</button>
-        </div>
-      )}
 
       {currentView === 'lobby' ? (
         <main className="max-w-4xl mx-auto">
@@ -490,9 +493,6 @@ export default function App() {
               </div>
             ) : (
               <div className="w-full flex flex-col items-center">
-                 <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10">
-                   {GAMES.find(g => g.id === roomData.gameId)?.name}
-                 </h2>
                  {roomData?.gameId === 'xox' && (
                    <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} />
                  )}
@@ -625,18 +625,23 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   }
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-md bg-slate-900/60 p-4 md:p-6 rounded-3xl border border-indigo-500/20 shadow-[0_0_50px_rgba(99,102,241,0.15)] overflow-hidden">
+    <div className="relative flex flex-col items-center w-full max-w-md bg-gradient-to-br from-indigo-900/60 via-slate-900/80 to-purple-900/60 p-4 md:p-8 rounded-[2rem] border border-indigo-500/40 shadow-[0_0_40px_rgba(99,102,241,0.25)] overflow-hidden">
       
+      {/* Oyun İsmi */}
+      <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 uppercase tracking-widest drop-shadow-md">
+        Tic-Tac-Toe
+      </h2>
+
       {/* Estetik Arka Plan Işıkları (Tema) */}
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-24 -left-24 w-48 h-48 bg-indigo-500/20 blur-[80px] rounded-full"></div>
-        <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 blur-[80px] rounded-full"></div>
+        <div className="absolute -top-20 -left-20 w-48 h-48 bg-indigo-500/30 blur-[80px] rounded-full"></div>
+        <div className="absolute -bottom-20 -right-20 w-48 h-48 bg-purple-500/30 blur-[80px] rounded-full"></div>
       </div>
 
       {/* İçerik */}
       <div className="relative z-10 w-full flex flex-col items-center">
         {/* İSİM ve SKOR TABLOSU */}
-        <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-sm p-4 rounded-xl border border-slate-700 shadow-md">
+        <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
           
           {isSpectator && (
             <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1">
@@ -644,37 +649,37 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
             </div>
           )}
 
-          <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor}`}>
+          <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor} drop-shadow-md`}>
             {statusMsg}
           </div>
           
           <div className="flex justify-between items-center w-full px-2">
             <div className="text-center flex flex-col items-center text-indigo-400 w-1/3">
               <div className="flex items-center gap-1 mb-1">
-                {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
+                {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}
                 <span className="text-2xl font-bold">X</span>
               </div>
-              <div className="text-xs truncate w-full px-1" title={p1Name}>{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
+              <div className="text-xs truncate w-full px-1 font-medium" title={p1Name}>{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
               <div className="text-xl font-mono font-bold text-white mt-1">{p1Score}</div>
             </div>
 
-            <div className="text-slate-600 font-bold text-xl md:text-2xl w-1/3 text-center">
+            <div className="text-slate-500 font-bold text-xl md:text-2xl w-1/3 text-center opacity-50">
               VS
             </div>
 
             <div className="text-center flex flex-col items-center text-purple-400 w-1/3">
               <div className="flex items-center gap-1 mb-1">
-                {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
+                {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}
                 <span className="text-2xl font-bold">O</span>
               </div>
-              <div className="text-xs truncate w-full px-1" title={p2Name}>{p2Name} {isPlayer2 ? '(Sen)' : ''}</div>
+              <div className="text-xs truncate w-full px-1 font-medium" title={p2Name}>{p2Name} {isPlayer2 ? '(Sen)' : ''}</div>
               <div className="text-xl font-mono font-bold text-white mt-1">{p2Score}</div>
             </div>
           </div>
         </div>
 
-        {/* OYUN TAHTASI (SABİT KARELER) */}
-        <div className="grid grid-cols-3 gap-2 md:gap-3 w-full max-w-[300px] mb-8 p-3 bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-inner border border-slate-700 mx-auto">
+        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
+        <div className="grid grid-cols-3 gap-3 w-fit mb-8 p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
             return (
@@ -683,11 +688,11 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
                 onClick={() => handleMove(index)}
                 disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
                 className={`
-                  aspect-square w-full h-full min-h-[80px] sm:min-h-[90px] m-0 p-0 flex items-center justify-center text-5xl md:text-6xl font-bold rounded-lg transition-all overflow-hidden
+                  w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center text-5xl md:text-7xl font-black rounded-xl transition-all overflow-hidden leading-none m-0 p-0 box-border
                   ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
                   ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
-                  ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'border border-slate-700 shadow-sm'}
-                  ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]' : 'text-purple-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]'}
+                  ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.6)]' : 'border border-slate-700 shadow-sm'}
+                  ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]' : 'text-purple-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]'}
                 `}
               >
                 {cell}
@@ -698,7 +703,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
 
         {/* RÖVANŞ EKRANI */}
         {roomData.winner && (
-          <div className="w-full flex flex-col items-center bg-slate-900/80 backdrop-blur-sm p-4 rounded-xl border border-slate-700 shadow-md">
+          <div className="w-full flex flex-col items-center bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
             {isSpectator ? (
               <div className="text-slate-400 text-sm py-2 flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Oyuncuların kararı bekleniyor...
@@ -706,7 +711,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
             ) : !roomData.rematchRequestedBy ? (
               <button 
                 onClick={requestRematch}
-                className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/20 transition-all hover:scale-[1.02]"
+                className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/30 transition-all hover:scale-[1.02] hover:shadow-indigo-500/50"
               >
                 Yeniden Oyna
               </button>
@@ -717,12 +722,12 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
               </div>
             ) : (
               <div className="flex flex-col items-center w-full">
-                <span className="text-slate-300 font-medium mb-3 text-center">Rakibiniz rövanş istiyor!</span>
+                <span className="text-indigo-200 font-medium mb-3 text-center drop-shadow-md">Rakibiniz rövanş istiyor!</span>
                 <div className="flex gap-4 w-full">
-                  <button onClick={acceptRematch} className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 py-3 rounded-lg font-bold transition-colors">
+                  <button onClick={acceptRematch} className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-400 border border-green-500/50 py-3 rounded-xl font-bold transition-all hover:scale-[1.02]">
                     <Check className="w-5 h-5" /> Kabul Et
                   </button>
-                  <button onClick={rejectRematch} className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 py-3 rounded-lg font-bold transition-colors">
+                  <button onClick={rejectRematch} className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 py-3 rounded-xl font-bold transition-all hover:scale-[1.02]">
                     <X className="w-5 h-5" /> Reddet
                   </button>
                 </div>
