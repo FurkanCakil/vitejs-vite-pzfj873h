@@ -43,6 +43,7 @@ export default function App() {
   const [roomData, setRoomData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   
+  // disconnectCountdown: null (yok), sayı (gerisayım), veya 'paused' (bekle tuşuna basıldı)
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const [spectatePrompt, setSpectatePrompt] = useState(null);
   const [leftOverlayTimer, setLeftOverlayTimer] = useState(null); 
@@ -112,8 +113,9 @@ export default function App() {
         else if (data.status === 'abandoned') {
           setRoomData(data);
           if (data.players.includes(user.uid)) {
+            // Eğer sayaç daha önce başlatılmadıysa ve beklemiyorsak
             if (data.abandonedBy !== user.uid && disconnectCountdown === null) {
-              setDisconnectCountdown(10); 
+              setDisconnectCountdown(15); // 15 saniye ver
             }
           } else if (!data.players.includes(user.uid)) {
             setErrorMsg("Oyuncular oyundan ayrıldı. Oda kapandı.");
@@ -125,7 +127,7 @@ export default function App() {
             updateDoc(roomRef, { status: 'playing' }).catch(()=>{});
           }
           setRoomData(data);
-          setDisconnectCountdown(null);
+          setDisconnectCountdown(null); // Rakip geldi, sayacı/beklemeyi iptal et
           setCurrentView('room');
         }
       } else {
@@ -141,7 +143,7 @@ export default function App() {
   }, [user, roomCode, currentView]);
 
   useEffect(() => {
-    if (disconnectCountdown === null) return;
+    if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
     if (disconnectCountdown === 0) {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       updateDoc(roomRef, { status: 'closed' }).catch(()=>{});
@@ -150,7 +152,7 @@ export default function App() {
       return;
     }
     const timer = setTimeout(() => {
-      setDisconnectCountdown(prev => prev - 1);
+      setDisconnectCountdown(prev => typeof prev === 'number' ? prev - 1 : prev);
     }, 1000);
     return () => clearTimeout(timer);
   }, [disconnectCountdown, roomCode]);
@@ -331,7 +333,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
       
-      {/* 5 Saniyelik ZARİF Ayrılma Mesajı (Lobi üzerinde) */}
+      {/* 5 Saniyelik ZARİF Ayrılma Mesajı - (Fixed ve Ortalanmış) */}
       {leftOverlayTimer !== null && currentView === 'lobby' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
@@ -351,23 +353,31 @@ export default function App() {
         </div>
       )}
 
-      {/* Bağlantı Kopma (10sn) Ekranı */}
-      {disconnectCountdown !== null && (
+      {/* Bağlantı Kopma Ekranı (Tam Ekran) - Sadece sayaç çalışırken görünür */}
+      {typeof disconnectCountdown === 'number' && roomData?.status === 'abandoned' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
           <h2 className="text-2xl font-bold text-center mb-2">Rakibin Bağlantısı Koptu!</h2>
           <p className="text-slate-300 text-center mb-8 max-w-md">
-            Rakibiniz oyunu alta almış veya interneti kopmuş olabilir. Geri dönmesi için bekliyoruz...
+            Rakibiniz oyunu alta almış veya interneti kopmuş olabilir. Otomatik kapanmasına:
           </p>
           <div className="text-5xl font-mono font-bold text-yellow-400 mb-8">
             {disconnectCountdown}
           </div>
-          <button 
-            onClick={leaveRoom}
-            className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-6 py-3 rounded-lg font-medium transition-colors"
-          >
-            Hemen Lobiye Dön
-          </button>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button 
+              onClick={() => setDisconnectCountdown('paused')}
+              className="bg-indigo-600 hover:bg-indigo-500 border border-indigo-400 px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              <Loader2 className="w-5 h-5 animate-spin" /> Bekle
+            </button>
+            <button 
+              onClick={leaveRoom}
+              className="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-6 py-3 rounded-lg font-medium transition-colors"
+            >
+              Hemen Lobiye Dön
+            </button>
+          </div>
         </div>
       )}
 
@@ -448,16 +458,31 @@ export default function App() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {GAMES.map(game => (
-              <div key={game.id} className={`p-6 rounded-xl border flex flex-col transition-all duration-300 ${game.available ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer' : 'bg-slate-800/50 border-slate-700 opacity-70 grayscale'}`}>
-                <div className="text-4xl mb-4">{game.icon}</div>
-                <h3 className="text-xl font-bold mb-2">{game.name}</h3>
-                <p className="text-sm text-slate-400 flex-grow mb-6">{game.desc}</p>
+              <div 
+                key={game.id} 
+                className={`p-6 rounded-xl border flex flex-col transition-all duration-300 relative overflow-hidden
+                  ${!game.available ? 'bg-slate-800/50 border-slate-700 opacity-70 grayscale' : ''}
+                  ${game.available && game.id === 'xox' ? 'bg-gradient-to-br from-indigo-900/80 via-slate-900 to-purple-900/80 border-indigo-500/50 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.2)] cursor-pointer' : ''}
+                  ${game.available && game.id !== 'xox' ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer' : ''}
+                `}
+              >
+                {/* XOX kartı için ekstra parlayan arkaplan efekti */}
+                {game.id === 'xox' && (
+                  <>
+                     <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                     <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                  </>
+                )}
+
+                <div className="text-4xl mb-4 relative z-10">{game.icon}</div>
+                <h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3>
+                <p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
                 {game.available ? (
-                  <button onClick={() => createRoom(game.id)} className="w-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500 hover:text-white py-2 rounded-lg font-medium transition-colors">
+                  <button onClick={() => createRoom(game.id)} className="w-full relative z-10 bg-indigo-500/10 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-500 hover:text-white py-2 rounded-lg font-medium transition-colors">
                     Oda Kur
                   </button>
                 ) : (
-                  <button disabled className="w-full bg-slate-700 text-slate-400 py-2 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button>
+                  <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button>
                 )}
               </div>
             ))}
@@ -494,7 +519,7 @@ export default function App() {
             ) : (
               <div className="w-full flex flex-col items-center">
                  {roomData?.gameId === 'xox' && (
-                   <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} />
+                   <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />
                  )}
               </div>
             )}
@@ -508,7 +533,7 @@ export default function App() {
 // ==========================================
 // XOX (Tic-Tac-Toe) Game Implementation
 // ==========================================
-function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
+function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isPlayer1 = roomData.players[0] === user.uid;
   const isPlayer2 = roomData.players[1] === user.uid;
   const isSpectator = !isPlayer1 && !isPlayer2; 
@@ -526,7 +551,8 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
   const p2Score = roomData.scores?.[p2Uid] || 0;
 
   const handleMove = async (index) => {
-    if (!isMyTurn || isSpectator || roomData.board[index] || roomData.winner) return;
+    // "Abandoned" durumundayken oynanamaz
+    if (!isMyTurn || isSpectator || roomData.board[index] || roomData.winner || roomData.status === 'abandoned') return;
 
     const newBoard = [...roomData.board];
     newBoard[index] = mySymbol;
@@ -640,9 +666,9 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
 
       {/* İçerik */}
       <div className="relative z-10 w-full flex flex-col items-center">
+        
         {/* İSİM ve SKOR TABLOSU */}
         <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
-          
           {isSpectator && (
             <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1">
               <Eye className="w-4 h-4" /> SEYİRCİ MODU
@@ -678,32 +704,32 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
-        <div className="grid grid-cols-3 gap-3 w-fit mb-8 p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
+        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER - Piksellerle Ezildi) */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
             return (
               <button
                 key={index}
                 onClick={() => handleMove(index)}
-                disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null}
+                disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner !== null || roomData.status === 'abandoned'}
                 className={`
-                  w-[85px] h-[85px] sm:w-[100px] sm:h-[100px] flex-shrink-0 flex items-center justify-center text-5xl md:text-7xl font-black rounded-xl transition-all m-0 p-0 box-border
-                  ${cell === null && isMyTurn && !isSpectator && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
-                  ${(cell !== null || !isMyTurn || isSpectator || roomData.winner) ? 'cursor-default' : ''}
+                  w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] flex-shrink-0 flex items-center justify-center rounded-xl transition-all m-0 p-0 box-border
+                  ${cell === null && isMyTurn && !isSpectator && !roomData.winner && roomData.status !== 'abandoned' ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900'}
+                  ${(cell !== null || !isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned') ? 'cursor-default' : ''}
                   ${isWinningCell ? 'bg-indigo-500/40 border-2 border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.6)]' : 'border border-slate-700 shadow-sm'}
                   ${cell === 'X' ? 'text-indigo-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]' : 'text-purple-400 drop-shadow-[0_4px_4px_rgba(0,0,0,0.6)]'}
                 `}
               >
-                {/* Harfin yüksekliğini tamamen yoksayan span */}
-                <span className="leading-none flex items-center justify-center select-none pointer-events-none mt-1">{cell}</span>
+                {/* leading-none ile harfin ekstra yüksekliği sıfırlandı */}
+                <span className="leading-none text-6xl sm:text-7xl font-black select-none pointer-events-none mt-2">{cell}</span>
               </button>
             )
           })}
         </div>
 
         {/* RÖVANŞ EKRANI */}
-        {roomData.winner && (
+        {roomData.winner && roomData.status !== 'abandoned' && (
           <div className="w-full flex flex-col items-center bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
             {isSpectator ? (
               <div className="text-slate-400 text-sm py-2 flex items-center gap-2">
@@ -736,6 +762,22 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId }) {
             )}
           </div>
         )}
+
+        {/* BEKLEME EKRANI (Oyun İçi Transparan Overlay) */}
+        {roomData.status === 'abandoned' && (
+          <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
+            <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
+            <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
+            <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
+            <button 
+              onClick={leaveRoom} 
+              className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors"
+            >
+              Lobiye Dön
+            </button>
+          </div>
+        )}
+
       </div>
     </div>
   );
