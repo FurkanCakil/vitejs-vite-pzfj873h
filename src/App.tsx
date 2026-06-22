@@ -1294,7 +1294,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
-      {gameToast && (
+      {/* OYUN İÇİ BİLDİRİM (TOAST) */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">
           {gameToast}
         </div>
@@ -1302,31 +1302,31 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
       {/* BAŞLIK VE SKOR */}
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-amber-500/30">
-        <div className="flex items-center gap-2">
-          <div className={`w-4 h-4 rounded-full border-2 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
-          <div>
-            <div className="text-sm font-bold text-slate-200">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
-            <div className="text-[10px] sm:text-xs text-slate-400">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p1Color] || 0)}/15 çıktı</div>
+        <div className="flex flex-col items-start flex-1 min-w-0 pr-2">
+          <div className="flex items-center gap-2 w-full">
+            <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
+            <div className="text-sm font-bold text-slate-200 truncate">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
+            {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
           </div>
-          {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
+          <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p1Color] || 0)}/15 çıktı</div>
         </div>
 
-        <div className="flex flex-col items-center px-2">
+        <div className="flex flex-col items-center px-4 shrink-0">
           <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
           <div className="text-[10px] text-slate-500 font-bold tracking-widest">TAVLA</div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
-          <div className="text-right">
-            <div className="text-sm font-bold text-slate-200">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
-            <div className="text-[10px] sm:text-xs text-slate-400">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p2Color] || 0)}/15 çıktı</div>
+        <div className="flex flex-col items-end flex-1 min-w-0 pl-2 text-right">
+          <div className="flex items-center justify-end gap-2 w-full">
+            {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
+            <div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
+            <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
           </div>
-          <div className={`w-4 h-4 rounded-full border-2 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
+          <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p2Color] || 0)}/15 çıktı</div>
         </div>
       </div>
 
-      <div className={`text-center font-bold text-lg drop-shadow-md ${roomData.winner ? 'text-yellow-400' : isMyTurn ? 'text-amber-400' : 'text-slate-400'}`}>
+      {/* DURUM MESAJI */}
         {isSpectator && <span className="text-xs text-yellow-400 font-bold mr-2 uppercase flex items-center justify-center gap-1"><Eye className="w-3 h-3" /> SEYİRCİ</span>}
         {roomData.winner ? `🏆 ${winnerName} Kazandı!` : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${currentTurnName} düşünüyor...`}
       </div>
@@ -1360,10 +1360,10 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           {/* BAR Üst (Siyah Pullar) */}
           <div 
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')}
-            className={`w-6 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'black' ? 'bg-yellow-500/20' : ''}`}
+            className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 ${selectedPoint === -1 && myColor === 'black' ? 'ring-2 ring-yellow-400 bg-yellow-900/30' : ''}`}
           >
              {Array.from({ length: Math.max(0, Math.min((bar?.black || 0), 4)) }).map((_, i) => (
-                <div key={`barb-${i}`} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">
+                <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">
                   {i === 3 && (bar?.black || 0) > 4 ? `+${(bar?.black || 0) - 3}` : ''}
                 </div>
              ))}
@@ -1373,9 +1373,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         </div>
 
-        {/* Orta Çizgi */}
-        <div className="h-6 sm:h-8 md:h-10 w-full flex items-center justify-center bg-amber-900/60 my-1 rounded border-y border-amber-800/50">
-          <div className="text-[10px] sm:text-xs text-amber-700 font-black tracking-widest uppercase">Masa Oyunları</div>
+        {/* Orta Çizgi (Menteşe) */}
+        <div className="h-8 sm:h-12 md:h-14 w-full flex items-center justify-center bg-[#290f02] my-1 sm:my-2 border-y-[6px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,0.8)] relative z-20">
+          <div className="text-[10px] sm:text-xs text-amber-700/30 font-black tracking-widest uppercase">Menteşe</div>
         </div>
 
         {/* Alt Sıra */}
@@ -1386,10 +1386,10 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           {/* BAR Alt (Beyaz Pullar) */}
           <div 
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')}
-            className={`w-6 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'white' ? 'bg-yellow-500/20' : ''}`}
+            className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 ${selectedPoint === -1 && myColor === 'white' ? 'ring-2 ring-yellow-400 bg-yellow-900/30' : ''}`}
           >
              {Array.from({ length: Math.max(0, Math.min((bar?.white || 0), 4)) }).map((_, i) => (
-                <div key={`barw-${i}`} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">
+                <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">
                   {i === 3 && (bar?.white || 0) > 4 ? `+${(bar?.white || 0) - 3}` : ''}
                 </div>
              ))}
@@ -1594,32 +1594,32 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             {statusMsg}
           </div>
           
-          <div className="flex justify-between items-center w-full px-2">
-            <div className="text-center flex flex-col items-center text-indigo-400 w-1/3">
-              <div className="flex items-center gap-1 mb-1">
+          <div className="flex justify-between items-start w-full px-2">
+            <div className="text-center flex flex-col items-center text-indigo-400 flex-1 min-w-0">
+              <div className="flex items-center gap-1 mb-1 shrink-0">
                 {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}
                 <span className="text-2xl font-bold">X</span>
               </div>
               <div className="text-xs truncate w-full px-1 font-medium" title={p1Name}>{p1Name} {isPlayer1 ? '(Sen)' : ''}</div>
-              <div className="text-xl font-mono font-bold text-white mt-1">{p1Score}</div>
+              <div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p1Score}</div>
             </div>
 
-            <div className="text-slate-500 font-bold text-xl md:text-2xl w-1/3 text-center opacity-50">
+            <div className="text-slate-500 font-bold text-xl md:text-2xl shrink-0 px-4 opacity-50 flex items-center justify-center h-full pt-4">
               VS
             </div>
 
-            <div className="text-center flex flex-col items-center text-purple-400 w-1/3">
-              <div className="flex items-center gap-1 mb-1">
+            <div className="text-center flex flex-col items-center text-purple-400 flex-1 min-w-0">
+              <div className="flex items-center gap-1 mb-1 shrink-0">
                 {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}
                 <span className="text-2xl font-bold">O</span>
               </div>
               <div className="text-xs truncate w-full px-1 font-medium" title={p2Name}>{p2Name} {isPlayer2 ? '(Sen)' : ''}</div>
-              <div className="text-xl font-mono font-bold text-white mt-1">{p2Score}</div>
+              <div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p2Score}</div>
             </div>
           </div>
         </div>
 
-        {/* OYUN TAHTASI */}
+        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
@@ -1863,12 +1863,12 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     if (!caps || caps.length === 0) return null;
     const sorted = [...caps].sort((a,b) => (PIECE_VALUES[b] || 0) - (PIECE_VALUES[a] || 0));
     return (
-        <div className="flex flex-wrap gap-[2px] items-center mt-1">
+        <div className="flex flex-wrap gap-[1px] items-center mt-1 bg-slate-500/40 px-2 py-1 rounded-md border border-slate-500/50 shadow-inner max-w-full">
             {sorted.map((p, i) => (
                 <span 
                   key={i} 
                   style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
-                  className={`text-xl md:text-2xl leading-none drop-shadow-sm ${isWhitePieces ? 'text-white' : 'text-slate-900'}`}
+                  className={`text-lg md:text-xl leading-none drop-shadow-md ${isWhitePieces ? 'text-white' : 'text-black'}`}
                 >
                   {CHESS_ICONS[p]}
                 </span>
@@ -1896,32 +1896,32 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       
       {/* Puan ve Kullanıcı Tablosu */}
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4 min-h-[70px]">
-        <div className="flex flex-col items-start w-[40%]">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col items-start flex-1 min-w-0 pr-2">
+          <div className="flex items-center gap-2 w-full">
             <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
             <div className="text-sm font-bold text-slate-200 truncate">{p1Name} {p1Uid === user?.uid && !isSpectator ? '(Sen)' : ''}</div>
           </div>
-          <div className="flex flex-wrap items-center gap-1 mt-1 min-h-[24px]">
+          <div className="flex flex-wrap items-center gap-1 mt-1 w-full min-h-[24px]">
              {renderCaptured(p1Color === 'w' ? wCaptured : bCaptured, p1Color === 'w' ? false : true)}
-             {p1Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold ml-1">+{wPoints - bPoints}</span>}
-             {p1Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold ml-1">+{bPoints - wPoints}</span>}
+             {p1Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold ml-1 shrink-0">+{wPoints - bPoints}</span>}
+             {p1Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold ml-1 shrink-0">+{bPoints - wPoints}</span>}
           </div>
         </div>
 
-        <div className="flex flex-col items-center px-2 shrink-0">
+        <div className="flex flex-col items-center px-4 shrink-0">
           <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
           <div className="text-[10px] text-slate-500 font-bold tracking-widest">SATRANÇ</div>
         </div>
 
-        <div className="flex flex-col items-end w-[40%] text-right">
-          <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-col items-end flex-1 min-w-0 pl-2 text-right">
+          <div className="flex items-center justify-end gap-2 w-full">
             <div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user?.uid && !isSpectator ? '(Sen)' : ''}</div>
             <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-1 mt-1 min-h-[24px] flex-row-reverse">
+          <div className="flex flex-wrap items-center justify-end gap-1 mt-1 w-full min-h-[24px] flex-row-reverse">
              {renderCaptured(p2Color === 'w' ? wCaptured : bCaptured, p2Color === 'w' ? false : true)}
-             {p2Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold mr-1">+{wPoints - bPoints}</span>}
-             {p2Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold mr-1">+{bPoints - wPoints}</span>}
+             {p2Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold mr-1 shrink-0">+{wPoints - bPoints}</span>}
+             {p2Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold mr-1 shrink-0">+{bPoints - wPoints}</span>}
           </div>
         </div>
       </div>
