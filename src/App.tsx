@@ -1865,7 +1865,13 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     return (
         <div className="flex flex-wrap gap-[2px] items-center mt-1">
             {sorted.map((p, i) => (
-                <span key={i} className={`text-xl md:text-2xl leading-none drop-shadow-sm ${isWhitePieces ? 'text-white' : 'text-slate-900'}`}>{CHESS_ICONS[p]}</span>
+                <span 
+                  key={i} 
+                  style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
+                  className={`text-xl md:text-2xl leading-none drop-shadow-sm ${isWhitePieces ? 'text-white' : 'text-slate-900'}`}
+                >
+                  {CHESS_ICONS[p]}
+                </span>
             ))}
         </div>
     );
@@ -1957,11 +1963,9 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 {/* Taşlar */}
                 {cell && (
                   <span 
-                    style={{
-                       color: cell.color === 'w' ? '#ffffff' : '#000000',
-                       textShadow: cell.color === 'w' ? '0 2px 2px rgba(0,0,0,0.8)' : '0 1px 1px rgba(255,255,255,0.4)'
-                    }}
-                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none select-none flex items-center justify-center w-full h-full`}
+                    style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
+                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full
+                    ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >
                     {CHESS_ICONS[cell.type]}
                   </span>
@@ -1971,7 +1975,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           })}
         </div>
 
-        {/* PİYON TERFİ MENÜSÜ */}
+        {/* PİYON TERFİ MENÜSÜ (Overlay) */}
         {promotionPrompt && (
            <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center backdrop-blur-sm rounded-lg">
               <div className="bg-slate-800 p-6 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center">
@@ -1984,11 +1988,8 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                                const promotedPiece = { ...promotionPrompt.movingPiece, type };
                                executeMove(promotionPrompt.from, promotionPrompt.to, promotedPiece, promotionPrompt.targetPiece, promotionPrompt.newBoard);
                             }} 
-                            style={{
-                               color: myColor === 'w' ? '#ffffff' : '#000000',
-                               textShadow: myColor === 'w' ? '0 2px 2px rgba(0,0,0,0.8)' : '0 1px 1px rgba(255,255,255,0.4)'
-                            }}
-                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2`}
+                            style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
+                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}
                          >
                             {CHESS_ICONS[type]}
                          </button>
