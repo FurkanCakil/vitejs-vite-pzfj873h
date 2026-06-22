@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye, Dice5 } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
@@ -32,7 +32,7 @@ const GAMES = [
 ];
 
 // ==========================================
-// HATA KALKANI (ERROR BOUNDARY) - Mavi Ekran Çökmelerini Engeller
+// HATA KALKANI (ERROR BOUNDARY)
 // ==========================================
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -52,14 +52,14 @@ class ErrorBoundary extends React.Component {
           <AlertCircle className="w-16 h-16 text-red-500 mb-4 animate-pulse" />
           <h2 className="text-2xl font-bold text-white mb-2">Sistemde Pürüz Çıktı!</h2>
           <p className="text-slate-400 text-sm mb-6">
-            İnternet bağlantısındaki anlık bir veri kaybı oyun motorunu durdurdu. Endişelenme, odan güvende.
+            Oyun motoru geçici bir hata ile karşılaştı. Bağlantınızı yenilemek için sayfayı tazeleyin.
           </p>
           <div className="bg-black/40 p-3 rounded font-mono text-[10px] text-red-300 w-full overflow-hidden mb-6 text-left opacity-70">
             {this.state.error?.toString()}
           </div>
           <button 
             onClick={() => window.location.reload()}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-indigo-500/30 flex items-center gap-2"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2"
           >
             Masaya Geri Dön
           </button>
@@ -71,7 +71,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // ==========================================
-// SES EFEKTLERİ SENTEZLEYİCİSİ (Web Audio API)
+// SES EFEKTLERİ
 // ==========================================
 let audioCtx = null;
 const playSound = (type) => {
@@ -108,20 +108,22 @@ const playSound = (type) => {
       gain.gain.setValueAtTime(0.5, now);
       gain.gain.linearRampToValueAtTime(0, now + 0.15);
       osc.start(now); osc.stop(now + 0.15);
-    } else if (type === 'error') { 
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(150, now);
+    } else if (type === 'win') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.setValueAtTime(600, now + 0.2);
+      osc.frequency.setValueAtTime(800, now + 0.4);
       gain.gain.setValueAtTime(0.5, now);
-      gain.gain.linearRampToValueAtTime(0, now + 0.2);
-      osc.start(now); osc.stop(now + 0.2);
+      gain.gain.linearRampToValueAtTime(0, now + 0.6);
+      osc.start(now); osc.stop(now + 0.6);
     }
   } catch (e) { console.log('Ses çalınamadı'); }
 };
 
 // ==========================================
-// SATRANÇ OYUN MANTIĞI VE YARDIMCILARI
+// SATRANÇ OYUN MANTIĞI
 // ==========================================
-const CHESS_ICONS = { p: '♟\uFE0E', r: '♜\uFE0E', n: '♞\uFE0E', b: '♝\uFE0E', q: '♛\uFE0E', k: '♚\uFE0E' };
+const CHESS_ICONS = { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
 function createInitialChessBoard() {
@@ -138,7 +140,7 @@ function createInitialChessBoard() {
 
 function getPseudoLegalMoves(board, index) {
   const piece = board[index];
-  if (!piece || !piece.type) return [];
+  if (!piece) return [];
   const moves = [];
   const r = Math.floor(index / 8);
   const c = index % 8;
@@ -255,7 +257,7 @@ function getGameState(board, nextTurnColor) {
 }
 
 // ==========================================
-// TAVLA OYUN MANTIĞI
+// TAVLA OYUN MANTIĞI (Güvenli Kopyalamalı)
 // ==========================================
 function createInitialBoard() {
   const board = Array(24).fill(null).map(() => ({ count: 0, color: null }));
@@ -271,6 +273,7 @@ function createInitialBoard() {
 }
 
 function getValidMoves(board, color, dice, bar, borneOff) {
+  if (!board || !color || !dice || dice.length === 0) return [];
   const uniqueDice = [...new Set(dice)];
   const moves = []; 
   const direction = color === 'white' ? 1 : -1;
@@ -278,11 +281,10 @@ function getValidMoves(board, color, dice, bar, borneOff) {
   const homeEnd = color === 'white' ? 23 : 5;   
 
   const totalPieces = 15;
-  // %100 KORUMALI ÇÖKME ÖNLEYİCİ - pt.color null kontrolü
-  const piecesOnBoard = board.reduce((acc, pt) => (pt && pt.color === color) ? acc + (pt.count || 0) : acc, 0);
+  const piecesOnBoard = board.reduce((acc, pt) => pt && pt.color === color ? acc + (pt.count || 0) : acc, 0);
   const piecesOnBar = bar || 0;
-  const canBearOff = (piecesOnBoard + piecesOnBar + borneOff === totalPieces) &&
-                     (borneOff + piecesOnBoard === totalPieces - piecesOnBar) &&
+  const canBearOff = (piecesOnBoard + piecesOnBar + (borneOff || 0) === totalPieces) &&
+                     ((borneOff || 0) + piecesOnBoard === totalPieces - piecesOnBar) &&
                      allInHome(board, color, homeStart, homeEnd, piecesOnBar);
 
   for (const die of uniqueDice) {
@@ -352,7 +354,6 @@ function highestPiece(board, color, homeStart, homeEnd) {
 }
 
 function applyMove(board, bar, borneOff, color, from, to, die) {
-  // Garantili Board Kopyalama
   const newBoard = board.map(pt => pt ? { count: pt.count || 0, color: pt.color || null } : { count: 0, color: null });
   const newBar = { white: bar?.white || 0, black: bar?.black || 0 };
   const newBorneOff = { white: borneOff?.white || 0, black: borneOff?.black || 0 };
@@ -361,7 +362,7 @@ function applyMove(board, bar, borneOff, color, from, to, die) {
   if (from === -1) {
     newBar[color] = Math.max(0, (newBar[color] || 0) - 1);
   } else {
-    newBoard[from].count = Math.max(0, newBoard[from].count - 1);
+    newBoard[from].count = Math.max(0, (newBoard[from].count || 0) - 1);
     if (newBoard[from].count === 0) newBoard[from].color = null;
   }
 
@@ -378,7 +379,7 @@ function applyMove(board, bar, borneOff, color, from, to, die) {
   if (!newBoard[to] || newBoard[to].count === 0) {
     newBoard[to] = { count: 1, color };
   } else {
-    newBoard[to].count++;
+    newBoard[to].count = (newBoard[to].count || 0) + 1;
     newBoard[to].color = color;
   }
 
@@ -413,13 +414,6 @@ export default function App() {
   }, [roomCode, user, roomData]);
 
   useEffect(() => {
-    const savedCode = localStorage.getItem('activeRoom');
-    if (savedCode && !roomCode) {
-      setRoomCode(savedCode);
-    }
-  }, []);
-
-  useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -437,6 +431,12 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoadingAuth(false);
+      
+      // Auth olduktan sonra kayıtlı odaya dön
+      const savedCode = localStorage.getItem('activeRoom');
+      if (savedCode && currentUser) {
+         setRoomCode(savedCode);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -487,7 +487,6 @@ export default function App() {
                setDisconnectCountdown(15);
             }
           } 
-          // ÇÖZÜM: Yabancıları hemen dışarı atmıyoruz, izlemeye devam edebiliyorlar
         } 
         else {
           if (data.status === 'waiting' && data.players?.length === 2 && data.host === user.uid) {
@@ -499,7 +498,6 @@ export default function App() {
           localStorage.setItem('activeRoom', roomCode);
         }
       } else {
-        // Oda hiç yoksa veya silinmişse
         leaveRoomLocal();
       }
     }, (err) => {
@@ -1032,13 +1030,15 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     setRollingDice(true);
     playSound('dice');
 
-    const d1 = rollDie(), d2 = rollDie();
-    const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
-    
+    // Animasyon yerine hızlıca bekleme yapıyoruz. 
     setTimeout(async () => {
       try {
+        const d1 = rollDie();
+        const d2 = rollDie();
+        const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
         const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
         const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
+        
         if (moves.length === 0) {
           showToast("Geçerli hamle yok! Sıra rakibe geçiyor...");
           const oppUid = roomData.players.find(id => id !== user.uid);
@@ -1102,6 +1102,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       setSelectedPoint(null);
 
       if (newBorneOff[myColor] >= 15) {
+        playSound('win');
         const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
         const newScores = { ...roomData.scores, [user.uid]: (roomData.scores?.[user.uid] || 0) + 1 };
         await updateDoc(roomRef, {
@@ -1472,7 +1473,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     };
 
     if (winnerInfo && winnerInfo.winner) {
-      playSound('capture');
+      playSound('win');
       const winnerUid = winnerInfo.winner === 'X' ? p1Uid : p2Uid;
       updatePayload.scores = {
         ...roomData.scores,
@@ -1609,7 +1610,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
+        {/* OYUN TAHTASI */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
@@ -1739,6 +1740,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     let newWinner = null;
     if (gameState === 'mate') {
        newWinner = user.uid; 
+       playSound('win');
     } else if (gameState === 'stalemate') {
        newWinner = 'Draw';
     }
@@ -1776,9 +1778,9 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     }
 
     if (validMoves.includes(index)) {
-      const newBoard = [...board];
+      const newBoard = board.map(p => p ? { ...p } : null); // DEEP COPY
       const movingPiece = { ...newBoard[selectedSquare] };
-      const targetPiece = newBoard[index];
+      const targetPiece = newBoard[index] ? { ...newBoard[index] } : null;
       
       const r = Math.floor(index / 8);
       const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
