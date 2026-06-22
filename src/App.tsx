@@ -23,6 +23,7 @@ const appId = firebaseConfig.projectId;
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', desc: 'Klasik 3x3 strateji oyunu.', available: true, icon: '❌⭕' },
   { id: 'tavla', name: 'Tavla', desc: 'Zar at, pulları topla.', available: true, icon: '🎲' },
+  { id: 'satranc', name: 'Satranç', desc: 'Şah mat zamanı.', available: true, icon: '♟️' },
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı efsane.', available: false, icon: '🀄' },
   { id: 'poker', name: 'Texas Hold\'em', desc: 'Blöf ve taktik zamanı.', available: false, icon: '🃏' },
   { id: 'blof', name: 'Blöf', desc: 'Yalan söyleyebilen kazanır.', available: false, icon: '🤫' },
@@ -345,12 +346,17 @@ export default function App() {
       winner: null,
       rematchRequestedBy: null,
       abandonedBy: null,
-      createdAt: serverTimestamp()
+      createdAt: new Date().toISOString()
     };
 
     if (gameId === 'tavla') {
       Object.assign(initialState, {
         dice: [], usedDice: [], phase: 'rolling', bar: {}, borneOff: {}, playerColors: {}
+      });
+    } else if (gameId === 'satranc') {
+      Object.assign(initialState, {
+        board: createInitialChessBoard(),
+        playerColors: {}
       });
     }
 
@@ -418,6 +424,15 @@ export default function App() {
             bar: { white: 0, black: 0 },
             borneOff: { white: 0, black: 0 },
             dice: [], usedDice: [], phase: 'rolling', winner: null
+          };
+        } else if (data.gameId === 'satranc') {
+          const hostColor = data.playerColors?.[data.players[0]] || 'w';
+          const joinColor = hostColor === 'w' ? 'b' : 'w';
+          updatePayload = {
+            ...updatePayload,
+            playerColors: { [data.players[0]]: hostColor, [user.uid]: joinColor },
+            board: createInitialChessBoard(),
+            winner: null
           };
         }
 
@@ -684,6 +699,9 @@ export default function App() {
                  )}
                  {roomData?.gameId === 'tavla' && (
                    <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />
+                 )}
+                 {roomData?.gameId === 'satranc' && (
+                   <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />
                  )}
               </div>
             )}
@@ -1388,6 +1406,345 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ==========================================
+// SATRANÇ OYUNU MANTIĞI VE BİLEŞENİ
+// ==========================================
+
+function createInitialChessBoard() {
+  const board = Array(64).fill(null);
+  const order = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+  for (let i = 0; i < 8; i++) {
+    board[i] = { type: order[i], color: 'b' };
+    board[i + 8] = { type: 'p', color: 'b' };
+    board[48 + i] = { type: 'p', color: 'w' };
+    board[56 + i] = { type: order[i], color: 'w' };
+  }
+  return board;
+}
+
+function getValidChessMoves(board, index) {
+  const piece = board[index];
+  if (!piece) return [];
+  const moves = [];
+  const r = Math.floor(index / 8);
+  const c = index % 8;
+
+  const add = (nr, nc) => {
+    if (nr < 0 || nr > 7 || nc < 0 || nc > 7) return false;
+    const target = board[nr * 8 + nc];
+    if (!target) {
+      moves.push(nr * 8 + nc);
+      return true; // Boşsa ilerlemeye devam edebilir (kale/fil/vezir için)
+    }
+    if (target.color !== piece.color) {
+      moves.push(nr * 8 + nc); // Rakibi yiyebilir ama arkasına geçemez
+    }
+    return false;
+  };
+
+  if (piece.type === 'p') {
+    const dir = piece.color === 'w' ? -1 : 1;
+    const startRow = piece.color === 'w' ? 6 : 1;
+    
+    // İleri 1 adım
+    if (r + dir >= 0 && r + dir <= 7 && !board[(r + dir) * 8 + c]) {
+      moves.push((r + dir) * 8 + c);
+      // İleri 2 adım (sadece başlangıç noktasındayken)
+      if (r === startRow && !board[(r + 2 * dir) * 8 + c]) {
+        moves.push((r + 2 * dir) * 8 + c);
+      }
+    }
+    // Çapraz yeme
+    if (r + dir >= 0 && r + dir <= 7) {
+      if (c - 1 >= 0 && board[(r + dir) * 8 + (c - 1)]?.color && board[(r + dir) * 8 + (c - 1)].color !== piece.color) moves.push((r + dir) * 8 + (c - 1));
+      if (c + 1 <= 7 && board[(r + dir) * 8 + (c + 1)]?.color && board[(r + dir) * 8 + (c + 1)].color !== piece.color) moves.push((r + dir) * 8 + (c + 1));
+    }
+  } else if (piece.type === 'n') {
+    const knightMoves = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+    knightMoves.forEach(([dr, dc]) => add(r + dr, c + dc));
+  } else if (piece.type === 'k') {
+    const kingMoves = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    kingMoves.forEach(([dr, dc]) => add(r + dr, c + dc));
+  } else {
+    const dirs = [];
+    if (piece.type === 'r' || piece.type === 'q') dirs.push([-1, 0], [1, 0], [0, -1], [0, 1]); // Düz
+    if (piece.type === 'b' || piece.type === 'q') dirs.push([-1, -1], [-1, 1], [1, -1], [1, 1]); // Çapraz
+    
+    dirs.forEach(([dr, dc]) => {
+      let nr = r + dr, nc = c + dc;
+      while (add(nr, nc)) {
+        nr += dr;
+        nc += dc;
+      }
+    });
+  }
+  return moves;
+}
+
+const CHESS_ICONS = { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' };
+
+function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
+  const p1Uid = roomData.players[0];
+  const p2Uid = roomData.players[1];
+  const isSpectator = !roomData.players.includes(user.uid);
+  const myColor = roomData.playerColors?.[user.uid] || null;
+  const isMyTurn = roomData.turn === user.uid && !isSpectator;
+
+  const [selectedSquare, setSelectedSquare] = useState(null);
+
+  const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
+  const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
+  const p1Score = roomData.scores?.[p1Uid] || 0;
+  const p2Score = roomData.scores?.[p2Uid] || 0;
+  
+  const p1Color = roomData.playerColors?.[p1Uid] || 'w';
+  const p2Color = roomData.playerColors?.[p2Uid] || 'b';
+
+  const board = roomData.board || createInitialChessBoard();
+  const validMoves = (selectedSquare !== null && isMyTurn) ? getValidChessMoves(board, selectedSquare) : [];
+
+  const handleSquareClick = async (index) => {
+    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned') return;
+
+    const piece = board[index];
+
+    // Eğer kendi taşına tıkladıysa seçimi değiştir
+    if (selectedSquare === null || (piece && piece.color === myColor)) {
+      if (piece && piece.color === myColor) {
+        setSelectedSquare(index === selectedSquare ? null : index);
+      }
+      return;
+    }
+
+    // Geçerli bir hamle yapıldıysa
+    if (validMoves.includes(index)) {
+      const newBoard = [...board];
+      const movingPiece = { ...newBoard[selectedSquare] };
+      const targetPiece = newBoard[index];
+      
+      let newWinner = null;
+      if (targetPiece && targetPiece.type === 'k') {
+         newWinner = user.uid; // Rakibin şahı yendi, oyun bitti
+      }
+
+      // Piyon Terfisi (Sona ulaşan piyon vezir olur)
+      if (movingPiece.type === 'p') {
+         const r = Math.floor(index / 8);
+         if ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7)) {
+            movingPiece.type = 'q';
+         }
+      }
+
+      newBoard[index] = movingPiece;
+      newBoard[selectedSquare] = null;
+
+      const oppUid = roomData.players.find(id => id !== user.uid) || user.uid;
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+
+      let updatePayload = {
+        board: newBoard,
+        turn: newWinner ? null : oppUid,
+        winner: newWinner
+      };
+
+      if (newWinner) {
+        updatePayload.scores = {
+          ...roomData.scores,
+          [newWinner]: (roomData.scores?.[newWinner] || 0) + 1
+        };
+      }
+
+      await updateDoc(roomRef, updatePayload);
+      setSelectedSquare(null);
+    }
+  };
+
+  const requestRematch = async () => {
+    if (isSpectator) return;
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, { rematchRequestedBy: user.uid });
+  };
+
+  const acceptRematch = async () => {
+    if (isSpectator) return;
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    const nextStarter = roomData.players.find(id => id !== roomData.startingPlayer) || roomData.players[0];
+    
+    // Renkleri değiştir
+    const newColors = {};
+    for (const uid of roomData.players) {
+      newColors[uid] = roomData.playerColors[uid] === 'w' ? 'b' : 'w';
+    }
+
+    await updateDoc(roomRef, {
+      board: createInitialChessBoard(),
+      turn: nextStarter, 
+      startingPlayer: nextStarter,
+      playerColors: newColors,
+      winner: null,
+      rematchRequestedBy: null 
+    });
+  };
+
+  const rejectRematch = async () => {
+    if (isSpectator) return;
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, { status: 'closed' });
+  };
+
+  let statusMsg = "";
+  let statusColor = "text-slate-300";
+  if (roomData.winner) {
+    const winnerUid = roomData.winner;
+    if (isSpectator) {
+        statusMsg = `${roomData.playerNames[winnerUid]} Şah Mat Yaptı! 🎉`;
+        statusColor = "text-yellow-400";
+    } else if (winnerUid === user.uid) {
+        statusMsg = "Şah Mat! Kazandın! 🎉";
+        statusColor = "text-green-400";
+    } else {
+        statusMsg = "Şah Mat! Kaybettin 😢";
+        statusColor = "text-red-400";
+    }
+  } else {
+    if (isSpectator) {
+      statusMsg = roomData.turn === p1Uid ? `${p1Name} Hamle Bekleniyor...` : `${p2Name} Hamle Bekleniyor...`;
+      statusColor = "text-indigo-400";
+    } else {
+      statusMsg = isMyTurn ? "Senin Sıran!" : "Rakibin Sırası...";
+      statusColor = isMyTurn ? "text-indigo-400" : "text-slate-400";
+    }
+  }
+
+  // Siyah oyuncu için tahtayı ters çevir
+  const isBlackPlayer = myColor === 'b';
+  const visualIndices = isBlackPlayer 
+    ? Array.from({length: 64}, (_, i) => 63 - i) 
+    : Array.from({length: 64}, (_, i) => i);
+
+  return (
+    <div className="relative flex flex-col items-center w-full max-w-lg bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+      
+      {/* BAŞLIK VE SKOR */}
+      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4">
+        <div className="flex items-center gap-2">
+          <div className={`w-4 h-4 rounded-full border-2 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+          <div>
+            <div className="text-sm font-bold text-slate-200">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
+          </div>
+          {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
+        </div>
+
+        <div className="flex flex-col items-center px-2">
+          <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
+          <div className="text-[10px] text-slate-500 font-bold tracking-widest">SATRANÇ</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
+          <div className="text-right">
+            <div className="text-sm font-bold text-slate-200">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
+          </div>
+          <div className={`w-4 h-4 rounded-full border-2 ${p2Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+        </div>
+      </div>
+
+      <div className={`text-center font-bold text-lg mb-4 drop-shadow-md ${statusColor}`}>
+        {isSpectator && <span className="text-xs text-yellow-400 font-bold mr-2 uppercase flex items-center justify-center gap-1"><Eye className="w-3 h-3" /> SEYİRCİ</span>}
+        {statusMsg}
+      </div>
+
+      {/* SATRANÇ TAHTASI */}
+      <div className="grid grid-cols-8 gap-0 w-full max-w-[400px] border-4 border-slate-700 shadow-2xl mx-auto rounded-sm overflow-hidden select-none">
+        {visualIndices.map((i) => {
+          const cell = board[i];
+          const r = Math.floor(i / 8);
+          const c = i % 8;
+          const isDark = (r + c) % 2 !== 0;
+          const isSelected = selectedSquare === i;
+          const isValidMove = validMoves.includes(i);
+          
+          return (
+            <div 
+              key={i} 
+              onClick={() => handleSquareClick(i)}
+              className={`
+                aspect-square flex items-center justify-center relative cursor-pointer
+                ${isDark ? 'bg-[#769656]' : 'bg-[#eeeed2]'}
+                ${isSelected ? 'bg-yellow-400/50' : ''}
+              `}
+            >
+              {/* Geçerli hamle göstergesi (Boş kareye yeşil nokta, dolu kareye kırmızı çerçeve) */}
+              {isValidMove && !cell && <div className="w-3 h-3 md:w-4 md:h-4 bg-black/20 rounded-full" />}
+              {isValidMove && cell && <div className="absolute inset-0 ring-inset ring-4 ring-black/20 rounded-full m-1" />}
+              
+              {/* Taş İkonu */}
+              {cell && (
+                <span 
+                  className={`text-4xl md:text-5xl leading-none drop-shadow-md select-none 
+                  ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                >
+                  {CHESS_ICONS[cell.type]}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* RÖVANŞ EKRANI */}
+      {roomData.winner && roomData.status !== 'abandoned' && (
+        <div className="w-full max-w-[400px] mt-6 flex flex-col items-center bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-slate-700/50 shadow-lg">
+          {isSpectator ? (
+            <div className="text-slate-400 text-sm py-2 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Oyuncuların kararı bekleniyor...
+            </div>
+          ) : !roomData.rematchRequestedBy ? (
+            <button 
+              onClick={requestRematch}
+              className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg transition-all"
+            >
+              Yeniden Oyna
+            </button>
+          ) : roomData.rematchRequestedBy === user.uid ? (
+            <div className="flex items-center gap-3 text-slate-400 py-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Rakibin cevabı bekleniyor...</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center w-full">
+              <span className="text-indigo-200 font-medium mb-3 text-center">Rakibiniz rövanş istiyor!</span>
+              <div className="flex gap-4 w-full">
+                <button onClick={acceptRematch} className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-400 border border-green-500/50 py-3 rounded-xl font-bold transition-all">
+                  <Check className="w-5 h-5" /> Kabul Et
+                </button>
+                <button onClick={rejectRematch} className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 py-3 rounded-xl font-bold transition-all">
+                  <X className="w-5 h-5" /> Reddet
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* OYUN İÇİ BAĞLANTI KOPMA EKRANI */}
+      {roomData.status === 'abandoned' && (
+        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
+          <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
+          <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
+          <button 
+            onClick={leaveRoom} 
+            className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors"
+          >
+            Lobiye Dön
+          </button>
+        </div>
+      )}
     </div>
   );
 }
