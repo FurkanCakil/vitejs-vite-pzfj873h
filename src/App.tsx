@@ -116,6 +116,12 @@ const playSound = (type) => {
       gain.gain.setValueAtTime(0.5, now);
       gain.gain.linearRampToValueAtTime(0, now + 0.6);
       osc.start(now); osc.stop(now + 0.6);
+    } else if (type === 'error') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      gain.gain.setValueAtTime(0.5, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.2);
+      osc.start(now); osc.stop(now + 0.2);
     }
   } catch (e) { console.log('Ses çalınamadı'); }
 };
@@ -138,7 +144,8 @@ function createInitialChessBoard() {
   return board;
 }
 
-function getPseudoLegalMoves(board, index) {
+// CheckCastling parametresi sonsuz döngüyü (Maximum call stack exceeded) çözer
+function getPseudoLegalMoves(board, index, checkCastling = true) {
   const piece = board[index];
   if (!piece) return [];
   const moves = [];
@@ -175,7 +182,7 @@ function getPseudoLegalMoves(board, index) {
     [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]].forEach(([dr, dc]) => add(r + dr, c + dc));
   } else if (piece.type === 'k') {
     [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]].forEach(([dr, dc]) => add(r + dr, c + dc));
-    if (!piece.hasMoved) {
+    if (checkCastling && !piece.hasMoved) {
       const enemyColor = piece.color === 'w' ? 'b' : 'w';
       if (!isSquareAttacked(board, index, enemyColor)) {
         const rookRight = board[index + 3];
@@ -208,7 +215,8 @@ function isSquareAttacked(board, targetIdx, attackerColor) {
   for (let i = 0; i < 64; i++) {
     const piece = board[i];
     if (piece && piece.color === attackerColor) {
-      const moves = getPseudoLegalMoves(board, i);
+      // false parametresi sonsuz rok döngüsünü (Maximum Call Stack Exceeded) engeller
+      const moves = getPseudoLegalMoves(board, i, false);
       if (moves.includes(targetIdx)) return true;
     }
   }
@@ -218,7 +226,7 @@ function isSquareAttacked(board, targetIdx, attackerColor) {
 function getStrictLegalMoves(board, index) {
   const piece = board[index];
   if (!piece) return [];
-  const pseudo = getPseudoLegalMoves(board, index);
+  const pseudo = getPseudoLegalMoves(board, index, true);
   const legal = [];
   for (const target of pseudo) {
     const newBoard = [...board];
@@ -257,8 +265,12 @@ function getGameState(board, nextTurnColor) {
 }
 
 // ==========================================
-// TAVLA OYUN MANTIĞI (Güvenli Kopyalamalı)
+// TAVLA OYUN MANTIĞI VE YARDIMCILARI
 // ==========================================
+function rollDie() {
+  return Math.floor(Math.random() * 6) + 1;
+}
+
 function createInitialBoard() {
   const board = Array(24).fill(null).map(() => ({ count: 0, color: null }));
   board[0] = { count: 2, color: 'white' };
@@ -432,7 +444,6 @@ export default function App() {
       setUser(currentUser);
       setLoadingAuth(false);
       
-      // Auth olduktan sonra kayıtlı odaya dön
       const savedCode = localStorage.getItem('activeRoom');
       if (savedCode && currentUser) {
          setRoomCode(savedCode);
@@ -744,7 +755,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
       
-      {/* 5 Saniyelik ZARİF Ayrılma Mesajı */}
       {leftOverlayTimer !== null && currentView === 'lobby' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
@@ -764,7 +774,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Bağlantı Kopma Ekranı (Bekle Butonu İle) */}
       {typeof disconnectCountdown === 'number' && roomData?.status === 'abandoned' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
@@ -792,7 +801,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Seyirci Modu Onay Ekranı */}
       {spectatePrompt && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <Eye className="w-16 h-16 text-indigo-500 mb-4" />
@@ -811,7 +819,6 @@ export default function App() {
         </div>
       )}
 
-      {/* HATA MESAJI (TOAST) */}
       {errorMsg && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-[99999] bg-red-500/95 backdrop-blur-sm border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl animate-in slide-in-from-top-4">
           <AlertCircle className="w-6 h-6 shrink-0" />
@@ -879,7 +886,6 @@ export default function App() {
                     ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}
                   `}
                 >
-                  {/* Oyunlara Özel Arkaplan Işıkları */}
                   {game.id === 'xox' && (
                     <>
                        <div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
@@ -1030,7 +1036,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     setRollingDice(true);
     playSound('dice');
 
-    // Animasyon yerine hızlıca bekleme yapıyoruz. 
     setTimeout(async () => {
       try {
         const d1 = rollDie();
