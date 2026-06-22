@@ -5,6 +5,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
 
+// --- FIREBASE INITIALIZATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyC2jyw68o1Qd8bwPfPE1u8D3absXrw9rVQ",
   authDomain: "oyun-odasi-8ecee.firebaseapp.com",
@@ -30,6 +31,9 @@ const GAMES = [
   { id: 'dostkazigi', name: 'Dost Kazığı', desc: 'Arkadaşlıkları bitiren oyun.', available: false, icon: '🤝' },
 ];
 
+// ==========================================
+// HATA KALKANI (ERROR BOUNDARY)
+// ==========================================
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -66,6 +70,9 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ==========================================
+// SES EFEKTLERİ
+// ==========================================
 let audioCtx = null;
 const playSound = (type) => {
   try {
@@ -119,6 +126,9 @@ const playSound = (type) => {
   } catch (e) { console.log('Ses çalınamadı'); }
 };
 
+// ==========================================
+// SATRANÇ OYUN MANTIĞI
+// ==========================================
 const CHESS_ICONS = { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
@@ -476,7 +486,6 @@ export default function App() {
             if (data.abandonedBy === user.uid) {
                updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(()=>{});
             } else if (disconnectCountdown === null) {
-               // Rakip Lobiden Çık'a bastıysa 5, bağlantısı koptuysa 15 saniye bekle
                setDisconnectCountdown(data.abandonReason === 'left' ? 5 : 15);
             }
           } 
@@ -715,7 +724,6 @@ export default function App() {
            if (data.players.length <= 1) {
                await updateDoc(roomRef, { status: 'closed', closedBy: user.uid });
            } else {
-               // Rakip lobiden çıkarsa, kalan oyuncuya 5 saniye bekleme hakkı veriyoruz
                await updateDoc(roomRef, { status: 'abandoned', abandonedBy: user.uid, abandonReason: 'left' });
            }
         }
@@ -766,7 +774,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Bekleme / Düşme Ekranı */}
       {typeof disconnectCountdown === 'number' && roomData?.status === 'abandoned' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
           <AlertCircle className="w-16 h-16 text-yellow-500 mb-4 animate-pulse" />
@@ -1238,6 +1245,8 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const isValidTo = selectedPoint !== null && validToPoints.has(pointIdx);
     const visualIndex = isTop ? topPoints.indexOf(pointIdx) : bottomPoints.indexOf(pointIdx);
     const isDark = visualIndex % 2 === 0;
+    
+    // YENİLEME: !hasBar koşulu seçilmiş bir kırık taş varsa (selectedPoint === -1) geçersiz kılınıyor
     const hasBar = (bar?.[myColor] || 0) > 0;
     const clickable = isMyTurn && myPhase === 'moving' && (!hasBar || selectedPoint === -1);
 
@@ -1295,6 +1304,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
       {/* OYUN İÇİ BİLDİRİM (TOAST) */}
+      {gameToast && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">
           {gameToast}
         </div>
@@ -1327,6 +1337,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       </div>
 
       {/* DURUM MESAJI */}
+      <div className={`text-center font-bold text-lg drop-shadow-md ${roomData.winner ? 'text-yellow-400' : isMyTurn ? 'text-amber-400' : 'text-slate-400'}`}>
         {isSpectator && <span className="text-xs text-yellow-400 font-bold mr-2 uppercase flex items-center justify-center gap-1"><Eye className="w-3 h-3" /> SEYİRCİ</span>}
         {roomData.winner ? `🏆 ${winnerName} Kazandı!` : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${currentTurnName} düşünüyor...`}
       </div>
@@ -1619,7 +1630,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           </div>
         </div>
 
-        {/* OYUN TAHTASI (BETON GİBİ SABİT KARELER) */}
+        {/* OYUN TAHTASI */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-inner border border-slate-600 mx-auto">
           {roomData.board.map((cell, index) => {
             const isWinningCell = roomData.winningLine?.includes(index);
@@ -1674,6 +1685,21 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* OYUN İÇİ BAĞLANTI KOPMA EKRANI */}
+        {roomData.status === 'abandoned' && (
+          <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
+            <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
+            <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
+            <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
+            <button 
+              onClick={leaveRoom} 
+              className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors"
+            >
+              Lobiye Dön
+            </button>
           </div>
         )}
       </div>
@@ -2031,6 +2057,17 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {roomData.status === 'abandoned' && (
+        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-emerald-500 mb-4 drop-shadow-lg" />
+          <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
+          <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
+          <button onClick={leaveRoom} className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors">
+            Lobiye Dön
+          </button>
         </div>
       )}
     </div>
