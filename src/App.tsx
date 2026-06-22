@@ -34,7 +34,6 @@ const GAMES = [
 // ==========================================
 // SATRANÇ OYUN MANTIĞI VE YARDIMCILARI
 // ==========================================
-// Piyonların emojilere dönüşmesini engelleyen \uFE0E kodu eklendi
 const CHESS_ICONS = { p: '♟\uFE0E', r: '♜\uFE0E', n: '♞\uFE0E', b: '♝\uFE0E', q: '♛\uFE0E', k: '♚\uFE0E' };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
@@ -770,33 +769,33 @@ export default function App() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {GAMES.map(game => {
+              const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc');
               return (
                 <div 
                   key={game.id} 
-                  className={`p-6 rounded-xl border flex flex-col transition-all duration-300 relative overflow-hidden
-                    ${!game.available ? 'bg-slate-800/50 border-slate-700 opacity-70 grayscale' : 'bg-slate-800 hover:shadow-xl hover:-translate-y-1 cursor-pointer'}
-                    ${game.available && game.id === 'xox' ? 'border-indigo-500/50 hover:border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.15)]' : ''}
-                    ${game.available && game.id === 'tavla' ? 'border-amber-600/50 hover:border-amber-400 shadow-[0_0_15px_rgba(217,119,6,0.15)]' : ''}
-                    ${game.available && game.id === 'satranc' ? 'border-emerald-500/50 hover:border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : ''}
+                  className={`p-6 rounded-xl border-2 flex flex-col transition-all duration-300 relative overflow-hidden
+                    ${!game.available ? 'bg-slate-800/60 border-slate-700 opacity-70 grayscale' : ''}
+                    ${isPremium ? 'bg-slate-800 border-indigo-500/40 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer hover:-translate-y-1' : ''}
+                    ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}
                   `}
                 >
                   {/* Oyunlara Özel Arkaplan Işıkları */}
                   {game.id === 'xox' && (
                     <>
-                       <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
-                       <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div>
                     </>
                   )}
                   {game.id === 'tavla' && (
                     <>
-                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-500/10 blur-[40px] rounded-full pointer-events-none"></div>
-                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-600/10 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-600/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-700/20 blur-[40px] rounded-full pointer-events-none"></div>
                     </>
                   )}
                   {game.id === 'satranc' && (
                     <>
-                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/10 blur-[40px] rounded-full pointer-events-none"></div>
-                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/10 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div>
                     </>
                   )}
 
@@ -885,6 +884,12 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [rollingDice, setRollingDice] = useState(false);
   const [diceAnim, setDiceAnim] = useState([null, null]);
+  const [gameToast, setGameToast] = useState(null);
+
+  const showToast = (msg) => {
+    setGameToast(msg);
+    setTimeout(() => setGameToast(null), 3500);
+  };
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -926,11 +931,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
     setDiceAnim([d1, d2]);
     
-    // Çökme sorununu %100 çözen güvenli zar atışı (Animasyon iptal, doğrudan sonuç)
     setTimeout(async () => {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
       if (moves.length === 0) {
+        showToast("Geçerli hamle yok! Sıra rakibe geçiyor...");
         const oppUid = roomData.players.find(id => id !== user.uid);
         await updateDoc(roomRef, {
           dice: finalDice, usedDice: finalDice,
@@ -1005,6 +1010,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       } else {
         const nextMoves = getValidMoves(newBoard, myColor, newRemainingDice, newBar[myColor] || 0, newBorneOff[myColor] || 0);
         if (nextMoves.length === 0) {
+          showToast("Kalan zarlar için geçerli hamle yok! Sıra geçiyor...");
           const oppUid = roomData.players.find(id => id !== user.uid);
           await updateDoc(roomRef, {
             board: newBoard, bar: newBar, borneOff: newBorneOff,
@@ -1159,6 +1165,13 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
+      {/* OYUN İÇİ BİLDİRİM (TOAST) */}
+      {gameToast && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">
+          {gameToast}
+        </div>
+      )}
+
       {/* BAŞLIK VE SKOR */}
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-amber-500/30">
         <div className="flex items-center gap-2">
@@ -1555,7 +1568,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
 
   const [selectedSquare, setSelectedSquare] = useState(null);
-  const [promotionPrompt, setPromotionPrompt] = useState(null); // { from, to, movingPiece, targetPiece }
+  const [promotionPrompt, setPromotionPrompt] = useState(null); 
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -1584,7 +1597,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const gameState = getGameState(currentBoard, oppColor);
     let newWinner = null;
     if (gameState === 'mate') {
-       newWinner = user.uid; // Matı yapan kazanır
+       newWinner = user.uid; 
     } else if (gameState === 'stalemate') {
        newWinner = 'Draw';
     }
@@ -1764,9 +1777,9 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         {statusMsg}
       </div>
 
-      {/* TAHTA (Çizgi hatası olmayan tam esnek grid) */}
-      <div className="relative w-full max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700">
-        <div className="grid grid-cols-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900">
+      {/* TAHTA (Tamamen Esnek ve Kare Olmaya Zorlanmış Grid) */}
+      <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700">
+        <div className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900">
           {visualIndices.map((i) => {
             const cell = board[i];
             const r = Math.floor(i / 8);
@@ -1792,8 +1805,8 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 {/* Taşlar */}
                 {cell && (
                   <span 
-                    className={`text-[45px] md:text-[55px] leading-none drop-shadow-md select-none 
-                    ${cell.color === 'w' ? 'text-slate-100 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full
+                    ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >
                     {CHESS_ICONS[cell.type]}
                   </span>
