@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye, Dice5 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
@@ -992,12 +992,24 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [rollingDice, setRollingDice] = useState(false);
   const [gameToast, setGameToast] = useState(null); 
+  
+  const toastTimeoutRef = useRef(null);
+  const rollTimeoutRef = useRef(null);
 
+  // BUG 1 FİX: Toast Cleanup (Dangling Timer) Engellendi
   const showToast = (msg) => {
     playSound('error');
     setGameToast(msg);
-    setTimeout(() => setGameToast(null), 3000);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => setGameToast(null), 3000);
   };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (rollTimeoutRef.current) clearTimeout(rollTimeoutRef.current);
+    };
+  }, []);
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -1033,14 +1045,18 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
   const handleRollDice = async () => {
     if (!isMyTurn || myPhase !== 'rolling' || rollingDice) return;
+    
+    // UI'ı sadece veritabanından okuyacağımız için artık local array state'i kullanmıyoruz.
+    // Ancak küçük bir görsel gecikme (zar sesini hissetmek için) koyabiliriz.
     setRollingDice(true);
     playSound('dice');
 
-    setTimeout(async () => {
+    const d1 = rollDie();
+    const d2 = rollDie();
+    const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+    
+    rollTimeoutRef.current = setTimeout(async () => {
       try {
-        const d1 = rollDie();
-        const d2 = rollDie();
-        const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
         const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
         const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
         
@@ -1186,6 +1202,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const currentTurnName = roomData.turn === p1Uid ? p1Name : p2Name;
   const canBearOff = isMyTurn && myPhase === 'moving' && selectedPoint !== null && validToPoints.has(myColor === 'white' ? 24 : -1);
 
+  // BUG 1 FIX: displayDice array'inin güvenli kimliklerle (keys) render edilmesi
   const displayDice = rollingDice ? [null, null] : (remainingDice.length > 0 ? remainingDice : dice);
 
   const getTopPoints = () => isWhitePlayer
@@ -1228,8 +1245,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const isValidTo = selectedPoint !== null && validToPoints.has(pointIdx);
     const visualIndex = isTop ? topPoints.indexOf(pointIdx) : bottomPoints.indexOf(pointIdx);
     const isDark = visualIndex % 2 === 0;
+    
+    // BUG 2 FIX: Kırık taş varsa ama ZATEN SEÇİLMİŞSE (!hasBar || selectedPoint === -1), 
+    // giriş noktalarına tıklanmasına izin ver.
     const hasBar = (bar?.[myColor] || 0) > 0;
-    const clickable = isMyTurn && myPhase === 'moving' && !hasBar;
+    const clickable = isMyTurn && myPhase === 'moving' && (!hasBar || selectedPoint === -1);
 
     return (
       <div
@@ -1284,7 +1304,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
-      {/* OYUN İÇİ BİLDİRİM (TOAST) */}
       {gameToast && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">
           {gameToast}
@@ -1317,17 +1336,15 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         </div>
       </div>
 
-      {/* DURUM MESAJI */}
       <div className={`text-center font-bold text-lg drop-shadow-md ${roomData.winner ? 'text-yellow-400' : isMyTurn ? 'text-amber-400' : 'text-slate-400'}`}>
         {isSpectator && <span className="text-xs text-yellow-400 font-bold mr-2 uppercase flex items-center justify-center gap-1"><Eye className="w-3 h-3" /> SEYİRCİ</span>}
         {roomData.winner ? `🏆 ${winnerName} Kazandı!` : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${currentTurnName} düşünüyor...`}
       </div>
 
-      {/* ZAR ALANI */}
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner">
         <div className="flex gap-2">
-          {(displayDice.length > 0 ? displayDice : [null, null]).map((val, i) => (
-            <div key={i}>{renderDie(val, false)}</div>
+          {displayDice.map((val, i) => (
+            <div key={`dice-ui-${i}-${val || 'empty'}`}>{renderDie(val, false)}</div>
           ))}
         </div>
         {isMyTurn && myPhase === 'rolling' && !roomData.winner && (
@@ -1416,7 +1433,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         )}
       </div>
 
-      {/* RÖVANŞ EKRANI */}
       {roomData.winner && roomData.status !== 'abandoned' && (
         <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-md rounded-2xl p-6 border border-amber-500/30 shadow-2xl mt-4">
           {isSpectator ? (
@@ -1783,7 +1799,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     }
 
     if (validMoves.includes(index)) {
-      const newBoard = board.map(p => p ? { ...p } : null); // DEEP COPY
+      const newBoard = board.map(p => p ? { ...p } : null); 
       const movingPiece = { ...newBoard[selectedSquare] };
       const targetPiece = newBoard[index] ? { ...newBoard[index] } : null;
       
@@ -1952,6 +1968,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             const isValidMove = validMoves.includes(i);
             const isKingInDanger = amIInCheck && i === myKingIdx;
             
+            // BUG 3 FIX: Siyah piyonların lacivert olmasını engelleyen doğrudan CSS zorlamaları
             return (
               <div 
                 key={i} 
@@ -1972,8 +1989,12 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 {/* Taşlar */}
                 {cell && (
                   <span 
-                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full
-                    ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                    style={{
+                       WebkitTextFillColor: cell.color === 'w' ? '#ffffff' : '#000000',
+                       color: cell.color === 'w' ? '#ffffff' : '#000000',
+                       textShadow: cell.color === 'w' ? '0 2px 2px rgba(0,0,0,0.8)' : '0 1px 1px rgba(255,255,255,0.4)'
+                    }}
+                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none select-none flex items-center justify-center w-full h-full`}
                   >
                     {CHESS_ICONS[cell.type]}
                   </span>
@@ -1983,7 +2004,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           })}
         </div>
 
-        {/* PİYON TERFİ MENÜSÜ (Overlay) */}
+        {/* PİYON TERFİ MENÜSÜ */}
         {promotionPrompt && (
            <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center backdrop-blur-sm rounded-lg">
               <div className="bg-slate-800 p-6 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center">
@@ -1996,7 +2017,12 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                                const promotedPiece = { ...promotionPrompt.movingPiece, type };
                                executeMove(promotionPrompt.from, promotionPrompt.to, promotedPiece, promotionPrompt.targetPiece, promotionPrompt.newBoard);
                             }} 
-                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}
+                            style={{
+                               WebkitTextFillColor: myColor === 'w' ? '#ffffff' : '#000000',
+                               color: myColor === 'w' ? '#ffffff' : '#000000',
+                               textShadow: myColor === 'w' ? '0 2px 2px rgba(0,0,0,0.8)' : '0 1px 1px rgba(255,255,255,0.4)'
+                            }}
+                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2`}
                          >
                             {CHESS_ICONS[type]}
                          </button>
