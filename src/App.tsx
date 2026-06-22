@@ -995,10 +995,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     setRollingDice(true);
     playSound('dice');
 
-    // Animasyonsuz, anında zar at ve kaydet (Mavi ekran çökmesini önler)
+    // Animasyonsuz, anında zar at ve kaydet (Mobil Firebase çökmesini önler)
     const d1 = rollDie(), d2 = rollDie();
     const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
     
+    // Kısa bir bekleme (Animasyon hissi için, ama veritabanını yormaz)
     setTimeout(async () => {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
