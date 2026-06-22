@@ -71,7 +71,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // ==========================================
-// SES EFEKTLERİ
+// SES EFEKTLERİ SENTEZLEYİCİSİ
 // ==========================================
 let audioCtx = null;
 const playSound = (type) => {
@@ -87,20 +87,31 @@ const playSound = (type) => {
     const now = audioCtx.currentTime;
     
     if (type === 'move') { 
+      // XOX Taşı
       osc.type = 'sine';
       osc.frequency.setValueAtTime(400, now);
       osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
       gain.gain.setValueAtTime(1, now);
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
       osc.start(now); osc.stop(now + 0.1);
-    } else if (type === 'capture') { 
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(150, now);
+    } else if (type === 'chess-move') {
+      // Satranç/Tavla tok ahşap sesi
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(300, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.1);
+      gain.gain.setValueAtTime(1, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'chess-capture') {
+      // Taş yeme sert sesi
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(400, now);
       osc.frequency.exponentialRampToValueAtTime(50, now + 0.15);
       gain.gain.setValueAtTime(1, now);
       gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
       osc.start(now); osc.stop(now + 0.15);
     } else if (type === 'dice') { 
+      // Zar atma sesi
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(800, now);
       osc.frequency.setValueAtTime(600, now + 0.05);
@@ -262,6 +273,9 @@ function getGameState(board, nextTurnColor) {
   return 'active';
 }
 
+// ==========================================
+// TAVLA OYUN MANTIĞI
+// ==========================================
 function rollDie() {
   return Math.floor(Math.random() * 6) + 1;
 }
@@ -393,6 +407,10 @@ function applyMove(board, bar, borneOff, color, from, to, die) {
   return { board: newBoard, bar: newBar, borneOff: newBorneOff };
 }
 
+// ==========================================
+// ANA APP BİLEŞENİ
+// ==========================================
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -417,6 +435,13 @@ export default function App() {
   }, [roomCode, user, roomData]);
 
   useEffect(() => {
+    const savedCode = localStorage.getItem('activeRoom');
+    if (savedCode && !roomCode) {
+      setRoomCode(savedCode);
+    }
+  }, []);
+
+  useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -434,11 +459,6 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoadingAuth(false);
-      
-      const savedCode = localStorage.getItem('activeRoom');
-      if (savedCode && currentUser) {
-         setRoomCode(savedCode);
-      }
     });
     return () => unsubscribe();
   }, []);
@@ -902,6 +922,7 @@ export default function App() {
                     ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}
                   `}
                 >
+                  {/* Oyunlara Özel Arkaplan Işıkları */}
                   {game.id === 'xox' && (
                     <>
                        <div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
@@ -994,6 +1015,9 @@ export default function App() {
   );
 }
 
+// ==========================================
+// TAVLA OYUNU BİLEŞENİ (Manuel Tur Geçişli & Animasyonsuz)
+// ==========================================
 function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const p1Uid = roomData.players?.[0];
   const p2Uid = roomData.players?.[1];
@@ -1003,22 +1027,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const myPhase = roomData.phase;
 
   const [selectedPoint, setSelectedPoint] = useState(null);
-  const [gameToast, setGameToast] = useState(null); 
-  
-  const toastTimeoutRef = useRef(null);
-
-  const showToast = (msg) => {
-    playSound('error');
-    setGameToast(msg);
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    toastTimeoutRef.current = setTimeout(() => setGameToast(null), 3000);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    };
-  }, []);
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -1054,26 +1062,22 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
   const handleRollDice = async () => {
     if (!isMyTurn || myPhase !== 'rolling') return;
-    
     playSound('dice');
 
+    const d1 = rollDie();
+    const d2 = rollDie();
+    const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+    
     try {
-      const d1 = rollDie();
-      const d2 = rollDie();
-      const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-      const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
-      
-      if (moves.length === 0) {
-        showToast("Geçerli hamle yok! Sıra rakibe geçiyor...");
-        const oppUid = roomData.players.find(id => id !== user.uid);
-        await updateDoc(roomRef, {
-          dice: finalDice, usedDice: finalDice,
-          phase: 'rolling', turn: oppUid
-        });
-      } else {
-        await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' });
-      }
+      // Animasyonları kaldırdık, saf ve temiz Firestore güncellemesi.
+      await updateDoc(roomRef, {
+        dice: finalDice, 
+        usedDice: [], 
+        phase: 'moving',
+        // Geri almak için zarların atıldığı andaki tahtayı kaydediyoruz
+        turnStartState: { board, bar, borneOff }
+      });
     } catch (err) {
        console.error("Zar atarken hata:", err);
     }
@@ -1111,53 +1115,30 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       );
 
       const isCapture = board[targetIdx] && board[targetIdx].color !== null && board[targetIdx].color !== myColor;
-      playSound(isCapture ? 'capture' : 'move');
+      playSound(isCapture ? 'chess-capture' : 'chess-move');
 
       const newUsedDice = [...usedDice, move.die];
-      const newRemainingDice = (() => {
-        const d = [...dice];
-        const u = [...newUsedDice];
-        for (const v of u) { const i = d.indexOf(v); if (i !== -1) d.splice(i, 1); }
-        return d;
-      })();
 
       setSelectedPoint(null);
 
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+
       if (newBorneOff[myColor] >= 15) {
         playSound('win');
-        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
         const newScores = { ...roomData.scores, [user.uid]: (roomData.scores?.[user.uid] || 0) + 1 };
         await updateDoc(roomRef, {
           board: newBoard, bar: newBar, borneOff: newBorneOff,
-          dice, usedDice: newUsedDice, winner: user.uid,
+          usedDice: newUsedDice, winner: user.uid,
           scores: newScores, phase: 'rolling', turn: null
         });
         return;
       }
 
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-      if (newRemainingDice.length === 0) {
-        const oppUid = roomData.players.find(id => id !== user.uid);
-        await updateDoc(roomRef, {
-          board: newBoard, bar: newBar, borneOff: newBorneOff,
-          dice, usedDice: newUsedDice, phase: 'rolling', turn: oppUid
-        });
-      } else {
-        const nextMoves = getValidMoves(newBoard, myColor, newRemainingDice, newBar[myColor] || 0, newBorneOff[myColor] || 0);
-        if (nextMoves.length === 0) {
-          showToast("Kalan zarlar için geçerli hamle yok! Sıra geçiyor...");
-          const oppUid = roomData.players.find(id => id !== user.uid);
-          await updateDoc(roomRef, {
-            board: newBoard, bar: newBar, borneOff: newBorneOff,
-            dice, usedDice: newUsedDice.concat(newRemainingDice), phase: 'rolling', turn: oppUid
-          });
-        } else {
-          await updateDoc(roomRef, {
-            board: newBoard, bar: newBar, borneOff: newBorneOff,
-            dice, usedDice: newUsedDice, phase: 'moving', turn: user.uid
-          });
-        }
-      }
+      // OTOMATİK TUR GEÇİŞİ İPTAL EDİLDİ! Sadece tahtayı güncelliyoruz.
+      await updateDoc(roomRef, {
+        board: newBoard, bar: newBar, borneOff: newBorneOff,
+        usedDice: newUsedDice
+      });
     }
   };
 
@@ -1165,6 +1146,33 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     if (!isMyTurn || myPhase !== 'moving' || selectedPoint === null) return;
     const bearOffTo = myColor === 'white' ? 24 : -1;
     await handlePointClick(bearOffTo);
+  };
+
+  // Yeni: Hamleyi Geri Al
+  const handleUndo = async () => {
+    if (!isMyTurn || myPhase !== 'moving' || !roomData.turnStartState) return;
+    playSound('chess-move');
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, {
+      board: roomData.turnStartState.board,
+      bar: roomData.turnStartState.bar,
+      borneOff: roomData.turnStartState.borneOff,
+      usedDice: []
+    });
+    setSelectedPoint(null);
+  };
+
+  // Yeni: Sırayı Rakibe Geçir
+  const handleEndTurn = async () => {
+    if (!isMyTurn || myPhase !== 'moving') return;
+    playSound('chess-move');
+    const oppUid = roomData.players.find(id => id !== user.uid);
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, {
+      phase: 'rolling',
+      turn: oppUid
+    });
+    setSelectedPoint(null);
   };
 
   const requestRematch = async () => {
@@ -1188,7 +1196,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       dice: [], usedDice: [], phase: 'rolling',
       turn: nextStarter, startingPlayer: nextStarter,
       playerColors: newColors,
-      winner: null, rematchRequestedBy: null
+      winner: null, rematchRequestedBy: null, turnStartState: null
     });
   };
 
@@ -1203,7 +1211,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const currentTurnName = roomData.turn === p1Uid ? p1Name : p2Name;
   const canBearOff = isMyTurn && myPhase === 'moving' && selectedPoint !== null && validToPoints.has(myColor === 'white' ? 24 : -1);
 
+  // Zarları Gösterme Mantığı
   const displayDice = remainingDice.length > 0 ? remainingDice : dice;
+
+  // Sırayı Geç butonunun aktif olması için ya zar bitmeli ya da hamle kalmamalı
+  const hasValidMoves = remainingDice.length > 0 && getValidMoves(board, myColor, remainingDice, bar[myColor] || 0, borneOff[myColor] || 0).length > 0;
 
   const getTopPoints = () => isWhitePlayer
     ? Array.from({ length: 12 }, (_, i) => 12 + i)
@@ -1246,7 +1258,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const visualIndex = isTop ? topPoints.indexOf(pointIdx) : bottomPoints.indexOf(pointIdx);
     const isDark = visualIndex % 2 === 0;
     
-    // YENİLEME: !hasBar koşulu seçilmiş bir kırık taş varsa (selectedPoint === -1) geçersiz kılınıyor
     const hasBar = (bar?.[myColor] || 0) > 0;
     const clickable = isMyTurn && myPhase === 'moving' && (!hasBar || selectedPoint === -1);
 
@@ -1303,13 +1314,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
-      {/* OYUN İÇİ BİLDİRİM (TOAST) */}
-      {gameToast && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">
-          {gameToast}
-        </div>
-      )}
-
       {/* BAŞLIK VE SKOR */}
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-amber-500/30">
         <div className="flex flex-col items-start flex-1 min-w-0 pr-2">
@@ -1342,20 +1346,38 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         {roomData.winner ? `🏆 ${winnerName} Kazandı!` : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${currentTurnName} düşünüyor...`}
       </div>
 
-      <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner">
+      <div className="flex flex-col items-center gap-3 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner w-full max-w-md">
         <div className="flex gap-2">
           {displayDice.map((val, i) => (
             <div key={`dice-ui-${i}-${val || 'empty'}`}>{renderDie(val, false)}</div>
           ))}
         </div>
         {isMyTurn && myPhase === 'rolling' && !roomData.winner && (
-          <button onClick={handleRollDice} className="bg-amber-600 hover:bg-amber-500 px-4 sm:px-5 py-2 rounded-lg font-bold text-sm sm:text-base transition-colors flex items-center gap-2 shadow-lg hover:shadow-amber-500/50 text-white">
+          <button onClick={handleRollDice} className="bg-amber-600 hover:bg-amber-500 px-4 sm:px-5 py-2 rounded-lg font-bold text-sm sm:text-base transition-colors flex items-center gap-2 shadow-lg hover:shadow-amber-500/50 text-white w-full justify-center">
             🎲 Zar At
           </button>
         )}
+        {/* YENİ: MANUEL TUR GEÇİŞİ VE GERİ AL BUTONLARI */}
+        {isMyTurn && myPhase === 'moving' && !roomData.winner && (
+          <div className="flex flex-col sm:flex-row gap-3 w-full justify-center">
+            <button 
+              onClick={handleUndo} 
+              className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg font-bold text-white border border-slate-500 transition-colors shadow-lg flex justify-center items-center gap-2"
+            >
+              🔄 Geri Al
+            </button>
+            <button 
+              onClick={handleEndTurn} 
+              disabled={hasValidMoves} 
+              className={`flex-1 px-4 py-2 rounded-lg font-bold text-white transition-all shadow-lg border flex justify-center items-center gap-2 ${hasValidMoves ? 'bg-emerald-900/50 border-emerald-900/50 opacity-50 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400 animate-pulse shadow-emerald-500/50'}`}
+            >
+              ✅ Sırayı Geç
+            </button>
+          </div>
+        )}
         {isMyTurn && myPhase === 'moving' && remainingDice.length > 0 && (
-          <div className="text-xs sm:text-sm text-slate-400">
-            Kalan: <span className="font-mono text-amber-300 font-bold">{remainingDice.join(', ')}</span>
+          <div className="text-xs sm:text-sm text-slate-400 mt-1">
+            Kalan Zar: <span className="font-mono text-amber-300 font-bold">{remainingDice.join(', ')}</span>
           </div>
         )}
       </div>
@@ -1386,7 +1408,8 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
         {/* Orta Çizgi (Menteşe) */}
         <div className="h-8 sm:h-12 md:h-14 w-full flex items-center justify-center bg-[#290f02] my-1 sm:my-2 border-y-[6px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,0.8)] relative z-20">
-          <div className="text-[10px] sm:text-xs text-amber-700/30 font-black tracking-widest uppercase">Menteşe</div>
+          <div className="w-[2px] h-full bg-black/40 mr-12"></div>
+          <div className="w-[2px] h-full bg-black/40 ml-12"></div>
         </div>
 
         {/* Alt Sıra */}
@@ -1458,6 +1481,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   );
 }
 
+// ==========================================
+// XOX (Tic-Tac-Toe) Orijinal ve Kusursuz Versiyon
+// ==========================================
 function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isPlayer1 = roomData.players[0] === user.uid;
   const isPlayer2 = roomData.players[1] === user.uid;
@@ -1707,6 +1733,10 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   );
 }
 
+// ==========================================
+// SATRANÇ OYUNU MANTIĞI VE BİLEŞENİ
+// ==========================================
+
 function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const p1Uid = roomData.players?.[0];
   const p2Uid = roomData.players?.[1];
@@ -1730,7 +1760,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const validMoves = (selectedSquare !== null && isMyTurn) ? getStrictLegalMoves(board, selectedSquare) : [];
 
   const executeMove = async (from, to, movingPiece, targetPiece, currentBoard) => {
-    playSound(targetPiece ? 'capture' : 'move');
+    playSound(targetPiece ? 'chess-capture' : 'chess-move');
     
     if (movingPiece.type === 'k' && Math.abs(from - to) === 2) {
       if (to === 62) { currentBoard[61] = currentBoard[63]; currentBoard[63] = null; } 
@@ -1802,7 +1832,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
 
       if (isPromotion) {
-         playSound('move');
+         playSound('chess-move');
          setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard });
          return;
       }
@@ -1893,8 +1923,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             {sorted.map((p, i) => (
                 <span 
                   key={i} 
-                  style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
-                  className={`text-lg md:text-xl leading-none drop-shadow-md ${isWhitePieces ? 'text-white' : 'text-black'}`}
+                  className={`text-lg md:text-xl leading-none drop-shadow-md font-sans ${isWhitePieces ? 'text-white' : 'text-black'}`}
                 >
                   {CHESS_ICONS[p]}
                 </span>
@@ -1989,8 +2018,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                 {/* Taşlar */}
                 {cell && (
                   <span 
-                    style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
-                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full
+                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans
                     ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >
                     {CHESS_ICONS[cell.type]}
@@ -2014,8 +2042,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                                const promotedPiece = { ...promotionPrompt.movingPiece, type };
                                executeMove(promotionPrompt.from, promotionPrompt.to, promotedPiece, promotionPrompt.targetPiece, promotionPrompt.newBoard);
                             }} 
-                            style={{ fontVariantEmoji: 'text', fontFamily: '"Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif' }}
-                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}
+                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 font-sans ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}
                          >
                             {CHESS_ICONS[type]}
                          </button>
