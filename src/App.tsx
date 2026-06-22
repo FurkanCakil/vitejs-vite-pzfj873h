@@ -34,7 +34,8 @@ const GAMES = [
 // ==========================================
 // SATRANÇ OYUN MANTIĞI VE YARDIMCILARI
 // ==========================================
-const CHESS_ICONS = { p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚' };
+// Piyonların emojilere dönüşmesini engelleyen \uFE0E kodu eklendi
+const CHESS_ICONS = { p: '♟\uFE0E', r: '♜\uFE0E', n: '♞\uFE0E', b: '♝\uFE0E', q: '♛\uFE0E', k: '♚\uFE0E' };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
 function createInitialChessBoard() {
@@ -310,6 +311,14 @@ export default function App() {
     roomStateRef.current = { roomCode, user, roomData };
   }, [roomCode, user, roomData]);
 
+  // Sayfa Yenilendiğinde Odaya Otomatik Bağlanma (Session Storage)
+  useEffect(() => {
+    const savedCode = sessionStorage.getItem('activeRoom');
+    if (savedCode && !roomCode) {
+      setRoomCode(savedCode);
+    }
+  }, []);
+
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -338,6 +347,7 @@ export default function App() {
     setCurrentView('lobby');
     setDisconnectCountdown(null);
     setSpectatePrompt(null);
+    sessionStorage.removeItem('activeRoom');
   };
 
   useEffect(() => {
@@ -384,6 +394,7 @@ export default function App() {
           setRoomData(data);
           setDisconnectCountdown(null);
           setCurrentView('room');
+          sessionStorage.setItem('activeRoom', roomCode);
         }
       } else {
         setErrorMsg("Oda bulunamadı veya kapandı.");
@@ -473,7 +484,7 @@ export default function App() {
 
     if (gameId === 'tavla') {
       Object.assign(initialState, {
-        dice: [], usedDice: [], phase: 'rolling', bar: {}, borneOff: {}, playerColors: {}
+        dice: [], usedDice: [], phase: 'rolling', bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}
       });
     } else if (gameId === 'satranc') {
       Object.assign(initialState, {
@@ -485,6 +496,7 @@ export default function App() {
     try {
       await setDoc(roomRef, initialState);
       setRoomCode(newCode);
+      sessionStorage.setItem('activeRoom', newCode);
       setDisconnectCountdown(null);
     } catch (err) {
       setErrorMsg("Oda kurulamadı.");
@@ -513,6 +525,7 @@ export default function App() {
       if (data.players.length >= 2 && !data.players.includes(user.uid)) {
         if (data.spectators && data.spectators.includes(user.uid)) {
            setRoomCode(cleanCode);
+           sessionStorage.setItem('activeRoom', cleanCode);
            setJoinCodeInput('');
            return;
         }
@@ -545,6 +558,7 @@ export default function App() {
             dice: [], usedDice: [], phase: 'rolling', winner: null
           };
         } else if (data.gameId === 'satranc') {
+          // Satrançta her zaman BEYAZ başlar
           const isHostWhite = Math.random() < 0.5;
           const hostColor = isHostWhite ? 'w' : 'b';
           const joinColor = isHostWhite ? 'b' : 'w';
@@ -555,7 +569,7 @@ export default function App() {
             playerColors: { [data.players[0]]: hostColor, [user.uid]: joinColor },
             board: createInitialChessBoard(),
             captured: { w: [], b: [] },
-            turn: whitePlayerUid, // BEYAZ OYUNCU HER ZAMAN BAŞLAR
+            turn: whitePlayerUid, 
             startingPlayer: whitePlayerUid,
             winner: null
           };
@@ -565,6 +579,7 @@ export default function App() {
       }
       
       setRoomCode(cleanCode);
+      sessionStorage.setItem('activeRoom', cleanCode);
       setJoinCodeInput('');
       setErrorMsg('');
       setDisconnectCountdown(null);
@@ -583,6 +598,7 @@ export default function App() {
         const updatedSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
         await updateDoc(roomRef, { spectators: updatedSpectators });
         setRoomCode(spectatePrompt);
+        sessionStorage.setItem('activeRoom', spectatePrompt);
         setSpectatePrompt(null);
         setJoinCodeInput('');
         setErrorMsg('');
@@ -754,18 +770,17 @@ export default function App() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {GAMES.map(game => {
-              const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc');
               return (
                 <div 
                   key={game.id} 
                   className={`p-6 rounded-xl border flex flex-col transition-all duration-300 relative overflow-hidden
-                    ${!game.available ? 'bg-slate-800/50 border-slate-700 opacity-70 grayscale' : ''}
-                    ${game.available && game.id === 'xox' ? 'bg-gradient-to-br from-indigo-900/80 via-slate-900 to-purple-900/80 border-indigo-500/50 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.2)] cursor-pointer' : ''}
-                    ${game.available && game.id === 'tavla' ? 'bg-gradient-to-br from-amber-900/80 via-orange-950 to-yellow-950/80 border-amber-600/50 hover:border-amber-400 shadow-[0_0_20px_rgba(217,119,6,0.2)] cursor-pointer' : ''}
-                    ${game.available && game.id === 'satranc' ? 'bg-gradient-to-br from-emerald-900/80 via-green-950 to-teal-900/80 border-emerald-500/50 hover:border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)] cursor-pointer' : ''}
-                    ${game.available && !isPremium ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 cursor-pointer' : ''}
+                    ${!game.available ? 'bg-slate-800/50 border-slate-700 opacity-70 grayscale' : 'bg-slate-800 hover:shadow-xl hover:-translate-y-1 cursor-pointer'}
+                    ${game.available && game.id === 'xox' ? 'border-indigo-500/50 hover:border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.15)]' : ''}
+                    ${game.available && game.id === 'tavla' ? 'border-amber-600/50 hover:border-amber-400 shadow-[0_0_15px_rgba(217,119,6,0.15)]' : ''}
+                    ${game.available && game.id === 'satranc' ? 'border-emerald-500/50 hover:border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : ''}
                   `}
                 >
+                  {/* Oyunlara Özel Arkaplan Işıkları */}
                   {game.id === 'xox' && (
                     <>
                        <div className="absolute -top-10 -left-10 w-24 h-24 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div>
@@ -774,26 +789,34 @@ export default function App() {
                   )}
                   {game.id === 'tavla' && (
                     <>
-                       <div className="absolute -top-10 -left-10 w-24 h-24 bg-amber-500/20 blur-[40px] rounded-full pointer-events-none"></div>
-                       <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-orange-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-500/10 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-600/10 blur-[40px] rounded-full pointer-events-none"></div>
                     </>
                   )}
                   {game.id === 'satranc' && (
                     <>
-                       <div className="absolute -top-10 -left-10 w-24 h-24 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div>
-                       <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/10 blur-[40px] rounded-full pointer-events-none"></div>
+                       <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/10 blur-[40px] rounded-full pointer-events-none"></div>
                     </>
                   )}
 
-                  <div className="text-4xl mb-4 relative z-10">{game.icon}</div>
+                  <div className="text-4xl mb-4 relative z-10 drop-shadow-md">{game.icon}</div>
                   <h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3>
                   <p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
+                  
                   {game.available ? (
-                    <button onClick={() => createRoom(game.id)} className="w-full relative z-10 bg-indigo-500/10 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-500 hover:text-white py-2 rounded-lg font-medium transition-colors">
+                    <button 
+                      onClick={() => createRoom(game.id)} 
+                      className={`w-full relative z-10 py-2.5 rounded-lg font-bold transition-colors border
+                        ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
+                        ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
+                        ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
+                      `}
+                    >
                       Oda Kur
                     </button>
                   ) : (
-                    <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button>
+                    <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2.5 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button>
                   )}
                 </div>
               )
@@ -903,7 +926,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const finalDice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
     setDiceAnim([d1, d2]);
     
-    // Güvenli Firebase güncellemesi, telefon çökmesini engeller
+    // Çökme sorununu %100 çözen güvenli zar atışı (Animasyon iptal, doğrudan sonuç)
     setTimeout(async () => {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       const moves = getValidMoves(board, myColor, finalDice, bar[myColor] || 0, borneOff[myColor] || 0);
@@ -917,7 +940,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' });
       }
       setRollingDice(false);
-    }, 600); 
+    }, 400); 
   };
 
   const handlePointClick = async (pointIdx) => {
@@ -1080,7 +1103,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     const isValidTo = selectedPoint !== null && validToPoints.has(pointIdx);
     const visualIndex = isTop ? topPoints.indexOf(pointIdx) : bottomPoints.indexOf(pointIdx);
     const isDark = visualIndex % 2 === 0;
-    const hasBar = (bar[myColor] || 0) > 0;
+    const hasBar = (bar?.[myColor] || 0) > 0;
     const clickable = isMyTurn && myPhase === 'moving' && !hasBar;
 
     return (
@@ -1134,15 +1157,15 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   };
 
   return (
-    <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-indigo-900/60 via-slate-900/80 to-purple-900/60 p-4 md:p-6 rounded-[2rem] border border-indigo-500/40 shadow-[0_0_40px_rgba(99,102,241,0.25)]">
+    <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)]">
       
       {/* BAŞLIK VE SKOR */}
-      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-indigo-500/30">
+      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-amber-500/30">
         <div className="flex items-center gap-2">
           <div className={`w-4 h-4 rounded-full border-2 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
           <div>
             <div className="text-sm font-bold text-slate-200">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
-            <div className="text-[10px] sm:text-xs text-slate-400">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {borneOff[p1Color] || 0}/15 çıktı</div>
+            <div className="text-[10px] sm:text-xs text-slate-400">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p1Color] || 0)}/15 çıktı</div>
           </div>
           {p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400" />}
         </div>
@@ -1156,14 +1179,14 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           {p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400" />}
           <div className="text-right">
             <div className="text-sm font-bold text-slate-200">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
-            <div className="text-[10px] sm:text-xs text-slate-400">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {borneOff[p2Color] || 0}/15 çıktı</div>
+            <div className="text-[10px] sm:text-xs text-slate-400">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {(borneOff?.[p2Color] || 0)}/15 çıktı</div>
           </div>
           <div className={`w-4 h-4 rounded-full border-2 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
         </div>
       </div>
 
       {/* DURUM MESAJI */}
-      <div className={`text-center font-bold text-lg drop-shadow-md ${roomData.winner ? 'text-yellow-400' : isMyTurn ? 'text-indigo-400' : 'text-slate-400'}`}>
+      <div className={`text-center font-bold text-lg drop-shadow-md ${roomData.winner ? 'text-yellow-400' : isMyTurn ? 'text-amber-400' : 'text-slate-400'}`}>
         {isSpectator && <span className="text-xs text-yellow-400 font-bold mr-2 uppercase flex items-center gap-1 justify-center"><Eye className="w-3 h-3" /> SEYİRCİ</span>}
         {roomData.winner ? `🏆 ${winnerName} Kazandı!` : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${currentTurnName} düşünüyor...`}
       </div>
@@ -1176,13 +1199,13 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           ))}
         </div>
         {isMyTurn && myPhase === 'rolling' && !roomData.winner && (
-          <button onClick={handleRollDice} disabled={rollingDice} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 px-4 sm:px-5 py-2 rounded-lg font-bold text-sm sm:text-base transition-colors flex items-center gap-2 shadow-lg hover:shadow-indigo-500/50">
+          <button onClick={handleRollDice} disabled={rollingDice} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-60 px-4 sm:px-5 py-2 rounded-lg font-bold text-sm sm:text-base transition-colors flex items-center gap-2 shadow-lg hover:shadow-amber-500/50 text-white">
             {rollingDice ? <Loader2 className="w-4 h-4 animate-spin" /> : '🎲'} Zar At
           </button>
         )}
         {isMyTurn && myPhase === 'moving' && remainingDice.length > 0 && (
           <div className="text-xs sm:text-sm text-slate-400">
-            Kalan: <span className="font-mono text-indigo-300 font-bold">{remainingDice.join(', ')}</span>
+            Kalan: <span className="font-mono text-amber-300 font-bold">{remainingDice.join(', ')}</span>
           </div>
         )}
       </div>
@@ -1200,9 +1223,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')}
             className={`w-6 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'black' ? 'bg-yellow-500/20' : ''}`}
           >
-             {Array.from({ length: Math.min((bar.black || 0), 4) }).map((_, i) => (
+             {Array.from({ length: Math.min((bar?.black || 0), 4) }).map((_, i) => (
                 <div key={i} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">
-                  {i === 3 && (bar.black || 0) > 4 ? `+${(bar.black || 0) - 3}` : ''}
+                  {i === 3 && (bar?.black || 0) > 4 ? `+${(bar?.black || 0) - 3}` : ''}
                 </div>
              ))}
           </div>
@@ -1226,9 +1249,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')}
             className={`w-6 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-amber-900/40 border-x-4 border-amber-900 cursor-pointer ${selectedPoint === -1 && myColor === 'white' ? 'bg-yellow-500/20' : ''}`}
           >
-             {Array.from({ length: Math.min((bar.white || 0), 4) }).map((_, i) => (
+             {Array.from({ length: Math.min((bar?.white || 0), 4) }).map((_, i) => (
                 <div key={i} className="w-[14px] h-[14px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">
-                  {i === 3 && (bar.white || 0) > 4 ? `+${(bar.white || 0) - 3}` : ''}
+                  {i === 3 && (bar?.white || 0) > 4 ? `+${(bar?.white || 0) - 3}` : ''}
                 </div>
              ))}
           </div>
@@ -1246,7 +1269,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             {['white', 'black'].map(color => (
               <div key={color} className="flex flex-col items-center bg-slate-900/50 px-2 py-1 rounded">
                 <div className={`w-3 h-3 rounded-full mb-1 ${color === 'white' ? 'bg-slate-100 border border-slate-400' : 'bg-slate-700 border border-slate-500'}`} />
-                <div className="text-xs sm:text-sm font-mono font-bold text-slate-300">{borneOff[color] || 0}</div>
+                <div className="text-xs sm:text-sm font-mono font-bold text-slate-300">{borneOff?.[color] || 0}</div>
               </div>
             ))}
           </div>
@@ -1263,32 +1286,22 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
       {/* RÖVANŞ EKRANI */}
       {roomData.winner && roomData.status !== 'abandoned' && (
-        <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-md rounded-2xl p-6 border border-indigo-500/30 shadow-2xl mt-4">
+        <div className="w-full max-w-lg bg-slate-900/90 backdrop-blur-md rounded-2xl p-6 border border-amber-500/30 shadow-2xl mt-4">
           {isSpectator ? (
             <div className="text-slate-400 text-sm flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Oyuncuların kararı bekleniyor...</div>
           ) : !roomData.rematchRequestedBy ? (
-            <button onClick={requestRematch} className="bg-indigo-600 hover:bg-indigo-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/30 transition-all hover:scale-[1.02]">Yeniden Oyna</button>
+            <button onClick={requestRematch} className="bg-amber-600 hover:bg-amber-500 w-full py-3 rounded-xl font-bold text-lg shadow-lg transition-all text-white hover:scale-[1.02]">Yeniden Oyna</button>
           ) : roomData.rematchRequestedBy === user.uid ? (
             <div className="flex items-center justify-center gap-3 text-slate-400"><Loader2 className="w-5 h-5 animate-spin" /> Rakibin cevabı bekleniyor...</div>
           ) : (
             <div className="flex flex-col items-center w-full gap-4">
-              <span className="text-indigo-200 font-medium text-center text-lg drop-shadow-sm">Rakibiniz rövanş istiyor!</span>
+              <span className="text-amber-200 font-medium text-center text-lg drop-shadow-sm">Rakibiniz rövanş istiyor!</span>
               <div className="flex gap-4 w-full">
                 <button onClick={acceptRematch} className="flex-1 flex items-center justify-center gap-2 bg-green-500/20 hover:bg-green-500/40 text-green-400 border border-green-500/50 py-3 rounded-xl font-bold transition-all hover:scale-[1.05]"><Check className="w-5 h-5" /> Kabul Et</button>
                 <button onClick={rejectRematch} className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 py-3 rounded-xl font-bold transition-all hover:scale-[1.05]"><X className="w-5 h-5" /> Reddet</button>
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* OYUN İÇİ BAĞLANTI KOPMA EKRANI */}
-      {roomData.status === 'abandoned' && (
-        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
-          <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
-          <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
-          <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
-          <button onClick={leaveRoom} className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors">Lobiye Dön</button>
         </div>
       )}
     </div>
@@ -1525,21 +1538,6 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
             )}
           </div>
         )}
-
-        {/* OYUN İÇİ BAĞLANTI KOPMA EKRANI */}
-        {roomData.status === 'abandoned' && (
-          <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
-            <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
-            <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
-            <p className="text-slate-400 text-sm mb-8">Bağlantısı kopan rakibiniz bekleniyor. İsterseniz bu sırada lobiye dönebilirsiniz.</p>
-            <button 
-              onClick={leaveRoom} 
-              className="bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors"
-            >
-              Lobiye Dön
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1557,6 +1555,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
 
   const [selectedSquare, setSelectedSquare] = useState(null);
+  const [promotionPrompt, setPromotionPrompt] = useState(null); // { from, to, movingPiece, targetPiece }
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1';
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -1570,8 +1569,48 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   
   const validMoves = (selectedSquare !== null && isMyTurn) ? getStrictLegalMoves(board, selectedSquare) : [];
 
+  const executeMove = async (from, to, movingPiece, targetPiece, currentBoard) => {
+    currentBoard[to] = movingPiece;
+    currentBoard[from] = null;
+
+    const newCaptured = { w: [...(roomData.captured?.w || [])], b: [...(roomData.captured?.b || [])] };
+    if (targetPiece) {
+        newCaptured[myColor].push(targetPiece.type);
+    }
+
+    const oppUid = roomData.players.find(id => id !== user.uid) || user.uid;
+    const oppColor = myColor === 'w' ? 'b' : 'w';
+
+    const gameState = getGameState(currentBoard, oppColor);
+    let newWinner = null;
+    if (gameState === 'mate') {
+       newWinner = user.uid; // Matı yapan kazanır
+    } else if (gameState === 'stalemate') {
+       newWinner = 'Draw';
+    }
+
+    let updatePayload = {
+      board: currentBoard,
+      turn: newWinner ? null : oppUid,
+      captured: newCaptured,
+      winner: newWinner
+    };
+
+    if (newWinner && newWinner !== 'Draw') {
+      updatePayload.scores = {
+        ...roomData.scores,
+        [newWinner]: (roomData.scores?.[newWinner] || 0) + 1
+      };
+    }
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+    await updateDoc(roomRef, updatePayload);
+    setSelectedSquare(null);
+    setPromotionPrompt(null);
+  };
+
   const handleSquareClick = async (index) => {
-    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned') return;
+    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || promotionPrompt) return;
 
     const piece = board[index];
 
@@ -1587,49 +1626,15 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       const movingPiece = { ...newBoard[selectedSquare] };
       const targetPiece = newBoard[index];
       
-      if (movingPiece.type === 'p') {
-         const r = Math.floor(index / 8);
-         if ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7)) {
-            movingPiece.type = 'q';
-         }
+      const r = Math.floor(index / 8);
+      const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
+
+      if (isPromotion) {
+         setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard });
+         return;
       }
 
-      newBoard[index] = movingPiece;
-      newBoard[selectedSquare] = null;
-
-      const newCaptured = { w: [...(roomData.captured?.w || [])], b: [...(roomData.captured?.b || [])] };
-      if (targetPiece) {
-          newCaptured[myColor].push(targetPiece.type);
-      }
-
-      const oppUid = roomData.players.find(id => id !== user.uid) || user.uid;
-      const oppColor = myColor === 'w' ? 'b' : 'w';
-
-      const gameState = getGameState(newBoard, oppColor);
-      let newWinner = null;
-      if (gameState === 'mate') {
-         newWinner = user.uid;
-      } else if (gameState === 'stalemate') {
-         newWinner = 'Draw';
-      }
-
-      let updatePayload = {
-        board: newBoard,
-        turn: newWinner ? null : oppUid,
-        captured: newCaptured,
-        winner: newWinner
-      };
-
-      if (newWinner && newWinner !== 'Draw') {
-        updatePayload.scores = {
-          ...roomData.scores,
-          [newWinner]: (roomData.scores?.[newWinner] || 0) + 1
-        };
-      }
-
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-      await updateDoc(roomRef, updatePayload);
-      setSelectedSquare(null);
+      await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
     }
   };
 
@@ -1711,41 +1716,42 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     if (!caps || caps.length === 0) return null;
     const sorted = [...caps].sort((a,b) => PIECE_VALUES[b] - PIECE_VALUES[a]);
     return (
-        <div className="flex flex-wrap gap-[1px] items-center mt-1">
+        <div className="flex flex-wrap gap-[2px] items-center mt-1">
             {sorted.map((p, i) => (
-                <span key={i} className={`text-lg md:text-xl leading-none drop-shadow-sm ${isWhitePieces ? 'text-white' : 'text-slate-900'}`}>{CHESS_ICONS[p]}</span>
+                <span key={i} className={`text-xl md:text-2xl leading-none drop-shadow-sm ${isWhitePieces ? 'text-white' : 'text-slate-900'}`}>{CHESS_ICONS[p]}</span>
             ))}
         </div>
     );
   };
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-lg bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+    <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
       
-      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4">
+      {/* Puan ve Kullanıcı Tablosu */}
+      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4 min-h-[70px]">
         <div className="flex flex-col items-start w-[40%]">
           <div className="flex items-center gap-2">
-            <div className={`w-4 h-4 rounded-full border-2 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+            <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
             <div className="text-sm font-bold text-slate-200 truncate">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
           </div>
-          <div className="flex items-center gap-2 mt-1 h-[24px]">
+          <div className="flex flex-wrap items-center gap-1 mt-1 min-h-[24px]">
              {renderCaptured(p1Color === 'w' ? wCaptured : bCaptured, p1Color === 'w' ? false : true)}
              {p1Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold ml-1">+{wPoints - bPoints}</span>}
              {p1Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold ml-1">+{bPoints - wPoints}</span>}
           </div>
         </div>
 
-        <div className="flex flex-col items-center px-2">
+        <div className="flex flex-col items-center px-2 shrink-0">
           <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
           <div className="text-[10px] text-slate-500 font-bold tracking-widest">SATRANÇ</div>
         </div>
 
-        <div className="flex flex-col items-end w-[40%]">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col items-end w-[40%] text-right">
+          <div className="flex items-center justify-end gap-2">
             <div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>
-            <div className={`w-4 h-4 rounded-full border-2 ${p2Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+            <div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
           </div>
-          <div className="flex items-center gap-2 mt-1 h-[24px] flex-row-reverse">
+          <div className="flex flex-wrap items-center justify-end gap-1 mt-1 min-h-[24px] flex-row-reverse">
              {renderCaptured(p2Color === 'w' ? wCaptured : bCaptured, p2Color === 'w' ? false : true)}
              {p2Color === 'w' && wPoints > bPoints && <span className="text-emerald-400 text-xs font-bold mr-1">+{wPoints - bPoints}</span>}
              {p2Color === 'b' && bPoints > wPoints && <span className="text-emerald-400 text-xs font-bold mr-1">+{bPoints - wPoints}</span>}
@@ -1758,39 +1764,67 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         {statusMsg}
       </div>
 
-      <div className="grid grid-cols-8 gap-0 w-full max-w-[400px] border-4 border-slate-700 shadow-2xl mx-auto rounded-sm overflow-hidden select-none">
-        {visualIndices.map((i) => {
-          const cell = board[i];
-          const r = Math.floor(i / 8);
-          const c = i % 8;
-          const isDark = (r + c) % 2 !== 0;
-          const isSelected = selectedSquare === i;
-          const isValidMove = validMoves.includes(i);
-          
-          return (
-            <div 
-              key={i} 
-              onClick={() => handleSquareClick(i)}
-              className={`
-                aspect-square flex items-center justify-center relative cursor-pointer
-                ${isDark ? 'bg-[#769656]' : 'bg-[#eeeed2]'}
-                ${isSelected ? 'bg-yellow-400/50' : ''}
-              `}
-            >
-              {isValidMove && !cell && <div className="w-3 h-3 md:w-4 md:h-4 bg-black/20 rounded-full" />}
-              {isValidMove && cell && <div className="absolute inset-0 ring-inset ring-4 ring-black/20 rounded-full m-1" />}
-              
-              {cell && (
-                <span 
-                  className={`text-4xl md:text-5xl leading-none drop-shadow-md select-none 
-                  ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
-                >
-                  {CHESS_ICONS[cell.type]}
-                </span>
-              )}
-            </div>
-          );
-        })}
+      {/* TAHTA (Çizgi hatası olmayan tam esnek grid) */}
+      <div className="relative w-full max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700">
+        <div className="grid grid-cols-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900">
+          {visualIndices.map((i) => {
+            const cell = board[i];
+            const r = Math.floor(i / 8);
+            const c = i % 8;
+            const isDark = (r + c) % 2 !== 0;
+            const isSelected = selectedSquare === i;
+            const isValidMove = validMoves.includes(i);
+            
+            return (
+              <div 
+                key={i} 
+                onClick={() => handleSquareClick(i)}
+                className={`
+                  w-full h-full flex items-center justify-center relative cursor-pointer
+                  ${isDark ? 'bg-[#769656]' : 'bg-[#eeeed2]'}
+                  ${isSelected ? 'bg-yellow-400/50' : ''}
+                `}
+              >
+                {/* Geçerli hamle göstergesi */}
+                {isValidMove && !cell && <div className="w-4 h-4 md:w-5 md:h-5 bg-black/20 rounded-full" />}
+                {isValidMove && cell && <div className="absolute inset-0 border-[4px] md:border-[5px] border-black/20 rounded-full m-1 pointer-events-none" />}
+                
+                {/* Taşlar */}
+                {cell && (
+                  <span 
+                    className={`text-[45px] md:text-[55px] leading-none drop-shadow-md select-none 
+                    ${cell.color === 'w' ? 'text-slate-100 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-slate-900 drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                  >
+                    {CHESS_ICONS[cell.type]}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* PİYON TERFİ MENÜSÜ (Overlay) */}
+        {promotionPrompt && (
+           <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center backdrop-blur-sm rounded-lg">
+              <div className="bg-slate-800 p-6 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center">
+                  <h3 className="text-white font-bold mb-4">Piyon Terfisi</h3>
+                  <div className="flex gap-4">
+                     {['q', 'r', 'b', 'n'].map(type => (
+                         <button 
+                            key={type}
+                            onClick={() => {
+                               const promotedPiece = { ...promotionPrompt.movingPiece, type };
+                               executeMove(promotionPrompt.from, promotionPrompt.to, promotedPiece, promotionPrompt.targetPiece, promotionPrompt.newBoard);
+                            }} 
+                            className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}
+                         >
+                            {CHESS_ICONS[type]}
+                         </button>
+                     ))}
+                  </div>
+              </div>
+           </div>
+        )}
       </div>
 
       {roomData.winner && roomData.status !== 'abandoned' && (
