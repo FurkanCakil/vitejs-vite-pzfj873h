@@ -194,8 +194,10 @@ function getBoardStateString(board, enPassantTarget, turn) {
 function getGameState(board, nextTurnColor, halfmoveClock = 0, history = [], enPassantTarget = null) {
   if (isInsufficientMaterial(board)) return 'draw_material';
   if (halfmoveClock >= 100) return 'draw_50move'; 
+  
   const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
-  if (history.filter(h => h === currentStateStr).length >= 2) return 'draw_repetition';
+  // BUG 1 FİX: history filter >= 3 olmalıdır. (Kendi iterasyonunu da hesaba katar)
+  if (history.filter(h => h === currentStateStr).length >= 3) return 'draw_repetition';
 
   let hasMoves = false, kingIdx = -1;
   for (let i = 0; i < 64; i++) {
@@ -334,7 +336,7 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [nickname, setNickname] = useState(localStorage.getItem('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false); // TAM EKRAN STATE'İ
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const [currentView, setCurrentView] = useState('lobby'); 
   const [roomCode, setRoomCode] = useState('');
@@ -355,21 +357,21 @@ export default function App() {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); }
   }, []);
 
-  // TAM EKRAN (FULLSCREEN) YAKALAYICI EVENT LİSTENER
+  // BUG 2 FİX: Tam Ekran durumunu yalnızca event listener yönetir, API öncesi sahte set engellendi.
   useEffect(() => {
-    const handleFullscreenChange = () => { if (!document.fullscreenElement) setIsFullscreen(false); };
+    const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const toggleFullscreen = () => {
-    if (!isFullscreen) {
-      setIsFullscreen(true);
-      if (document.documentElement.requestFullscreen) { document.documentElement.requestFullscreen().catch(e => console.log(e)); }
-    } else {
-      setIsFullscreen(false);
-      if (document.fullscreenElement && document.exitFullscreen) { document.exitFullscreen().catch(e => console.log(e)); }
-    }
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) await document.exitFullscreen();
+      }
+    } catch (e) { console.error("Fullscreen error:", e); }
   };
 
   useEffect(() => {
@@ -385,10 +387,7 @@ export default function App() {
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); localStorage.removeItem('activeRoom');
-    if (isFullscreen) {
-        setIsFullscreen(false);
-        if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
-    }
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
 
   useEffect(() => {
@@ -438,6 +437,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [disconnectCountdown, roomCode]);
 
+  // BUG 3 FİX: visibilitychange anında eski snapshot verisine güvenmek yerine anlık getDoc ile kontrol ediliyor.
   useEffect(() => {
     const handleDisconnect = () => {
       const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
@@ -451,37 +451,45 @@ export default function App() {
          if (data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); } 
       } 
       else if (document.visibilityState === 'visible') { 
-         if (data.status === 'abandoned' && data.abandonedBy === u.uid && data.abandonReason !== 'left') { updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {}); } 
+         getDoc(roomRef).then(snap => {
+            if (snap.exists() && snap.data().status === 'abandoned' && snap.data().abandonedBy === u.uid && snap.data().abandonReason !== 'left') {
+                updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {});
+            }
+         }).catch(()=>{});
       }
     };
     window.addEventListener('beforeunload', handleDisconnect); window.addEventListener('pagehide', handleDisconnect); window.addEventListener('visibilitychange', handleVisibility); 
     return () => { window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility); };
   }, []);
 
+  // BUG 13 FİX: runTransaction kullanılarak oda kodu çakışma riski tamamen önlendi
   const createRoom = async (gameId) => {
     if (!user) return;
-    let newCode = ''; let exists = true;
-    while (exists) {
+    let newCode = ''; let success = false;
+    while (!success) {
        newCode = Math.random().toString(36).slice(2).padEnd(6, '0').substring(0, 6).toUpperCase();
-       const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode));
-       exists = snap.exists();
-    }
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
-    const initialState = {
-      gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
-      scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : null,
-      turn: null, startingPlayer: null, winner: null, drawOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
-    };
-    
-    if (gameId === 'tavla') { 
-      Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null }); 
-    } else if (gameId === 'satranc') { 
-      const initBoard = createInitialChessBoard();
-      Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null }); 
-    }
+       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
+       
+       const initialState = {
+         gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
+         scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : null,
+         turn: null, startingPlayer: null, winner: null, drawOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
+       };
+       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null }); } 
+       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null }); }
 
-    try { await setDoc(roomRef, initialState); setRoomCode(newCode); localStorage.setItem('activeRoom', newCode); setDisconnectCountdown(null); } 
-    catch (err) { setErrorMsg("Oda kurulamadı."); }
+       try {
+         await runTransaction(db, async (t) => {
+            const snap = await t.get(roomRef);
+            if (snap.exists()) throw new Error("exists");
+            t.set(roomRef, initialState);
+         });
+         success = true;
+         setRoomCode(newCode); localStorage.setItem('activeRoom', newCode); setDisconnectCountdown(null);
+       } catch (err) {
+         if (err.message !== "exists") { setErrorMsg("Oda kurulamadı."); break; }
+       }
+    }
   };
 
   const joinRoom = async (code) => {
@@ -590,7 +598,7 @@ export default function App() {
 
       {leftOverlayTimer !== null && currentView === 'lobby' && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/80 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
-          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative animate-in fade-in zoom-in duration-300">
+          <div className="bg-slate-800 p-8 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm w-full relative transition-all duration-300 transform scale-100 opacity-100">
             <button onClick={() => setLeftOverlayTimer(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"><X className="w-6 h-6" /></button>
             <Users className="w-16 h-16 text-red-400 mb-4 opacity-80" />
             <h2 className="text-xl font-bold text-center mb-2">Rakibiniz Ayrıldı</h2>
@@ -632,7 +640,7 @@ export default function App() {
       )}
 
       {errorMsg && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-[99999] bg-red-500/95 backdrop-blur-sm border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl animate-in slide-in-from-top-4">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-[99999] bg-red-500/95 backdrop-blur-sm border border-red-400 text-white p-4 rounded-xl flex items-center gap-3 shadow-2xl transition-all duration-300 transform scale-100 opacity-100">
           <AlertCircle className="w-6 h-6 shrink-0" />
           <span className="font-medium text-sm md:text-base flex-grow text-center">{errorMsg}</span>
           <button onClick={() => setErrorMsg('')} className="bg-black/20 hover:bg-black/40 p-1 rounded transition-colors shrink-0"><X className="w-5 h-5" /></button>
@@ -708,9 +716,15 @@ export default function App() {
 
           <div className={isFullscreen ? "fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center p-2 sm:p-4" : "w-full bg-slate-800 rounded-2xl p-4 md:p-8 shadow-2xl border border-slate-700 flex flex-col items-center relative transition-all duration-300"}>
             {isFullscreen && (
-               <button onClick={toggleFullscreen} className="fixed top-3 right-3 sm:top-6 sm:right-6 z-[6000] bg-slate-800/80 hover:bg-slate-700 p-2 sm:p-3 rounded-full text-slate-300 transition-all shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-600" title="Tam Ekrandan Çık">
-                  <Minimize className="w-5 h-5 sm:w-6 sm:h-6" />
-               </button>
+               <>
+                 <div className="fixed top-3 left-3 sm:top-6 sm:left-6 z-[6000] flex items-center gap-2 bg-slate-800/80 px-4 py-2 rounded-full border border-slate-600 shadow-lg backdrop-blur-md">
+                    <span className="text-xs text-slate-400">Kod:</span>
+                    <span className="font-mono font-bold text-indigo-300">{roomCode}</span>
+                 </div>
+                 <button onClick={toggleFullscreen} className="fixed top-3 right-3 sm:top-6 sm:right-6 z-[6000] bg-slate-800/80 hover:bg-slate-700 p-2 sm:p-3 rounded-full text-slate-300 transition-all shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-600 backdrop-blur-md" title="Tam Ekrandan Çık">
+                    <Minimize className="w-5 h-5 sm:w-6 sm:h-6" />
+                 </button>
+               </>
             )}
 
             {roomData?.status === 'waiting' ? (
@@ -718,7 +732,7 @@ export default function App() {
                 <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mx-auto mb-4" />
                 <h2 className="text-2xl font-bold mb-2">Rakip Bekleniyor...</h2>
                 <p className="text-slate-400 max-w-sm mx-auto mb-6">Arkadaşına oda kodunu gönder. O da bu kodu yazarak masaya katılabilir.</p>
-                <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">{roomCode}</div>
+                {!isFullscreen && <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">{roomCode}</div>}
               </div>
             ) : (
               <div className="w-full flex flex-col items-center">
@@ -1000,7 +1014,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] overflow-hidden">
-      {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">{gameToast}</div>}
+      {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
       
       {roomData.cubeOfferBy && !roomData.winner && (
          <div className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center backdrop-blur-sm rounded-[2rem]">
@@ -1025,6 +1039,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         <div className="flex flex-col items-center px-4 shrink-0 group">
            <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
            <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center gap-1"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0}</div>
+           <div className={`mt-1 bg-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg flex items-center gap-1 ${canOfferCube ? 'cursor-pointer hover:bg-amber-500' : 'cursor-default opacity-80'}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
+               KÜP: x{roomData.cubeValue || 1}
+           </div>
         </div>
         <div className={`flex flex-col items-end flex-1 min-w-0 pl-2 text-right p-1 rounded-lg transition-colors ${roomData.turn === p2Uid ? 'bg-slate-700/50 ring-1 ring-amber-400/50' : ''}`}>
           <div className="flex items-center justify-end gap-2 w-full">{p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}<div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} /></div>
@@ -1037,9 +1054,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
          <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase==='opening' && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
            {roomData.winner ? `🏆 ${roomData.winner === p1Uid ? p1Name : p2Name} Kazandı!` : myPhase === 'opening' ? 'Açılış Zarları Bekleniyor...' : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${roomData.turn === p1Uid ? p1Name : p2Name} düşünüyor...`}
          </div>
-         <button disabled={isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className={`bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${(!isSpectator && myPhase === 'rolling' && (roomData.cubeOwner === user.uid || roomData.cubeOwner === null)) ? 'hover:bg-amber-500' : ''}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
-            KÜP: x{roomData.cubeValue || 1}
-         </button>
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner min-h-[64px]">
@@ -1066,7 +1080,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       <div className="relative w-full aspect-[3/4] sm:aspect-square md:aspect-[4/3] max-w-3xl bg-amber-950/80 border-4 border-amber-900 rounded-xl overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.5)] flex flex-col p-1 sm:p-2">
         <div className="flex-1 w-full flex">
           <div className="flex-1 flex gap-[1px]">{topPoints.slice(0, 6).map(idx => renderPoint(idx, true))}</div>
-          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='black' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset animate-pulse' : ''} ${selectedPoint === -1 && myColor === 'black' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
+          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='black' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset' : ''} ${selectedPoint === -1 && myColor === 'black' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
              {Array.from({ length: Math.max(0, Math.min(barB, 4)) }).map((_, i) => ( <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">{i === 3 && barB > 4 ? `+${barB - 3}` : ''}</div> ))}
           </div>
           <div className="flex-1 flex gap-[1px]">{topPoints.slice(6, 12).map(idx => renderPoint(idx, true))}</div>
@@ -1074,7 +1088,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         <div className="h-8 sm:h-12 md:h-14 w-full flex items-center justify-center bg-[#290f02] my-1 sm:my-2 border-y-[6px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,0.8)] relative z-20"><div className="text-[10px] sm:text-xs text-amber-700/30 font-black tracking-widest uppercase">Menteşe</div></div>
         <div className="flex-1 w-full flex">
           <div className="flex-1 flex gap-[1px]">{bottomPoints.slice(0, 6).map(idx => renderPoint(idx, false))}</div>
-          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='white' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset animate-pulse' : ''} ${selectedPoint === -1 && myColor === 'white' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
+          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='white' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset' : ''} ${selectedPoint === -1 && myColor === 'white' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
              {Array.from({ length: Math.max(0, Math.min(barW, 4)) }).map((_, i) => ( <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">{i === 3 && barW > 4 ? `+${barW - 3}` : ''}</div> ))}
           </div>
           <div className="flex-1 flex gap-[1px]">{bottomPoints.slice(6, 12).map(idx => renderPoint(idx, false))}</div>
@@ -1092,7 +1106,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
               </div>
             ))}
           </div>
-          {canBearOff && <div className="text-xs sm:text-sm text-emerald-400 font-bold bg-emerald-500/20 px-2 py-1 rounded animate-pulse">Tıkla!</div>}
+          {canBearOff && <div className="text-xs sm:text-sm text-emerald-400 font-bold bg-emerald-500/20 px-2 py-1 rounded">Tıkla!</div>}
         </div>
         {selectedPoint !== null && ( <div className="flex items-center text-xs sm:text-sm text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 px-4 py-3 rounded-xl shadow-lg"><span>Seçili: Nokta <strong>{selectedPoint === -1 ? 'BAR' : selectedPoint + 1}</strong> — Hedef seç</span><button onClick={() => setSelectedPoint(null)} className="ml-3 p-1 bg-yellow-400/20 rounded hover:bg-yellow-400/40 text-yellow-200 transition-colors"><X className="w-4 h-4" /></button></div> )}
       </div>
@@ -1110,7 +1124,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       )}
 
       {roomData.status === 'abandoned' && (
-        <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
+        <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center transition-all duration-300 transform scale-100 opacity-100">
           <Loader2 className="w-12 h-12 animate-spin text-amber-500 mb-4 drop-shadow-lg" />
           <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
           <button onClick={leaveRoom} className="mt-8 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors">Odadan Çık</button>
@@ -1121,13 +1135,14 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 }
 
 function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
-  const isPlayer1 = roomData.players[0] === user.uid; const isPlayer2 = roomData.players[1] === user.uid;
+  const isPlayer1 = roomData.players[0] === user.uid; 
+  const isPlayer2 = roomData.players?.[1] === user.uid; // BUG 9 FIX
   const isSpectator = !isPlayer1 && !isPlayer2; 
   const mySymbol = isPlayer1 ? 'X' : (isPlayer2 ? 'O' : null);
   const isMyTurn = roomData.turn === user.uid;
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const p1Uid = roomData.players[0]; const p2Uid = roomData.players[1];
+  const p1Uid = roomData.players[0]; const p2Uid = roomData.players?.[1];
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
 
@@ -1196,7 +1211,7 @@ function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
           )}
         </div>
         {roomData.status === 'abandoned' && (
-          <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center animate-in fade-in duration-300">
+          <div className="absolute inset-0 z-[100] bg-slate-900/80 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[2rem] p-4 text-center transition-all duration-300 transform scale-100 opacity-100">
             <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4 drop-shadow-lg" />
             <h3 className="text-xl font-bold text-white mb-2">Rakip Bekleniyor...</h3>
             <button onClick={leaveRoom} className="mt-8 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/50 px-6 py-2 rounded-lg font-medium transition-colors">Odadan Çık</button>
@@ -1331,7 +1346,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         const r = Math.floor(index / 8);
         const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
 
-        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); setIsSubmitting(false); return; }
+        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); return; } // Removed internal setIsSubmitting(false)
         await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
       } catch(err) { showToast("Hamle gönderilemedi."); }
       finally { setIsSubmitting(false); }
@@ -1405,7 +1420,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
-      {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 animate-in fade-in zoom-in duration-300 pointer-events-none text-center">{gameToast}</div>}
+      {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
       
       {roomData.drawOffer && roomData.drawOffer !== user.uid && !isSpectator && !roomData.winner && (
          <div className="w-full bg-emerald-600/30 border border-emerald-400 text-emerald-100 p-3 rounded-xl mb-4 flex justify-between items-center shadow-lg animate-pulse">
