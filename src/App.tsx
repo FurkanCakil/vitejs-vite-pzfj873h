@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye, WifiOff, Flag, Handshake, ArrowUpDown, Maximize, Minimize } from 'lucide-react';
+import { Copy, Users, Gamepad2, AlertCircle, Loader2, ArrowLeft, Check, X, Crown, Eye, WifiOff, Flag, Handshake, ArrowUpDown, Maximize, Minimize, Undo2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
@@ -27,6 +27,13 @@ const GAMES = [
   { id: 'satranc', name: 'Satranç', desc: 'Şah mat zamanı.', available: true, icon: '♟️' },
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
 ];
+
+const generateRoomCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+  return result;
+};
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -82,16 +89,6 @@ const playSound = (type) => {
 const CHESS_ICONS = { p: '♟\uFE0E', r: '♜\uFE0E', n: '♞\uFE0E', b: '♝\uFE0E', q: '♛\uFE0E', k: '♚\uFE0E' };
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const chessPieceStyle = { fontFamily: '"Segoe UI Symbol", "Arial Unicode MS", serif', WebkitTextFillColor: 'currentColor' };
-
-// O, 0, I, 1, L gibi kafa karıştıran karakterleri alfabeden çıkardık!
-const generateRoomCode = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let result = '';
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-};
 
 function createInitialChessBoard() {
   const board = Array(64).fill(null);
@@ -206,8 +203,7 @@ function getGameState(board, nextTurnColor, halfmoveClock = 0, history = [], enP
   if (halfmoveClock >= 100) return 'draw_50move'; 
   
   const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
-  // BUG 1 FİX: history filter >= 3 olmalıdır. (Kendi iterasyonunu da hesaba katar)
-  if (history.filter(h => h === currentStateStr).length >= 3) return 'draw_repetition';
+  if (history.filter(h => h === currentStateStr).length >= 2) return 'draw_repetition';
 
   let hasMoves = false, kingIdx = -1;
   for (let i = 0; i < 64; i++) {
@@ -367,7 +363,6 @@ export default function App() {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); }
   }, []);
 
-  // BUG 2 FİX: Tam Ekran durumunu yalnızca event listener yönetir, API öncesi sahte set engellendi.
   useEffect(() => {
     const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -377,7 +372,11 @@ export default function App() {
   const toggleFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
-        if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+        if (document.documentElement.requestFullscreen) {
+            await document.documentElement.requestFullscreen();
+        } else {
+            setErrorMsg("Tam ekran modu bu tarayıcıda (iOS/Safari) desteklenmiyor.");
+        }
       } else {
         if (document.exitFullscreen) await document.exitFullscreen();
       }
@@ -447,7 +446,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [disconnectCountdown, roomCode]);
 
-  // BUG 3 FİX: visibilitychange anında eski snapshot verisine güvenmek yerine anlık getDoc ile kontrol ediliyor.
   useEffect(() => {
     const handleDisconnect = () => {
       const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
@@ -472,21 +470,20 @@ export default function App() {
     return () => { window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility); };
   }, []);
 
-  // BUG 13 FİX: runTransaction kullanılarak oda kodu çakışma riski tamamen önlendi
   const createRoom = async (gameId) => {
     if (!user) return;
     let newCode = ''; let success = false;
     while (!success) {
-      newCode = generateRoomCode();
+       newCode = generateRoomCode();
        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
        
        const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
          scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : null,
-         turn: null, startingPlayer: null, winner: null, drawOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
+         turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
        };
-       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null }); } 
-       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null }); }
+       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); } 
+       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
 
        try {
          await runTransaction(db, async (t) => {
@@ -528,12 +525,12 @@ export default function App() {
             const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'white' : 'black';
             updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'black' : 'white' };
             updatePayload.board = createInitialBoard(); updatePayload.bar = { white: 0, black: 0 }; updatePayload.borneOff = { white: 0, black: 0 }; 
-            updatePayload.phase = 'opening'; updatePayload.openingRolls = { p1: null, p2: null }; updatePayload.turn = null; updatePayload.cubeValue = 1; updatePayload.cubeOwner = null; updatePayload.cubeOfferBy = null;
+            updatePayload.phase = 'opening'; updatePayload.openingRolls = { p1: null, p2: null }; updatePayload.turn = null; updatePayload.cubeValue = 1; updatePayload.cubeOwner = null; updatePayload.cubeOfferBy = null; updatePayload.initialTurnState = null;
           } else if (data.gameId === 'satranc') {
             const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'w' : 'b'; const whitePlayerUid = isHostWhite ? data.players[0] : user.uid;
             const initBoard = createInitialChessBoard();
             updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
-            updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid;
+            updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
           } else {
             const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
             updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
@@ -787,11 +784,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
   const p1Color = roomData.playerColors?.[p1Uid] || 'white'; const p2Color = roomData.playerColors?.[p2Uid] || 'black';
 
-  const boardStr = useMemo(() => JSON.stringify(roomData.board), [roomData.board]);
   const board = useMemo(() => {
-     const parsed = boardStr ? JSON.parse(boardStr) : null;
-     return (Array.isArray(parsed) && parsed.length === 24) ? parsed : createInitialBoard();
-  }, [boardStr]);
+     return (Array.isArray(roomData.board) && roomData.board.length === 24) ? roomData.board : createInitialBoard();
+  }, [roomData.board]);
   
   const dice = roomData.dice || []; const usedDice = roomData.usedDice || [];
   const barW = roomData.bar?.white || 0; const barB = roomData.bar?.black || 0;
@@ -810,7 +805,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       return getStrictValidMoves(board, myColor, remainingDice, {white: barW, black: barB}, {white: borneW, black: borneB});
     }
     return [];
-  }, [isMyTurn, myPhase, remainingDiceStr, boardStr, myColor, barW, barB, borneW, borneB]);
+  }, [isMyTurn, myPhase, remainingDiceStr, board, myColor, barW, barB, borneW, borneB]);
 
   const validFromPoints = new Set(validMoves.map(m => m.from));
   const validToPoints = selectedPoint !== null ? new Set(validMoves.filter(m => m.from === selectedPoint).map(m => m.to)) : new Set();
@@ -845,7 +840,8 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                      const starterUid = p1Col === 'white' ? (p1Starts ? p1Uid : p2Uid) : (p1Starts ? p2Uid : p1Uid);
                      transaction.update(roomRef, { 
                          openingRolls: currentRolls, turn: starterUid, startingPlayer: starterUid, phase: 'moving', 
-                         dice: [currentRolls.p1, currentRolls.p2].sort((a,b)=>b-a), usedDice: [] 
+                         dice: [currentRolls.p1, currentRolls.p2].sort((a,b)=>b-a), usedDice: [],
+                         initialTurnState: { board: data.board, bar: data.bar, borneOff: data.borneOff }
                      });
                  }
              } else {
@@ -863,7 +859,12 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         showToast("Geçerli hamle yok! Sıra geçiyor...");
         const oppUid = roomData.players.find(id => id !== user.uid) || null;
         await updateDoc(roomRef, { dice: finalDice, usedDice: finalDice, phase: 'rolling', turn: oppUid });
-      } else { await updateDoc(roomRef, { dice: finalDice, usedDice: [], phase: 'moving' }); }
+      } else { 
+        await updateDoc(roomRef, { 
+          dice: finalDice, usedDice: [], phase: 'moving',
+          initialTurnState: { board: roomData.board, bar: roomData.bar, borneOff: roomData.borneOff }
+        }); 
+      }
     } catch (err) { showToast("Ağ hatası: Zar atılamadı."); } 
     finally { setIsSubmitting(false); }
   };
@@ -939,6 +940,21 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     }
   };
 
+  const handleUndoMove = async () => {
+    if (!isMyTurn || myPhase !== 'moving' || isSubmitting || !roomData.initialTurnState) return;
+    setIsSubmitting(true);
+    try {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), {
+            board: roomData.initialTurnState.board,
+            bar: roomData.initialTurnState.bar,
+            borneOff: roomData.initialTurnState.borneOff,
+            usedDice: []
+        });
+        setSelectedPoint(null);
+    } catch(e) { showToast("Geri alınamadı."); }
+    finally { setIsSubmitting(false); }
+  };
+
   const handleCubeOffer = async () => {
      if (!isMyTurn || myPhase !== 'rolling' || roomData.winner || isSubmitting) return; 
      if (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid) { showToast("Küp rakipte!"); return; }
@@ -965,7 +981,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const acceptRematch = async () => {
     if (isSpectator) return; const nextStarter = roomData.players.find(id => id !== roomData.startingPlayer) || roomData.players[0];
     const newColors = {}; for (const uid of roomData.players) newColors[uid] = roomData.playerColors[uid] === 'white' ? 'black' : 'white';
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: createInitialBoard(), bar: { white: 0, black: 0 }, borneOff: { white: 0, black: 0 }, dice: [], usedDice: [], phase: 'opening', openingRolls: {p1: null, p2: null}, turn: null, startingPlayer: nextStarter, playerColors: newColors, winner: null, rematchRequestedBy: null, cubeValue: 1, cubeOwner: null, cubeOfferBy: null });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: createInitialBoard(), bar: { white: 0, black: 0 }, borneOff: { white: 0, black: 0 }, dice: [], usedDice: [], phase: 'opening', openingRolls: {p1: null, p2: null}, turn: null, startingPlayer: nextStarter, playerColors: newColors, winner: null, rematchRequestedBy: null, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null });
   };
   const rejectRematch = async () => { if (isSpectator) return; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed', closedBy: user.uid }); };
 
@@ -1064,6 +1080,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
          <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase==='opening' && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
            {roomData.winner ? `🏆 ${roomData.winner === p1Uid ? p1Name : p2Name} Kazandı!` : myPhase === 'opening' ? 'Açılış Zarları Bekleniyor...' : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${roomData.turn === p1Uid ? p1Name : p2Name} düşünüyor...`}
          </div>
+         <button disabled={isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className={`bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${(!isSpectator && myPhase === 'rolling' && (roomData.cubeOwner === user.uid || roomData.cubeOwner === null)) ? 'hover:bg-amber-500' : ''}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
+            KÜP: x{roomData.cubeValue || 1}
+         </button>
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner min-h-[64px]">
@@ -1083,6 +1102,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                  </div>
               </div>
               {isMyTurn && myPhase === 'rolling' && !roomData.winner && ( <button onClick={handleRollDice} disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-500 px-4 sm:px-5 py-2 rounded-lg font-bold text-sm sm:text-base transition-colors shadow-lg text-white disabled:opacity-50">🎲 Zar At</button> )}
+              {isMyTurn && myPhase === 'moving' && remainingDice.length > 0 && usedDice.length > 0 && (
+                 <button onClick={handleUndoMove} disabled={isSubmitting} className="ml-2 text-amber-500 hover:text-amber-400 underline decoration-amber-500/30 underline-offset-4 flex items-center gap-1 text-sm font-medium transition-colors disabled:opacity-50"><Undo2 className="w-4 h-4" /> Geri Al</button>
+              )}
            </>
         )}
       </div>
@@ -1146,7 +1168,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
 function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isPlayer1 = roomData.players[0] === user.uid; 
-  const isPlayer2 = roomData.players?.[1] === user.uid; // BUG 9 FIX
+  const isPlayer2 = roomData.players?.[1] === user.uid; 
   const isSpectator = !isPlayer1 && !isPlayer2; 
   const mySymbol = isPlayer1 ? 'X' : (isPlayer2 ? 'O' : null);
   const isMyTurn = roomData.turn === user.uid;
@@ -1330,7 +1352,12 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     let updatePayload = {
       board: currentBoard, turn: newWinner ? null : oppUid, captured: newCaptured, winner: newWinner,
       halfmoveClock: newHalfmoveClock, positionHistory: newPositionHistory, enPassantTarget: newEnPassantTarget,
-      lastMove: { from, to }, drawOffer: null 
+      lastMove: { from, to }, drawOffer: null, takebackOffer: null,
+      previousState: {
+         board: roomData.board, turn: roomData.turn, captured: roomData.captured || {w:[], b:[]},
+         halfmoveClock: roomData.halfmoveClock || 0, positionHistory: roomData.positionHistory || [],
+         enPassantTarget: roomData.enPassantTarget || null, lastMove: roomData.lastMove || null
+      }
     };
     if (newDrawReason) updatePayload.drawReason = newDrawReason;
     if (newWinner && newWinner !== 'Draw') updatePayload.scores = { ...roomData.scores, [newWinner]: (roomData.scores?.[newWinner] || 0) + 1 };
@@ -1356,7 +1383,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         const r = Math.floor(index / 8);
         const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
 
-        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); return; } // Removed internal setIsSubmitting(false)
+        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); return; }
         await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
       } catch(err) { showToast("Hamle gönderilemedi."); }
       finally { setIsSubmitting(false); }
@@ -1389,12 +1416,29 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     } catch(err) {} finally { setIsSubmitting(false); }
   };
 
+  const handleTakebackOffer = async () => {
+    if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
+    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { takebackOffer: user.uid }); }
+    finally { setIsSubmitting(false); }
+  };
+
+  const answerTakeback = async (accept) => {
+    if (isSpectator || isSubmitting) return; setIsSubmitting(true);
+    try {
+       if (accept && roomData.previousState) {
+           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), {
+               ...roomData.previousState, takebackOffer: null, drawOffer: null
+           });
+       } else { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { takebackOffer: null }); }
+    } finally { setIsSubmitting(false); }
+  };
+
   const requestRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { rematchRequestedBy: user.uid }); };
   const acceptRematch = async () => {
     if (isSpectator) return; const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     const initBoard = createInitialChessBoard();
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
   };
   const rejectRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed', closedBy: user.uid }); };
 
@@ -1428,6 +1472,8 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     return ( <div className="flex flex-wrap gap-[1px] items-center mt-1 bg-slate-500/40 px-2 py-1 rounded-md border border-slate-500/50 shadow-inner max-w-full"> {sorted.map((p, i) => <span key={i} style={chessPieceStyle} className={`text-lg md:text-xl leading-none drop-shadow-md ${isWhitePieces ? 'text-white' : 'text-slate-900 drop-shadow-[0_0_3px_rgba(255,255,255,0.6)]'}`}>{CHESS_ICONS[p]}</span> )} </div> );
   };
 
+  const canTakeback = !isMyTurn && roomData.previousState && roomData.previousState.turn === user.uid;
+
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
@@ -1436,6 +1482,16 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
          <div className="w-full bg-emerald-600/30 border border-emerald-400 text-emerald-100 p-3 rounded-xl mb-4 flex justify-between items-center shadow-lg animate-pulse">
             <span className="text-sm font-bold">Rakip beraberlik teklif ediyor!</span>
             <button onClick={handleDrawOffer} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-400 px-4 py-1.5 rounded-lg text-sm font-bold shadow-md disabled:opacity-50">Kabul Et</button>
+         </div>
+      )}
+
+      {roomData.takebackOffer && roomData.takebackOffer !== user.uid && !isSpectator && !roomData.winner && (
+         <div className="w-full bg-amber-600/30 border border-amber-400 text-amber-100 p-3 rounded-xl mb-4 flex justify-between items-center shadow-lg animate-pulse">
+            <span className="text-sm font-bold">Rakip son hamlesini geri almak istiyor!</span>
+            <div className="flex gap-2">
+              <button onClick={()=>answerTakeback(true)} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md disabled:opacity-50">Kabul</button>
+              <button onClick={()=>answerTakeback(false)} disabled={isSubmitting} className="bg-red-500 hover:bg-red-400 px-3 py-1.5 rounded-lg text-sm font-bold shadow-md disabled:opacity-50">Red</button>
+            </div>
          </div>
       )}
       
@@ -1464,6 +1520,11 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
          <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${statusColor}`}>{statusMsg}</div>
          {!isSpectator && !roomData.winner && (
             <div className="flex gap-2">
+               {canTakeback && (
+                  <button onClick={handleTakebackOffer} disabled={isSubmitting || roomData.takebackOffer === user.uid} className="text-xs bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                     <Undo2 className="w-3 h-3" /> {roomData.takebackOffer === user.uid ? 'İstek Gönderildi' : 'Geri Al'}
+                  </button>
+               )}
                <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
                <button onClick={() => resignConfirm ? handleResign() : setResignConfirm(true)} onMouseLeave={() => setResignConfirm(false)} disabled={isSubmitting} className={`text-xs px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${resignConfirm ? 'bg-red-500 hover:bg-red-400 text-white border border-red-400' : 'bg-red-600/30 hover:bg-red-600/50 border border-red-500/50'}`}>
                   <Flag className="w-3 h-3" /> {resignConfirm ? 'Emin misin?' : 'Teslim Ol'}
