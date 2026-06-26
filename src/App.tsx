@@ -83,6 +83,16 @@ const CHESS_ICONS = { p: '♟\uFE0E', r: '♜\uFE0E', n: '♞\uFE0E', b: '♝\uF
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 const chessPieceStyle = { fontFamily: '"Segoe UI Symbol", "Arial Unicode MS", serif', WebkitTextFillColor: 'currentColor' };
 
+// O, 0, I, 1, L gibi kafa karıştıran karakterleri alfabeden çıkardık!
+const generateRoomCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
 function createInitialChessBoard() {
   const board = Array(64).fill(null);
   const order = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -467,7 +477,7 @@ export default function App() {
     if (!user) return;
     let newCode = ''; let success = false;
     while (!success) {
-       newCode = Math.random().toString(36).slice(2).padEnd(6, '0').substring(0, 6).toUpperCase();
+      newCode = generateRoomCode();
        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
        
        const initialState = {
