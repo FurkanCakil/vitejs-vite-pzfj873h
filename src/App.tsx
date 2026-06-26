@@ -203,7 +203,8 @@ function getGameState(board, nextTurnColor, halfmoveClock = 0, history = [], enP
   if (halfmoveClock >= 100) return 'draw_50move'; 
   
   const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
-  if (history.filter(h => h === currentStateStr).length >= 2) return 'draw_repetition';
+  // BUG 1 FIX: 3-fold repetition is accurately >= 3 now
+  if (history.filter(h => h === currentStateStr).length >= 3) return 'draw_repetition';
 
   let hasMoves = false, kingIdx = -1;
   for (let i = 0; i < 64; i++) {
@@ -784,9 +785,11 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
   const p1Color = roomData.playerColors?.[p1Uid] || 'white'; const p2Color = roomData.playerColors?.[p2Uid] || 'black';
 
+  const boardStr = useMemo(() => JSON.stringify(roomData.board), [roomData.board]);
   const board = useMemo(() => {
-     return (Array.isArray(roomData.board) && roomData.board.length === 24) ? roomData.board : createInitialBoard();
-  }, [roomData.board]);
+     const parsed = boardStr ? JSON.parse(boardStr) : null;
+     return (Array.isArray(parsed) && parsed.length === 24) ? parsed : createInitialBoard();
+  }, [boardStr]);
   
   const dice = roomData.dice || []; const usedDice = roomData.usedDice || [];
   const barW = roomData.bar?.white || 0; const barB = roomData.bar?.black || 0;
@@ -805,7 +808,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       return getStrictValidMoves(board, myColor, remainingDice, {white: barW, black: barB}, {white: borneW, black: borneB});
     }
     return [];
-  }, [isMyTurn, myPhase, remainingDiceStr, board, myColor, barW, barB, borneW, borneB]);
+  }, [isMyTurn, myPhase, remainingDiceStr, boardStr, myColor, barW, barB, borneW, borneB]);
 
   const validFromPoints = new Set(validMoves.map(m => m.from));
   const validToPoints = selectedPoint !== null ? new Set(validMoves.filter(m => m.from === selectedPoint).map(m => m.to)) : new Set();
@@ -989,6 +992,9 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const topPoints = isWhitePerspective ? Array.from({ length: 12 }, (_, i) => 12 + i) : Array.from({ length: 12 }, (_, i) => 11 - i);
   const bottomPoints = isWhitePerspective ? Array.from({ length: 12 }, (_, i) => 11 - i) : Array.from({ length: 12 }, (_, i) => 12 + i);
 
+  const topBarColor = isWhitePerspective ? 'black' : 'white'; const topBarCount = isWhitePerspective ? barB : barW;
+  const bottomBarColor = isWhitePerspective ? 'white' : 'black'; const bottomBarCount = isWhitePerspective ? barW : barB;
+
   const renderCheckers = (color, count, isTop, pointIdx) => {
     const isSelected = selectedPoint === pointIdx; const showCount = Math.max(0, Math.min(count || 0, 5));
     return (
@@ -1065,9 +1071,6 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         <div className="flex flex-col items-center px-4 shrink-0 group">
            <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
            <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center gap-1"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0}</div>
-           <div className={`mt-1 bg-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg flex items-center gap-1 ${canOfferCube ? 'cursor-pointer hover:bg-amber-500' : 'cursor-default opacity-80'}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
-               KÜP: x{roomData.cubeValue || 1}
-           </div>
         </div>
         <div className={`flex flex-col items-end flex-1 min-w-0 pl-2 text-right p-1 rounded-lg transition-colors ${roomData.turn === p2Uid ? 'bg-slate-700/50 ring-1 ring-amber-400/50' : ''}`}>
           <div className="flex items-center justify-end gap-2 w-full">{p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}<div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} /></div>
@@ -1080,7 +1083,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
          <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase==='opening' && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
            {roomData.winner ? `🏆 ${roomData.winner === p1Uid ? p1Name : p2Name} Kazandı!` : myPhase === 'opening' ? 'Açılış Zarları Bekleniyor...' : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${roomData.turn === p1Uid ? p1Name : p2Name} düşünüyor...`}
          </div>
-         <button disabled={isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className={`bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${(!isSpectator && myPhase === 'rolling' && (roomData.cubeOwner === user.uid || roomData.cubeOwner === null)) ? 'hover:bg-amber-500' : ''}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
+         <button disabled={isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className={`bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${canOfferCube ? 'hover:bg-amber-500' : ''}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
             KÜP: x{roomData.cubeValue || 1}
          </button>
       </div>
@@ -1112,16 +1115,16 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
       <div className="relative w-full aspect-[3/4] sm:aspect-square md:aspect-[4/3] max-w-3xl bg-amber-950/80 border-4 border-amber-900 rounded-xl overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.5)] flex flex-col p-1 sm:p-2">
         <div className="flex-1 w-full flex">
           <div className="flex-1 flex gap-[1px]">{topPoints.slice(0, 6).map(idx => renderPoint(idx, true))}</div>
-          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'black' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='black' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset' : ''} ${selectedPoint === -1 && myColor === 'black' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
-             {Array.from({ length: Math.max(0, Math.min(barB, 4)) }).map((_, i) => ( <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-[8px] md:text-xs text-slate-100 font-bold mb-1 shadow-md">{i === 3 && barB > 4 ? `+${barB - 3}` : ''}</div> ))}
+          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === topBarColor && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col items-center pt-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor===topBarColor && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset animate-pulse' : ''} ${selectedPoint === -1 && myColor === topBarColor ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
+             {Array.from({ length: Math.max(0, Math.min(topBarCount, 4)) }).map((_, i) => ( <div key={i} className={`w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full border-2 flex items-center justify-center text-[8px] md:text-xs font-bold mb-1 shadow-md ${topBarColor === 'white' ? 'bg-slate-100 border-slate-400 text-slate-800' : 'bg-slate-800 border-slate-600 text-slate-100'}`}>{i === 3 && topBarCount > 4 ? `+${topBarCount - 3}` : ''}</div> ))}
           </div>
           <div className="flex-1 flex gap-[1px]">{topPoints.slice(6, 12).map(idx => renderPoint(idx, true))}</div>
         </div>
         <div className="h-8 sm:h-12 md:h-14 w-full flex items-center justify-center bg-[#290f02] my-1 sm:my-2 border-y-[6px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,0.8)] relative z-20"><div className="text-[10px] sm:text-xs text-amber-700/30 font-black tracking-widest uppercase">Menteşe</div></div>
         <div className="flex-1 w-full flex">
           <div className="flex-1 flex gap-[1px]">{bottomPoints.slice(0, 6).map(idx => renderPoint(idx, false))}</div>
-          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === 'white' && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor==='white' && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset' : ''} ${selectedPoint === -1 && myColor === 'white' ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
-             {Array.from({ length: Math.max(0, Math.min(barW, 4)) }).map((_, i) => ( <div key={i} className="w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full bg-slate-100 border-2 border-slate-400 flex items-center justify-center text-[8px] md:text-xs text-slate-800 font-bold mt-1 shadow-md">{i === 3 && barW > 4 ? `+${barW - 3}` : ''}</div> ))}
+          <div onClick={() => isMyTurn && myPhase === 'moving' && myColor === bottomBarColor && handlePointClick('bar')} className={`w-8 sm:w-12 md:w-16 flex flex-col-reverse items-center pb-2 bg-[#290f02]/90 border-x-[4px] sm:border-x-[8px] border-[#1a0901] shadow-[inset_0_0_15px_rgba(0,0,0,1)] cursor-pointer relative z-10 transition-colors ${(hasMyBar && myColor===bottomBarColor && isMyTurn) ? 'bg-amber-900/40 ring-2 ring-yellow-400 ring-inset animate-pulse' : ''} ${selectedPoint === -1 && myColor === bottomBarColor ? 'ring-2 ring-yellow-400 bg-yellow-900/50 animate-none' : ''}`}>
+             {Array.from({ length: Math.max(0, Math.min(bottomBarCount, 4)) }).map((_, i) => ( <div key={i} className={`w-[18px] h-[18px] sm:w-[24px] sm:h-[24px] md:w-[30px] md:h-[30px] rounded-full border-2 flex items-center justify-center text-[8px] md:text-xs font-bold mt-1 shadow-md ${bottomBarColor === 'white' ? 'bg-slate-100 border-slate-400 text-slate-800' : 'bg-slate-800 border-slate-600 text-slate-100'}`}>{i === 3 && bottomBarCount > 4 ? `+${bottomBarCount - 3}` : ''}</div> ))}
           </div>
           <div className="flex-1 flex gap-[1px]">{bottomPoints.slice(6, 12).map(idx => renderPoint(idx, false))}</div>
         </div>
@@ -1138,7 +1141,7 @@ function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
               </div>
             ))}
           </div>
-          {canBearOff && <div className="text-xs sm:text-sm text-emerald-400 font-bold bg-emerald-500/20 px-2 py-1 rounded">Tıkla!</div>}
+          {canBearOff && <div className="text-xs sm:text-sm text-emerald-400 font-bold bg-emerald-500/20 px-2 py-1 rounded animate-pulse">Tıkla!</div>}
         </div>
         {selectedPoint !== null && ( <div className="flex items-center text-xs sm:text-sm text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 px-4 py-3 rounded-xl shadow-lg"><span>Seçili: Nokta <strong>{selectedPoint === -1 ? 'BAR' : selectedPoint + 1}</strong> — Hedef seç</span><button onClick={() => setSelectedPoint(null)} className="ml-3 p-1 bg-yellow-400/20 rounded hover:bg-yellow-400/40 text-yellow-200 transition-colors"><X className="w-4 h-4" /></button></div> )}
       </div>
@@ -1335,8 +1338,10 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
 
     let newHalfmoveClock = (roomData.halfmoveClock || 0) + 1;
     let newPositionHistory = [...(roomData.positionHistory || [])];
+    // BUG 3 FIX: Sadece halfmove sıfırlanıyor (positionHistory array'i resetlenmez)
     if (movingPiece.type === 'p' || targetPiece) { newHalfmoveClock = 0; } 
     
+    // BUG 6 FIX: currentStateStr'de sadece şah ve kalelerin 'hasMoved' durumu izlenir (Kural bazlı optimizasyon getBoardStateString içinde)
     newPositionHistory.push(getBoardStateString(currentBoard, newEnPassantTarget, oppColor));
     if (newPositionHistory.length > 100) newPositionHistory = newPositionHistory.slice(-100);
 
@@ -1383,7 +1388,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
         const r = Math.floor(index / 8);
         const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
 
-        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); return; }
+        if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); setIsSubmitting(false); return; }
         await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
       } catch(err) { showToast("Hamle gönderilemedi."); }
       finally { setIsSubmitting(false); }
@@ -1394,7 +1399,7 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
     if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
     try {
        const oppUid = roomData.players.find(id => id !== user.uid);
-       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { winner: oppUid, winReason: 'resign', turn: null, scores: { ...roomData.scores, [oppUid]: (roomData.scores?.[oppUid] || 0) + 1 }, drawOffer: null });
+       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { winner: oppUid, winReason: 'resign', turn: null, scores: { ...roomData.scores, [oppUid]: (roomData.scores?.[oppUid] || 0) + 1 }, drawOffer: null, takebackOffer: null });
        setResignConfirm(false);
     } catch(err) {} finally { setIsSubmitting(false); }
   };
@@ -1417,7 +1422,12 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
   };
 
   const handleTakebackOffer = async () => {
-    if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
+    if (isSpectator || roomData.winner || isSubmitting) return; 
+    const canTakeback = !isMyTurn && roomData.previousState && roomData.previousState.turn === user.uid;
+    // BUG 7 FIX: Eğer canTakeback validasyonu geçmezse sunucuya istek gönderme
+    if (!canTakeback) { showToast("Geri alma isteği geçersiz."); return; }
+    
+    setIsSubmitting(true);
     try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { takebackOffer: user.uid }); }
     finally { setIsSubmitting(false); }
   };
@@ -1526,9 +1536,22 @@ function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
                   </button>
                )}
                <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
-               <button onClick={() => resignConfirm ? handleResign() : setResignConfirm(true)} onMouseLeave={() => setResignConfirm(false)} disabled={isSubmitting} className={`text-xs px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${resignConfirm ? 'bg-red-500 hover:bg-red-400 text-white border border-red-400' : 'bg-red-600/30 hover:bg-red-600/50 border border-red-500/50'}`}>
-                  <Flag className="w-3 h-3" /> {resignConfirm ? 'Emin misin?' : 'Teslim Ol'}
-               </button>
+               
+               {/* BUG 6 FIX: Mobilde çalışmayan onMouseLeave iptal sorunu çözüldü, manuel iptal butonu eklendi */}
+               {!resignConfirm ? (
+                  <button onClick={() => setResignConfirm(true)} disabled={isSubmitting} className="text-xs bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                     <Flag className="w-3 h-3" /> Teslim Ol
+                  </button>
+               ) : (
+                  <div className="flex items-center gap-1">
+                     <button onClick={handleResign} disabled={isSubmitting} className="text-xs bg-red-500 hover:bg-red-400 text-white border border-red-400 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                        Emin misin?
+                     </button>
+                     <button onClick={() => setResignConfirm(false)} disabled={isSubmitting} className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 px-2 py-1.5 rounded transition-colors">
+                        <X className="w-3 h-3" />
+                     </button>
+                  </div>
+               )}
             </div>
          )}
       </div>
