@@ -118,7 +118,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         {roomData.winner ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!` : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
       </div>
 
-      <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800">
+      <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
         {visualIndices.map((i) => {
           const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
           const isDark = (r + c) % 2 !== 0; 
@@ -126,11 +126,10 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           const isValidMove = validMoves.some(m => m.to === i);
 
           return (
-            // CRİTİCAL FIX: Bütün hücrelere cursor-pointer eklendi, böylece iOS artık tıklamaları algılayacak!
             <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
               {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
               {cell && (
-                <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'}`}>
+                <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'}`}>
                   {cell.isKing && <Crown className={`w-1/2 h-1/2 ${cell.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
                 </div>
               )}

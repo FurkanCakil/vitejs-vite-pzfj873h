@@ -192,60 +192,76 @@ export default function App() {
 
   const joinRoom = async (code) => {
     if (!user || !code) return;
-    const cleanCode = code.trim().toUpperCase(); const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
+    const cleanCode = code.trim().toUpperCase(); 
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
+    
     try {
-      const roomSnap = await getDoc(roomRef);
-      if (!roomSnap.exists()) { setErrorMsg("Böyle bir oda kodu yok."); return; }
-      const data = roomSnap.data();
-      if (data.status === 'closed') { setErrorMsg("Bu oda kapalı."); return; }
+      await runTransaction(db, async (transaction) => {
+        const roomSnap = await transaction.get(roomRef);
+        if (!roomSnap.exists()) throw new Error("not-found");
+        
+        const data = roomSnap.data();
+        if (data.status === 'closed') throw new Error("closed");
 
-      if (data.players?.length >= 2 && !data.players.includes(user.uid)) {
-        if (data.spectators && data.spectators.includes(user.uid)) { setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); return; }
-        setSpectatePrompt(cleanCode); return;
-      }
-
-      if (!data.players?.includes(user.uid)) {
-        const isResume = data.turn !== null && data.gameId !== undefined;
-        const updatedPlayers = [...(data.players || []), user.uid];
-        let updatePayload = { players: updatedPlayers, status: 'playing', abandonedBy: null, abandonReason: null };
-
-        if (!isResume) {
-          updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' }; updatePayload.scores = { ...data.scores, [user.uid]: 0 }; 
-          
-          if (data.gameId === 'tavla') {
-            const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'white' : 'black';
-            updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'black' : 'white' };
-            updatePayload.board = createInitialBoard(); updatePayload.bar = { white: 0, black: 0 }; updatePayload.borneOff = { white: 0, black: 0 }; 
-            updatePayload.phase = 'opening'; updatePayload.openingRolls = { p1: null, p2: null }; updatePayload.turn = null; updatePayload.cubeValue = 1; updatePayload.cubeOwner = null; updatePayload.cubeOfferBy = null; updatePayload.initialTurnState = null;
-          } else if (data.gameId === 'satranc') {
-            const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'w' : 'b'; const whitePlayerUid = isHostWhite ? data.players[0] : user.uid;
-            const initBoard = createInitialChessBoard();
-            updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
-            updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
-          } else if (data.gameId === 'dama') {
-            const hostColor = data.playerColors[data.players[0]];
-            const myColor = hostColor === 'w' ? 'b' : 'w';
-            const whitePlayerUid = hostColor === 'w' ? data.players[0] : user.uid;
-            updatePayload.playerColors = { ...data.playerColors, [user.uid]: myColor };
-            updatePayload.turn = whitePlayerUid;
-            updatePayload.startingPlayer = whitePlayerUid;
-          } else {
-            const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
-            updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
+        if (data.players?.length >= 2 && !data.players.includes(user.uid)) {
+          if (data.spectators && data.spectators.includes(user.uid)) { 
+             throw new Error("already-spectator"); 
           }
-        } else {
-          let missingUid = null; if (data.scores) missingUid = Object.keys(data.scores).find(uid => !(data.players || []).includes(uid));
-          if (missingUid && missingUid !== user.uid) {
-              const newScores = { ...data.scores }; newScores[user.uid] = newScores[missingUid] || 0; delete newScores[missingUid]; updatePayload.scores = newScores;
-              const newNames = { ...data.playerNames }; newNames[user.uid] = nickname || 'Oyuncu 2'; delete newNames[missingUid]; updatePayload.playerNames = newNames;
-              if (data.playerColors) { const newColors = { ...data.playerColors }; newColors[user.uid] = newColors[missingUid]; delete newColors[missingUid]; updatePayload.playerColors = newColors; }
-              if (data.turn === missingUid) updatePayload.turn = user.uid; if (data.startingPlayer === missingUid) updatePayload.startingPlayer = user.uid; if (data.winner === missingUid) updatePayload.winner = user.uid;
-          } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
+          throw new Error("full");
         }
-        await updateDoc(roomRef, updatePayload);
-      }
+
+        if (!data.players?.includes(user.uid)) {
+          const isResume = data.turn !== null && data.gameId !== undefined;
+          const updatedPlayers = [...(data.players || []), user.uid];
+          let updatePayload = { players: updatedPlayers, status: 'playing', abandonedBy: null, abandonReason: null };
+
+          if (!isResume) {
+            updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' }; 
+            updatePayload.scores = { ...data.scores, [user.uid]: 0 }; 
+            
+            if (data.gameId === 'tavla') {
+              const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'white' : 'black';
+              updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'black' : 'white' };
+              updatePayload.board = createInitialBoard(); updatePayload.bar = { white: 0, black: 0 }; updatePayload.borneOff = { white: 0, black: 0 }; 
+              updatePayload.phase = 'opening'; updatePayload.openingRolls = { p1: null, p2: null }; updatePayload.turn = null; updatePayload.cubeValue = 1; updatePayload.cubeOwner = null; updatePayload.cubeOfferBy = null; updatePayload.initialTurnState = null;
+            } else if (data.gameId === 'satranc') {
+              const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'w' : 'b'; const whitePlayerUid = isHostWhite ? data.players[0] : user.uid;
+              const initBoard = createInitialChessBoard();
+              updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
+              updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
+            } else if (data.gameId === 'dama') {
+              const hostColor = data.playerColors[data.players[0]];
+              const myColor = hostColor === 'w' ? 'b' : 'w';
+              const whitePlayerUid = hostColor === 'w' ? data.players[0] : user.uid;
+              updatePayload.playerColors = { ...data.playerColors, [user.uid]: myColor };
+              updatePayload.turn = whitePlayerUid;
+              updatePayload.startingPlayer = whitePlayerUid;
+            } else {
+              const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
+              updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
+            }
+          } else {
+            let missingUid = null; if (data.scores) missingUid = Object.keys(data.scores).find(uid => !(data.players || []).includes(uid));
+            if (missingUid && missingUid !== user.uid) {
+                const newScores = { ...data.scores }; newScores[user.uid] = newScores[missingUid] || 0; delete newScores[missingUid]; updatePayload.scores = newScores;
+                const newNames = { ...data.playerNames }; newNames[user.uid] = nickname || 'Oyuncu 2'; delete newNames[missingUid]; updatePayload.playerNames = newNames;
+                if (data.playerColors) { const newColors = { ...data.playerColors }; newColors[user.uid] = newColors[missingUid]; delete newColors[missingUid]; updatePayload.playerColors = newColors; }
+                if (data.turn === missingUid) updatePayload.turn = user.uid; if (data.startingPlayer === missingUid) updatePayload.startingPlayer = user.uid; if (data.winner === missingUid) updatePayload.winner = user.uid;
+            } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
+          }
+          transaction.update(roomRef, updatePayload);
+        }
+      });
+      
       setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
-    } catch (err) { setErrorMsg("Odaya katılırken bir hata oluştu."); }
+      
+    } catch (err) { 
+      if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
+      else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
+      else if (err.message === "full") setSpectatePrompt(cleanCode);
+      else if (err.message === "already-spectator") { setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); }
+      else setErrorMsg("Odaya katılırken bir hata oluştu.");
+    }
   };
 
   const acceptSpectate = async () => {
