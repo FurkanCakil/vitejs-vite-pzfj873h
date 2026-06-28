@@ -275,34 +275,40 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
-      <div className="w-full flex justify-between items-end mb-2">
-         {isSpectator && <button onClick={() => setSpectatorFlipped(!spectatorFlipped)} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded flex items-center gap-1 transition-colors"><ArrowUpDown className="w-3 h-3" /> Tahtayı Çevir</button>}
-         <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${statusColor}`}>{statusMsg}</div>
-         {!isSpectator && !roomData.winner && (
-            <div className="flex gap-2">
-               {canTakeback && (
-                  <button onClick={handleTakebackOffer} disabled={isSubmitting || roomData.takebackOffer === user.uid} className="text-xs bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
-                     <Undo2 className="w-3 h-3" /> {roomData.takebackOffer === user.uid ? 'İstek Gönderildi' : 'Geri Al'}
-                  </button>
-               )}
-               <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
-               
-               {!resignConfirm ? (
-                  <button onClick={() => setResignConfirm(true)} disabled={isSubmitting} className="text-xs bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
-                     <Flag className="w-3 h-3" /> Teslim Ol
-                  </button>
-               ) : (
-                  <div className="flex items-center gap-1">
-                     <button onClick={handleResign} disabled={isSubmitting} className="text-xs bg-red-500 hover:bg-red-400 text-white border border-red-400 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
-                        Emin misin?
+      <div className="w-full flex justify-between items-center mb-2 min-h-[40px]">
+         <div className="flex-1 flex justify-start items-center">
+             {isSpectator && <button onClick={() => setSpectatorFlipped(!spectatorFlipped)} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded flex items-center gap-1 transition-colors"><ArrowUpDown className="w-3 h-3" /> Tahtayı Çevir</button>}
+         </div>
+         
+         <div className={`text-center font-bold text-lg drop-shadow-md flex-1 ${statusColor}`}>{statusMsg}</div>
+         
+         <div className="flex-1 flex justify-end items-center gap-2">
+            {!isSpectator && !roomData.winner && (
+               <>
+                  {canTakeback && (
+                     <button onClick={handleTakebackOffer} disabled={isSubmitting || roomData.takebackOffer === user.uid} className="text-xs bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                        <Undo2 className="w-3 h-3" /> {roomData.takebackOffer === user.uid ? 'İstek Gönderildi' : 'Geri Al'}
                      </button>
-                     <button onClick={() => setResignConfirm(false)} disabled={isSubmitting} className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 px-2 py-1.5 rounded transition-colors">
-                        <X className="w-3 h-3" />
+                  )}
+                  <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
+                  
+                  {!resignConfirm ? (
+                     <button onClick={() => setResignConfirm(true)} disabled={isSubmitting} className="text-xs bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                        <Flag className="w-3 h-3" /> Teslim Ol
                      </button>
-                  </div>
-               )}
-            </div>
-         )}
+                  ) : (
+                     <div className="flex items-center gap-1">
+                        <button onClick={handleResign} disabled={isSubmitting} className="text-xs bg-red-500 hover:bg-red-400 text-white border border-red-400 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
+                           Emin misin?
+                        </button>
+                        <button onClick={() => setResignConfirm(false)} disabled={isSubmitting} className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 px-2 py-1.5 rounded transition-colors">
+                           <X className="w-3 h-3" />
+                        </button>
+                     </div>
+                  )}
+               </>
+            )}
+         </div>
       </div>
 
       <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700">

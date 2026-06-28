@@ -5,7 +5,7 @@ const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', desc: 'Klasik 3x3 strateji oyunu.', available: true, icon: '❌⭕' },
   { id: 'tavla', name: 'Tavla', desc: 'Zar at, pulları topla.', available: true, icon: '🎲' },
   { id: 'satranc', name: 'Satranç', desc: 'Şah mat zamanı.', available: true, icon: '♟️' },
-  { id: 'dama', name: 'Dama', desc: 'Çapraz zıpla, şah ol.', available: true, icon: '⚪⚫' }, // YENİ OYUNUMUZ
+  { id: 'dama', name: 'Dama', desc: 'Çapraz zıpla, şah ol.', available: true, icon: '⚪⚫' },
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
 ];
 
@@ -31,13 +31,13 @@ export default function Lobby({ nickname, setNickname, joinCodeInput, setJoinCod
             <div key={game.id} className={`p-6 rounded-xl border-2 flex flex-col transition-all duration-300 relative overflow-hidden
                 ${!game.available ? 'bg-slate-800/60 border-slate-700 opacity-70 grayscale' : ''}
                 ${isPremium && game.id !== 'dama' ? 'bg-slate-800 border-indigo-500/40 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer hover:-translate-y-1' : ''}
-                ${game.id === 'dama' ? 'bg-slate-900 border-slate-700 hover:border-slate-500 shadow-[0_0_20px_rgba(0,0,0,0.5)] cursor-pointer hover:-translate-y-1' : ''}
+                ${game.id === 'dama' ? 'bg-slate-900 border-slate-700 hover:border-slate-400 shadow-[0_0_20px_rgba(255,255,255,0.07)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}`}>
               
               {game.id === 'xox' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'tavla' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-600/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-700/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'satranc' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
-              {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-slate-500/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-gray-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
+              {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-white/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
               
               <div className="text-4xl mb-4 relative z-10 drop-shadow-md">{game.icon}</div><h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3><p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
               {game.available ? (
@@ -45,7 +45,7 @@ export default function Lobby({ nickname, setNickname, joinCodeInput, setJoinCod
                     ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
                     ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
                     ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
-                    ${game.id === 'dama' ? 'bg-slate-700/50 text-slate-300 border-slate-600/50 hover:bg-slate-600 hover:text-white' : ''}
+                    ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
                   `}>Oda Kur</button>
               ) : ( <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2.5 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button> )}
             </div>

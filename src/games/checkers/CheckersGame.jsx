@@ -15,15 +15,13 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   const board = Array.isArray(roomData.board) ? roomData.board : Array(64).fill(null);
   
-  // Eğer önceki hamlede yeme yapıldıysa ve devamı varsa, roomData üzerinden bu indeksi al (multi-jump zinciri)
-  const validMoves = (selectedSquare !== null && isMyTurn) ? getValidCheckersMoves(board, selectedSquare, roomData.multiJumpIdx || null) : [];
+  const validMoves = (selectedSquare !== null && isMyTurn) ? getValidCheckersMoves(board, selectedSquare, roomData.multiJumpIdx ?? null) : [];
 
   const handleSquareClick = async (index) => {
     if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
 
     const piece = board[index];
     
-    // Multi-jump modundayken oyuncunun başka taş seçmesini engelle
     if (roomData.multiJumpIdx !== undefined && roomData.multiJumpIdx !== null && index !== roomData.multiJumpIdx && piece?.color === myColor) {
         return; 
     }
@@ -40,7 +38,6 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         const newBoard = [...board];
         const movingPiece = { ...newBoard[selectedSquare] };
         
-        // Dama (King) olma kuralı
         const targetRow = Math.floor(index / 8);
         if (movingPiece.color === 'w' && targetRow === 0) movingPiece.isKing = true;
         if (movingPiece.color === 'b' && targetRow === 7) movingPiece.isKing = true;
@@ -55,11 +52,10 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           newBoard[move.capturedIdx] = null;
           playSound('capture');
           
-          // Çoklu yeme (multi-jump) kontrolü: Zıpladıktan sonra aynı taşla bir daha zıplayabiliyor mu?
           const furtherMoves = getValidCheckersMoves(newBoard, index, index);
           if (furtherMoves.some(m => m.isJump)) {
-             nextTurn = user.uid; // Sıra bende kalır
-             newMultiJumpIdx = index; // O taş kilitlenir
+             nextTurn = user.uid; 
+             newMultiJumpIdx = index; 
           }
         } else {
           playSound('move');
@@ -69,7 +65,6 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         let winnerUid = null;
         const newScores = { ...roomData.scores };
 
-        // Kazananı renklere göre belirle ve skora yaz
         if (winnerColor) {
            winnerUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === winnerColor) || null;
            if (winnerUid) newScores[winnerUid] = (newScores[winnerUid] || 0) + 1;
@@ -131,7 +126,8 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           const isValidMove = validMoves.some(m => m.to === i);
 
           return (
-            <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''} ${isValidMove ? 'cursor-pointer' : ''}`}>
+            // CRİTİCAL FIX: Bütün hücrelere cursor-pointer eklendi, böylece iOS artık tıklamaları algılayacak!
+            <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
               {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
               {cell && (
                 <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'}`}>
