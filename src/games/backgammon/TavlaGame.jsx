@@ -28,11 +28,11 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
   const p1Color = roomData.playerColors?.[p1Uid] || 'white'; const p2Color = roomData.playerColors?.[p2Uid] || 'black';
 
-  const boardStr = useMemo(() => JSON.stringify(roomData.board), [roomData.board]);
   const board = useMemo(() => {
-     const parsed = boardStr ? JSON.parse(boardStr) : null;
-     return (Array.isArray(parsed) && parsed.length === 24) ? parsed : createInitialBoard();
-  }, [boardStr]);
+    return (Array.isArray(roomData.board) && roomData.board.length === 24) 
+      ? roomData.board 
+      : createInitialBoard();
+ }, [roomData.board]);
   
   const dice = roomData.dice || []; const usedDice = roomData.usedDice || [];
   const barW = roomData.bar?.white || 0; const barB = roomData.bar?.black || 0;

@@ -155,8 +155,10 @@ export default function App() {
 
   const createRoom = async (gameId) => {
     if (!user) return;
-    let newCode = ''; let success = false;
-    while (!success) {
+    let newCode = ''; let success = false; let attempts = 0; const MAX_RETRIES = 10;
+    
+    while (!success && attempts < MAX_RETRIES) {
+       attempts++;
        newCode = generateRoomCode();
        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
        
@@ -165,17 +167,19 @@ export default function App() {
          scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : null,
          turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
        };
+       
        if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); } 
        else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
        else if (gameId === 'dama') { 
-        const isHostWhite = Math.random() < 0.5;
-        Object.assign(initialState, { 
-           board: createInitialCheckersBoard(), 
-           playerColors: { [user.uid]: isHostWhite ? 'w' : 'b' },
-           turn: isHostWhite ? user.uid : null,
-           startingPlayer: null 
-        }); 
+          const isHostWhite = Math.random() < 0.5;
+          Object.assign(initialState, { 
+             board: createInitialCheckersBoard(), 
+             playerColors: { [user.uid]: isHostWhite ? 'w' : 'b' },
+             turn: isHostWhite ? user.uid : null,
+             startingPlayer: null 
+          }); 
        }
+
        try {
          await runTransaction(db, async (t) => {
             const snap = await t.get(roomRef);
@@ -188,6 +192,7 @@ export default function App() {
          if (err.message !== "exists") { setErrorMsg("Oda kurulamadı."); break; }
        }
     }
+    if (!success) setErrorMsg("Sunucu yoğun, oda açılamadı. Lütfen tekrar dene.");
   };
 
   const joinRoom = async (code) => {
