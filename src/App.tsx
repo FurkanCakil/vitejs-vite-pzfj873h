@@ -19,9 +19,11 @@ import SpectatePrompt from './components/overlays/SpectatePrompt.jsx';
 import TicTacToeGame from './games/xox/TicTacToeGame.jsx';
 import TavlaGame from './games/backgammon/TavlaGame.jsx';
 import ChessGame from './games/chess/ChessGame.jsx';
+import CheckersGame from './games/checkers/CheckersGame.jsx';
 
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
+import { createInitialCheckersBoard } from './games/checkers/logic.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -165,7 +167,15 @@ export default function App() {
        };
        if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); } 
        else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
-
+       else if (gameId === 'dama') { 
+        const isHostWhite = Math.random() < 0.5;
+        Object.assign(initialState, { 
+           board: createInitialCheckersBoard(), 
+           playerColors: { [user.uid]: isHostWhite ? 'w' : 'b' },
+           turn: isHostWhite ? user.uid : null,
+           startingPlayer: null 
+        }); 
+       }
        try {
          await runTransaction(db, async (t) => {
             const snap = await t.get(roomRef);
@@ -212,6 +222,13 @@ export default function App() {
             const initBoard = createInitialChessBoard();
             updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
             updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
+          } else if (data.gameId === 'dama') {
+            const hostColor = data.playerColors[data.players[0]];
+            const myColor = hostColor === 'w' ? 'b' : 'w';
+            const whitePlayerUid = hostColor === 'w' ? data.players[0] : user.uid;
+            updatePayload.playerColors = { ...data.playerColors, [user.uid]: myColor };
+            updatePayload.turn = whitePlayerUid;
+            updatePayload.startingPlayer = whitePlayerUid;
           } else {
             const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
             updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
@@ -348,6 +365,7 @@ export default function App() {
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                  </ErrorBoundary>
               </div>
             )}
