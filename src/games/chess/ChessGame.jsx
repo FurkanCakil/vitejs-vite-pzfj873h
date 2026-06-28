@@ -41,7 +41,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
      let wK = -1, bK = -1;
      for(let i=0; i<64; i++){ if(board[i]?.type==='k'){ if(board[i].color==='w') wK=i; else bK=i; } }
      if (wK !== -1 && isSquareAttacked(board, wK, 'b', roomData.enPassantTarget)) kings.push(wK);
-     if (bK !== -1 && isSquareAttacked(board, bK, 'w', roomData.enPassantTarget)) kings.push(bK);
+     if (bK !== -1 && isSquareAttacked(board, bK, 'w', roomData.enPassantTarget)) kingspush(bK);
      return kings;
   }, [boardStr, roomData.winner, roomData.enPassantTarget]);
 
@@ -141,8 +141,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
         if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); setIsSubmitting(false); return; }
         await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
-      } catch(err) { showToast("Hamle gönderilemedi."); }
-      finally { setIsSubmitting(false); }
+      } catch(err) { showToast("Hamle gönderilemedi."); setIsSubmitting(false); }
     }
   };
 
@@ -335,11 +334,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
             );
           })}
         </div>
+        {/* FIX 12: Terfi Dialoguna Vazgeç Butonu Eklendi */}
         {promotionPrompt && (
            <div className="absolute inset-0 z-50 bg-black/70 flex items-center justify-center backdrop-blur-sm rounded-lg">
               <div className="bg-slate-800 p-6 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center">
                   <h3 className="text-white font-bold mb-4">Piyon Terfisi</h3>
-                  <div className="flex gap-4">
+                  <div className="flex gap-4 mb-6">
                      {['q', 'r', 'b', 'n'].map(type => (
                          <button key={type} onClick={async () => { 
                             setIsSubmitting(true); 
@@ -352,6 +352,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                             style={chessPieceStyle} className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}>{CHESS_ICONS[type]}</button>
                      ))}
                   </div>
+                  <button onClick={() => { setPromotionPrompt(null); setIsSubmitting(false); }} className="text-red-400 hover:text-red-300 font-medium px-4 py-2 border border-red-500/50 rounded-lg bg-red-500/10 transition-colors w-full text-center">Vazgeç</button>
               </div>
            </div>
         )}

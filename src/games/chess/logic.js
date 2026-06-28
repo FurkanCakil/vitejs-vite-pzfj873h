@@ -82,7 +82,8 @@ export function getStrictLegalMoves(board, index, enPassantTarget = null) {
     let kingIdx = -1;
     for (let i = 0; i < 64; i++) { if (newBoard[i]?.type === 'k' && newBoard[i]?.color === piece.color) { kingIdx = i; break; } }
     const enemyColor = piece.color === 'w' ? 'b' : 'w';
-    if (kingIdx !== -1 && !isSquareAttacked(newBoard, kingIdx, enemyColor, null)) legal.push(target);
+    // FIX: Burada null yerine enPassantTarget parametresini geçiriyoruz
+    if (kingIdx !== -1 && !isSquareAttacked(newBoard, kingIdx, enemyColor, enPassantTarget)) legal.push(target);
   }
   return legal;
 }
@@ -113,7 +114,6 @@ export function getGameState(board, nextTurnColor, halfmoveClock = 0, history = 
   if (halfmoveClock >= 100) return 'draw_50move'; 
   
   const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
-  // BUG FIX 1: 3-fold repetition is accurately >= 3 now (Bu kısım eklendi)
   if (history.filter(h => h === currentStateStr).length >= 3) return 'draw_repetition';
 
   let hasMoves = false, kingIdx = -1;
