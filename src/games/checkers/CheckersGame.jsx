@@ -22,7 +22,11 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
     const piece = board[index];
     
+    // GÜNCELLEME (Bug 8): Zorunlu yeme bildirimi eklendi
     if (roomData.multiJumpIdx !== undefined && roomData.multiJumpIdx !== null && index !== roomData.multiJumpIdx && piece?.color === myColor) {
+        playSound('error'); // Uyarı sesi
+        // Animasyonlu uyarı için seçimi o taşa zorla
+        setSelectedSquare(roomData.multiJumpIdx); 
         return; 
     }
 
@@ -61,13 +65,34 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           playSound('move');
         }
 
-        const winnerColor = checkCheckersWinner(newBoard);
+        let winnerColor = checkCheckersWinner(newBoard);
         let winnerUid = null;
+
+        // GÜNCELLEME (Bug 7): Rakibin hamlesi kalmadıysa (Blokaj) kazanmış say
+        if (!winnerColor && nextTurn) {
+          let oppHasMoves = false;
+          const oppColor = myColor === 'w' ? 'b' : 'w';
+          for (let i = 0; i < 64; i++) {
+            if (newBoard[i]?.color === oppColor) {
+              if (getValidCheckersMoves(newBoard, i).length > 0) { oppHasMoves = true; break; }
+            }
+          }
+          if (!oppHasMoves) {
+            winnerUid = user.uid; // Rakip bloke oldu, sen kazandın!
+            nextTurn = null;
+          }
+        }
+
         const newScores = { ...roomData.scores };
 
-        if (winnerColor) {
+        // Kazanan normal yollarla belirlendiyse
+        if (winnerColor && !winnerUid) {
            winnerUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === winnerColor) || null;
-           if (winnerUid) newScores[winnerUid] = (newScores[winnerUid] || 0) + 1;
+        }
+        
+        if (winnerUid) {
+           newScores[winnerUid] = (newScores[winnerUid] || 0) + 1;
+           playSound('win');
         }
         
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), {

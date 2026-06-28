@@ -265,13 +265,19 @@ export default function App() {
   };
 
   const acceptSpectate = async () => {
-    if (!spectatePrompt || !user) return; const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', spectatePrompt);
+    if (!spectatePrompt || !user) return; 
+    const cleanCode = spectatePrompt;
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     try {
-      const roomSnap = await getDoc(roomRef);
-      if (roomSnap.exists()) {
-        const data = roomSnap.data(); await updateDoc(roomRef, { spectators: data.spectators ? [...data.spectators, user.uid] : [user.uid] });
-        setRoomCode(spectatePrompt); localStorage.setItem('activeRoom', spectatePrompt); setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
-      }
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) throw new Error("not-found");
+        const data = snap.data();
+        const newSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
+        transaction.update(roomRef, { spectators: newSpectators });
+      });
+      setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); 
+      setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
     } catch (err) { setErrorMsg("Seyirci olarak bağlanılamadı."); }
   };
 
@@ -301,10 +307,21 @@ export default function App() {
     leaveRoomLocal();
   };
 
-  const copyToClipboard = () => {
-    const textArea = document.createElement("textarea"); textArea.value = roomCode; document.body.appendChild(textArea); textArea.select();
-    try { document.execCommand('copy'); setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000); } catch (err) {}
-    document.body.removeChild(textArea);
+  const copyToClipboard = async () => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(roomCode);
+      } else {
+        // Fallback: Eski tarayıcılar için
+        const textArea = document.createElement("textarea"); 
+        textArea.value = roomCode; 
+        document.body.appendChild(textArea); 
+        textArea.select();
+        document.execCommand('copy'); 
+        document.body.removeChild(textArea);
+      }
+      setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) { console.error("Kopyalama hatası:", err); }
   };
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin w-8 h-8" /></div>;

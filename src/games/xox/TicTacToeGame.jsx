@@ -4,6 +4,8 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 
 export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
+  if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
+
   const isPlayer1 = roomData.players[0] === user.uid; 
   const isPlayer2 = roomData.players?.[1] === user.uid; 
   const isSpectator = !isPlayer1 && !isPlayer2; 
@@ -14,12 +16,14 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   const p1Uid = roomData.players[0]; const p2Uid = roomData.players?.[1];
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
+  
+  const board = roomData.board || Array(9).fill(null); // GÜVENLİK: Tahta boşsa çökme
 
   const handleMove = async (index) => {
-    if (!isMyTurn || isSpectator || roomData.board[index] || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
+    if (!isMyTurn || isSpectator || board[index] || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      playSound('move'); const newBoard = [...roomData.board]; newBoard[index] = mySymbol;
+      playSound('move'); const newBoard = [...board]; newBoard[index] = mySymbol;
       const lines = [ [0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6] ];
       let winInfo = null; for (let i = 0; i < lines.length; i++) { const [a,b,c] = lines[i]; if (newBoard[a] && newBoard[a]===newBoard[b] && newBoard[a]===newBoard[c]) winInfo = {winner: newBoard[a], line: lines[i]}; }
       const nextTurn = roomData.players.find(id => id !== user.uid) || null; 
@@ -65,7 +69,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
             <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0} İzleyici</div>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
-            {roomData.board.map((cell, index) => (
+            {board.map((cell, index) => (
                <button key={index} onClick={() => handleMove(index)} disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner} className={`w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] rounded-xl text-6xl font-black ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900 cursor-default'} ${roomData.winningLine?.includes(index) ? 'border-2 border-indigo-400 bg-indigo-500/40 shadow-lg' : 'border border-slate-700'} ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}`}>{cell}</button>
             ))}
           </div>
