@@ -284,7 +284,8 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const blackUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === 'black') || p2Uid;
   const whiteName = roomData.playerNames?.[whiteUid] || 'Beyaz';
   const blackName = roomData.playerNames?.[blackUid] || 'Siyah';
-
+  const validMoves = [];
+  
   return (
     <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] overflow-hidden">
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}

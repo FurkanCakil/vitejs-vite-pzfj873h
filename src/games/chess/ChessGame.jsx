@@ -41,7 +41,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
      let wK = -1, bK = -1;
      for(let i=0; i<64; i++){ if(board[i]?.type==='k'){ if(board[i].color==='w') wK=i; else bK=i; } }
      if (wK !== -1 && isSquareAttacked(board, wK, 'b', roomData.enPassantTarget)) kings.push(wK);
-     if (bK !== -1 && isSquareAttacked(board, bK, 'w', roomData.enPassantTarget)) kingspush(bK);
+     if (bK !== -1 && isSquareAttacked(board, bK, 'w', roomData.enPassantTarget)) kings.push(bK);
      return kings;
   }, [boardStr, roomData.winner, roomData.enPassantTarget]);
 
@@ -232,7 +232,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const canTakeback = !isMyTurn && roomData.previousState && roomData.previousState.turn === user.uid;
-
+  
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}

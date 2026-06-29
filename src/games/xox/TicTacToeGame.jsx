@@ -45,7 +45,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
     if (roomData.winner === 'Draw') { statusMsg = "Oyun Berabere!"; statusColor = "text-yellow-400"; }
     else {
       const winnerUid = roomData.winner === 'X' ? p1Uid : p2Uid;
-      if (isSpectator) { statusMsg = `${roomData.playerNames[winnerUid]} Kazandı! 🎉`; statusColor = roomData.winner === 'X' ? "text-indigo-400" : "text-purple-400"; }
+      if (isSpectator) { statusMsg = `${roomData.playerNames?.[winnerUid]} Kazandı! 🎉`; statusColor = roomData.winner === 'X' ? "text-indigo-400" : "text-purple-400"; }
       else if (roomData.winner === mySymbol) { statusMsg = "Kazandın! 🎉"; statusColor = "text-green-400"; }
       else { statusMsg = "Kaybettin! 😢"; statusColor = "text-red-400"; }
     }

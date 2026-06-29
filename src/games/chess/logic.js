@@ -1,5 +1,3 @@
-import { CHESS_ICONS, PIECE_VALUES, chessPieceStyle } from './constants';
-
 export function createInitialChessBoard() {
   const board = Array(64).fill(null);
   const order = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];

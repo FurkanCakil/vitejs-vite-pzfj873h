@@ -32,6 +32,7 @@ export default function App() {
   const [nickname, setNickname] = useState(localStorage.getItem('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
 
   const [currentView, setCurrentView] = useState('lobby'); 
   const [roomCode, setRoomCode] = useState('');
@@ -69,7 +70,10 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); else await signInAnonymously(auth); } 
-      catch (err) { setErrorMsg("Bağlantı hatası oluştu."); }
+      catch (err) { 
+        setErrorMsg("Bağlantı hatası oluştu.");
+        setLoadingAuth(false); // Bu satırı ekliyoruz
+      }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => { setUser(currentUser); setLoadingAuth(false); const savedCode = localStorage.getItem('activeRoom'); if (savedCode && currentUser) setRoomCode(savedCode); });
@@ -154,6 +158,7 @@ export default function App() {
   }, []);
 
   const createRoom = async (gameId) => {
+    setIsCreatingRoom(true);
     if (!user) return;
     let newCode = ''; let success = false; let attempts = 0; const MAX_RETRIES = 10;
     
@@ -193,6 +198,7 @@ export default function App() {
        }
     }
     if (!success) setErrorMsg("Sunucu yoğun, oda açılamadı. Lütfen tekrar dene.");
+    setIsCreatingRoom(false);
   };
 
   const joinRoom = async (code) => {
@@ -370,7 +376,7 @@ export default function App() {
       )}
 
       {currentView === 'lobby' ? (
-        <Lobby nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} />
+        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} />
       ) : (
         <main className="max-w-5xl mx-auto flex flex-col items-center">
           {!isFullscreen && (

@@ -9,7 +9,7 @@ const GAMES = [
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
 ];
 
-export default function Lobby({ nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom }) {
+export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom }) {
   return (
     <main className="max-w-5xl mx-auto">
       <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -41,7 +41,7 @@ export default function Lobby({ nickname, setNickname, joinCodeInput, setJoinCod
               
               <div className="text-4xl mb-4 relative z-10 drop-shadow-md">{game.icon}</div><h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3><p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
               {game.available ? (
-                <button onClick={() => createRoom(game.id)} className={`w-full relative z-10 py-2.5 rounded-lg font-bold transition-colors border
+                <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className={`w-full relative z-10 py-2.5 rounded-lg font-bold transition-colors border
                     ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
                     ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
                     ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}

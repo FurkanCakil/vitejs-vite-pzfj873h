@@ -125,22 +125,29 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   const isBlackPerspective = isSpectator ? false : myColor === 'b';
   const visualIndices = isBlackPerspective ? Array.from({length: 64}, (_, i) => 63 - i) : Array.from({length: 64}, (_, i) => i);
 
+  const p1ColorStr = roomData.playerColors?.[p1Uid] === 'w' ? 'Beyaz' : 'Siyah';
+  const p2ColorStr = roomData.playerColors?.[p2Uid] === 'w' ? 'Beyaz' : 'Siyah';
+
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
       <div className="w-full flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 mb-4">
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p1Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
-           <span className="font-bold text-white">{p1Name} (Beyaz)</span>
+           <span className="font-bold text-white">{p1Name} ({p1ColorStr})</span>
            <span className="text-xl font-mono text-slate-300 mt-1">{roomData.scores?.[p1Uid] || 0}</span>
         </div>
         <div className="px-4 font-bold text-slate-500">VS</div>
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p2Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
-           <span className="font-bold text-white">{p2Name} (Siyah)</span>
+           <span className="font-bold text-white">{p2Name} ({p2ColorStr})</span>
            <span className="text-xl font-mono text-slate-300 mt-1">{roomData.scores?.[p2Uid] || 0}</span>
         </div>
       </div>
 
       <div className="text-center font-bold text-lg mb-4 text-slate-300">
-        {roomData.winner ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!` : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
+        {roomData.winner 
+          ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!` 
+          : isSpectator 
+            ? (roomData.turn === p1Uid ? `${p1Name} Hamle Yapıyor...` : `${p2Name} Hamle Yapıyor...`)
+            : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
       </div>
 
       <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
