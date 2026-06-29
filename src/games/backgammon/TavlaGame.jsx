@@ -29,9 +29,16 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const p1Color = roomData.playerColors?.[p1Uid] || 'white'; const p2Color = roomData.playerColors?.[p2Uid] || 'black';
 
   const board = useMemo(() => {
-    return (Array.isArray(roomData.board) && roomData.board.length === 24) 
-      ? roomData.board 
-      : createInitialBoard();
+    // Tavla tahtası iç içe dizilerden oluştuğu için derin kopyalama (Deep Copy) zorunludur.
+    if (!roomData.board || !Array.isArray(roomData.board) || roomData.board.length !== 24) {
+        return createInitialBoard();
+    }
+    // Sadece destekleyen modern tarayıcılarda structuredClone, yoksa klasik JSON kopyalama
+    try {
+        return structuredClone(roomData.board);
+    } catch (e) {
+        return JSON.parse(JSON.stringify(roomData.board));
+    }
  }, [roomData.board]);
   
   const dice = roomData.dice || []; const usedDice = roomData.usedDice || [];
