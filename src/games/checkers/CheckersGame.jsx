@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { getValidCheckersMoves, checkCheckersWinner, createInitialCheckersBoard } from './logic.js';
