@@ -141,9 +141,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
         if (isPromotion) { playSound('move'); setPromotionPrompt({ from: selectedSquare, to: index, movingPiece, targetPiece, newBoard }); setIsSubmitting(false); return; }
         await executeMove(selectedSquare, index, movingPiece, targetPiece, newBoard);
-      } catch(err) { showToast("Hamle gönderilemedi."); setIsSubmitting(false); }
-    }
-  };
+      } catch(err) { 
+         showToast("Hamle gönderilemedi."); 
+     } finally { 
+         setIsSubmitting(false); 
+     }
+   }
+ };
 
   const handleResign = async () => {
     if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
