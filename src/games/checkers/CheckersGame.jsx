@@ -17,6 +17,26 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   
   const validMoves = (selectedSquare !== null && isMyTurn) ? getValidCheckersMoves(board, selectedSquare, roomData.multiJumpIdx ?? null) : [];
 
+  const mandatoryPieces = useMemo(() => {
+    if (!isMyTurn || roomData.winner) return [];
+    // Eğer zincirleme yeme (multi-jump) devam ediyorsa sadece o taş zorunludur
+    if (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined) {
+       return [roomData.multiJumpIdx];
+    }
+    const mandatories = [];
+    let globalJumpExists = false;
+    for (let i = 0; i < 64; i++) {
+      if (board[i]?.color === myColor) {
+         const moves = getValidCheckersMoves(board, i, null);
+         if (moves.length > 0 && moves.some(m => m.isJump)) {
+             mandatories.push(i);
+             globalJumpExists = true;
+         }
+      }
+    }
+    return globalJumpExists ? mandatories : [];
+  }, [board, isMyTurn, myColor, roomData.multiJumpIdx, roomData.winner]);
+
   const handleSquareClick = async (index) => {
     if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
 
@@ -156,12 +176,13 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           const isDark = (r + c) % 2 !== 0; 
           const isSelected = selectedSquare === i || roomData.multiJumpIdx === i; 
           const isValidMove = validMoves.some(m => m.to === i);
+          const isMandatory = mandatoryPieces.includes(i); // <-- EKLENDİ
 
           return (
             <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
               {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
               {cell && (
-                <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'}`}>
+                <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none transition-all ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'} ${isMandatory ? 'ring-4 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.9)] animate-pulse' : ''}`}>
                   {cell.isKing && <Crown className={`w-1/2 h-1/2 ${cell.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
                 </div>
               )}
