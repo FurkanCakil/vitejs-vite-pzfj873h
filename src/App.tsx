@@ -175,15 +175,15 @@ export default function App() {
        
        if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); } 
        else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
-       else if (gameId === 'dama') { 
-          const isHostWhite = Math.random() < 0.5;
-          Object.assign(initialState, { 
-             board: createInitialCheckersBoard(), 
-             playerColors: { [user.uid]: isHostWhite ? 'w' : 'b' },
-             turn: isHostWhite ? user.uid : null,
-             startingPlayer: null 
-          }); 
-       }
+       else if (gameId === 'dama') {
+        const isWhite = Math.random() > 0.5;
+        Object.assign(initialState, {
+          board: createInitialCheckersBoard(),
+          playerColors: { [user.uid]: isWhite ? 'w' : 'b' },
+          turn: null, // İkinci oyuncu katılana kadar kesinlikle boş kalmalı
+          startingPlayer: null 
+        });
+      }
 
        try {
          await runTransaction(db, async (t) => {
@@ -222,7 +222,8 @@ export default function App() {
         }
 
         if (!data.players?.includes(user.uid)) {
-          const isResume = data.turn !== null && data.gameId !== undefined;
+          const missingUid = data.scores ? Object.keys(data.scores).find(uid => !data.players.includes(uid)) : null;
+          const isResume = !!missingUid;
           const updatedPlayers = [...(data.players || []), user.uid];
           let updatePayload = { players: updatedPlayers, status: 'playing', abandonedBy: null, abandonReason: null };
 
@@ -376,7 +377,7 @@ export default function App() {
       )}
 
       {currentView === 'lobby' ? (
-        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} />
+        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} />
       ) : (
         <main className="max-w-5xl mx-auto flex flex-col items-center">
           {!isFullscreen && (
