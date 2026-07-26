@@ -273,7 +273,7 @@ export default function App() {
         Object.assign(initialState, {
           maxPlayers: 4,
           isBotPlayer: {},
-          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, penaltyToDiscarder: false, botDifficulty: 'medium' },
+          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, botDifficulty: 'medium' },
           teams: { A: [], B: [] },
           countdownStartedAt: null,
         });

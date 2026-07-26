@@ -9,7 +9,7 @@ import { createBotPlayers, isBotUid } from './botPlayers.js';
 export const MAX_PLAYERS = 4;
 const COUNTDOWN_MS = 3000;
 
-const DEFAULT_RULES = { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, penaltyToDiscarder: false, botDifficulty: 'medium' };
+const DEFAULT_RULES = { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, botDifficulty: 'medium' };
 
 export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isHost = roomData.host === user.uid;

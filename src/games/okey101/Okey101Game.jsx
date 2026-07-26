@@ -15,7 +15,7 @@ import {
   SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
 import {
-  randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, findTackOpportunities, pickDiscardTile,
+  randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from './botAI.js';
 
 const OPENED_TYPE_LABELS = { seri: 'Seri', set: 'Set', cift: 'Çift' };
@@ -85,26 +85,49 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   }, [roomData.setupPhase, roomData.turnDeadline]);
 
   // Ortadaki kapalı desteden SÜRÜKLEYEREK de çekilebilsin diye (sadece
-  // tıklama değil) hafif bir pointer-sürükleme: hareket olmadan bırakılırsa
-  // (klasik tık) ya da sürüklenip herhangi bir yerde bırakılırsa aynı
-  // sonucu (çekme) verir.
+  // tıklama değil) bir pointer-sürükleme: hareket olmadan bırakılırsa (klasik
+  // tık) ilk boş slota, sürüklenip ıstakadaki BELİRLİ bir slotun üzerinde
+  // bırakılırsa (varsa boşsa) TAM O SLOTA çeker. Sürüklerken taş-renginde
+  // (kapalı/bilinmeyen yüzlü) bir "ghost" gösterilir ve ıstakaya yaklaşırken
+  // büyür; bırakılınca çekilen taş o noktada kısaca dönerek (flip) açığa çıkar.
   const pileDragRef = useRef(null);
-  const [pileGhost, setPileGhost] = useState(null);
+  const pileGhostGrowTimerRef = useRef(null);
+  const [pileGhostPos, setPileGhostPos] = useState(null);
+  const [pileGhostGrown, setPileGhostGrown] = useState(false);
+  const [pileReveal, setPileReveal] = useState(null); // { x, y, tile, key }
+
   const handlePileDrawPointerDown = (e) => {
     if (!mustDraw) return;
-    pileDragRef.current = { moved: false };
+    pileDragRef.current = { moved: false, targetIndex: null };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const handlePileDrawPointerMove = (e) => {
-    if (!pileDragRef.current) return;
-    pileDragRef.current.moved = true;
-    setPileGhost({ x: e.clientX, y: e.clientY });
+    const d = pileDragRef.current;
+    if (!d) return;
+    if (!d.moved) {
+      d.moved = true;
+      pileGhostGrowTimerRef.current = setTimeout(() => setPileGhostGrown(true), 120);
+    }
+    setPileGhostPos({ x: e.clientX, y: e.clientY });
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const slotEl = el?.closest('[data-slot-index]');
+    d.targetIndex = slotEl ? Number(slotEl.dataset.slotIndex) : null;
   };
-  const handlePileDrawPointerUp = () => {
-    if (!pileDragRef.current) return;
+  const handlePileDrawPointerUp = async (e) => {
+    const d = pileDragRef.current;
     pileDragRef.current = null;
-    setPileGhost(null);
-    handleDrawPile();
+    if (pileGhostGrowTimerRef.current) { clearTimeout(pileGhostGrowTimerRef.current); pileGhostGrowTimerRef.current = null; }
+    const dropX = pileGhostPos?.x ?? e.clientX;
+    const dropY = pileGhostPos?.y ?? e.clientY;
+    setPileGhostPos(null);
+    setPileGhostGrown(false);
+    if (!d) return;
+    const result = await handleDrawPile(user.uid, d.targetIndex);
+    if (result?.success && result.tile) {
+      const revealKey = Date.now();
+      setPileReveal({ x: dropX, y: dropY, tile: result.tile, key: revealKey });
+      setTimeout(() => setPileReveal((cur) => (cur?.key === revealKey ? null : cur)), 650);
+    }
   };
 
   // Oyun 'playing' fazına yeni geçtiyse (henüz taş dağıtılmamışsa) host taşları dağıtır,
@@ -345,7 +368,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
         if (data.hasDrawnThisTurn) {
           const rack = (data.racks?.[turnUid] || []).filter(Boolean);
-          const tile = pickDiscardTile(rack, data.okey || null);
+          const tile = pickSmallestSafeDiscard(rack, data.okey || null);
           if (tile) await handleDiscardTile(tile, turnUid);
         }
       } catch (err) {
@@ -420,8 +443,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       .catch((err) => console.error('Okey101 ıstaka güncelleme hatası:', err));
   };
 
-  const handleDrawPile = async (actingUid = user.uid) => {
-    if (actingUid === user.uid && !mustDraw) return;
+  const handleDrawPile = async (actingUid = user.uid, targetIndex = null) => {
+    if (actingUid === user.uid && !mustDraw) return { success: false };
+    let outcome = { success: false };
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
       if (!snap.exists()) return;
@@ -431,19 +455,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (pile.length === 0) return;
       const drawn = pile.pop();
       const rack = [...(data.racks?.[actingUid] || [])];
-      const emptyIdx = rack.findIndex((s) => s === null);
+      const hasTarget = targetIndex !== null && targetIndex !== undefined && rack[targetIndex] === null;
+      const emptyIdx = hasTarget ? targetIndex : rack.findIndex((s) => s === null);
       if (emptyIdx === -1) return;
       rack[emptyIdx] = drawn;
       t.update(roomRef, { drawPile: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true });
-    }).catch((err) => console.error('Okey101 çekme hatası:', err));
+      outcome = { success: true, tile: drawn };
+    }).catch((err) => { console.error('Okey101 çekme hatası:', err); outcome = { success: false }; });
+    return outcome;
   };
 
-  // Yandan (soldan) taş alma: Ceza Kuralı açıksa VE oyuncu henüz elini
-  // açmamışsa, ceza HEMEN yazılmaz — bunun yerine oyuncu "sideTake" ile
-  // işaretlenir ve bu turu ya BAŞARILI bir açma (Seri/Çift Aç) ile ya da
-  // taşı geri koyup (handleCancelSideTake) desteden çekerek sürdürmek
-  // ZORUNDADIR. Ceza, ancak açma başarılı olduğunda (bkz. handleOpenSeries/
-  // handleOpenPairs/handleBotOpenMelds) taşı atan kişiye yazılır.
+  // Yandan (soldan) taş alma: oyuncu henüz elini açmamışsa, ceza HEMEN
+  // yazılmaz — bunun yerine oyuncu "sideTake" ile işaretlenir ve bu turu ya
+  // BAŞARILI bir açma (Seri/Çift Aç) ile ya da taşı geri koyup
+  // (handleCancelSideTake) desteden çekerek sürdürmek ZORUNDADIR (koşulsuz
+  // kural — bir "Ceza Kuralı" ayarına bağlı DEĞİLDİR). Ceza, ancak açma
+  // başarılı olduğunda (bkz. handleOpenSeries/handleOpenPairs/
+  // handleBotOpenMelds) taşı atan kişiye yazılır.
   const handleDrawDiscard = async (actingUid = user.uid) => {
     const fromUid = actingUid === user.uid ? prevUid : getPrevTurnUid(roomData.players || [], actingUid);
     if (actingUid === user.uid && (!mustDraw || roomData.forcedPileDraw)) return;
@@ -462,7 +490,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (emptyIdx === -1) return;
       rack[emptyIdx] = drawn;
       const update = { [`discardPiles.${fromUid}`]: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true };
-      if (data.rules?.penaltyToDiscarder && !data.hasOpened?.[actingUid]) {
+      if (!data.hasOpened?.[actingUid]) {
         update.sideTake = { uid: actingUid, fromUid, tileId: drawn.id, tileValue: sideTakeTileValue(drawn, data.okey || null) };
       }
       t.update(roomRef, update);
@@ -883,9 +911,35 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         </div>
       </OpponentStrip>
 
-      {pileGhost && (
-        <div className="fixed z-[4000] pointer-events-none" style={{ left: pileGhost.x - 20, top: pileGhost.y - 28 }}>
-          <TileBack />
+      <style>{`
+        @keyframes okey101TileReveal {
+          0% { transform: scale(0.4) rotate(0deg); opacity: 0.55; }
+          60% { transform: scale(1.18) rotate(220deg); opacity: 1; }
+          100% { transform: scale(1) rotate(360deg); opacity: 1; }
+        }
+        .okey101-tile-reveal { animation: okey101TileReveal 550ms ease-out; }
+      `}</style>
+
+      {pileGhostPos && (
+        <div
+          className="fixed z-[4000] pointer-events-none transition-all duration-300 ease-out"
+          style={{
+            left: pileGhostPos.x - (pileGhostGrown ? 22 : 14),
+            top: pileGhostPos.y - (pileGhostGrown ? 30 : 20),
+            transform: pileGhostGrown ? 'scale(1)' : 'scale(0.55)',
+          }}
+        >
+          <div className="w-9 h-12 sm:w-11 sm:h-16 rounded-md bg-gradient-to-b from-amber-50 to-amber-100 border border-slate-400 shadow-xl flex items-center justify-center">
+            <span className="text-slate-400 font-black text-lg">?</span>
+          </div>
+        </div>
+      )}
+
+      {pileReveal && (
+        <div className="fixed z-[4000] pointer-events-none" style={{ left: pileReveal.x - 20, top: pileReveal.y - 28 }}>
+          <div className="okey101-tile-reveal" key={pileReveal.key}>
+            <Tile tile={pileReveal.tile} isOkey={isOkeyTile(pileReveal.tile, okeyInfo)} />
+          </div>
         </div>
       )}
 

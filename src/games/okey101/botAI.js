@@ -156,30 +156,46 @@ export function findTackOpportunities(handTiles, openedHandsAllPlayers, okeyInfo
   return opportunities;
 }
 
+function tileConnectionScore(tile, handTiles, okeyInfo) {
+  let score = 0;
+  for (const other of handTiles) {
+    if (other.id === tile.id) continue;
+    if (isOkeyTile(other, okeyInfo)) { score += 1; continue; }
+    if (other.color === tile.color && Math.abs(other.number - tile.number) <= 2) score += 2;
+    if (other.number === tile.number && other.color !== tile.color) score += 1;
+  }
+  return score;
+}
+
 // Atılacak taşı seçer: KESİNLİKLE Okey taşını atmaz (elde başka taş kalmadığı
 // durum hariç). Diğer taşlar arasında elindeki diğer taşlarla en az "bağlantısı"
 // olan (aynı renkte yakın komşusu / aynı sayıda eşi olmayan) en gereksiz taşı,
-// eşitlik durumunda en yüksek sayılı olanı tercih eder.
+// eşitlik durumunda en yüksek sayılı olanı tercih eder (bot stratejisi: yüksek
+// sayılı taşları elde tutmak daha risklidir).
 export function pickDiscardTile(handTiles, okeyInfo) {
   if (handTiles.length === 0) return null;
   const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
   const candidates = nonOkey.length > 0 ? nonOkey : handTiles;
 
-  const connectionScore = (tile) => {
-    let score = 0;
-    for (const other of handTiles) {
-      if (other.id === tile.id) continue;
-      if (isOkeyTile(other, okeyInfo)) { score += 1; continue; }
-      if (other.color === tile.color && Math.abs(other.number - tile.number) <= 2) score += 2;
-      if (other.number === tile.number && other.color !== tile.color) score += 1;
-    }
-    return score;
-  };
-
   const sorted = [...candidates].sort((a, b) => {
-    const diff = connectionScore(a) - connectionScore(b);
+    const diff = tileConnectionScore(a, handTiles, okeyInfo) - tileConnectionScore(b, handTiles, okeyInfo);
     if (diff !== 0) return diff;
-    return b.number - a.number; // eşitlikte yüksek sayılıyı at (elde tutmak daha riskli)
+    return b.number - a.number;
   });
+  return sorted[0];
+}
+
+// Süre aşımı (hamle yapmayan oyuncu) için otomatik atış: KESİNLİKLE Okey
+// atmaz, ve hiçbir pere bağlantısı olmayan (connectionScore === 0) taşlar
+// arasından en KÜÇÜK sayılı olanı seçer. pickDiscardTile'ın aksine (o, bot
+// stratejisi gereği eşitlikte en büyüğü tercih eder), burada amaç oyuncuya
+// en az zararı veren/en masum atışı otomatik yapmaktır.
+export function pickSmallestSafeDiscard(handTiles, okeyInfo) {
+  if (handTiles.length === 0) return null;
+  const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
+  const candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+  const unconnected = candidates.filter((t) => tileConnectionScore(t, handTiles, okeyInfo) === 0);
+  const pool = unconnected.length > 0 ? unconnected : candidates;
+  const sorted = [...pool].sort((a, b) => (a.number ?? 99) - (b.number ?? 99));
   return sorted[0];
 }

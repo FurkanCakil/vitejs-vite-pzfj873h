@@ -293,8 +293,8 @@ export default function PlayerRack({
             onPointerUp={canDiscard ? finishDrag : undefined}
             onPointerCancel={canDiscard ? finishDrag : undefined}
             title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
-            className={`absolute -top-2.5 -right-2.5 sm:-top-3 sm:-right-3 w-9 h-12 sm:w-11 sm:h-16 rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
-              ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
+            className={`absolute -top-8 -right-6 sm:-top-10 sm:-right-8 w-9 h-12 sm:w-11 sm:h-16 rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
+              ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
           >
             {lastDiscardTile ? (
               <Tile tile={lastDiscardTile} size="small" dimmed={!canDiscard} />

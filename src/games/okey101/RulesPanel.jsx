@@ -53,7 +53,10 @@ function ToggleSwitch({ checked, onChange, onLabel, offLabel, disabled }) {
   );
 }
 
-// `rules`: { gameType: 'ffa'|'2v2', foldingEnabled, foldToPartnerEnabled, penaltyToDiscarder, botDifficulty }
+// `rules`: { gameType: 'ffa'|'2v2', foldingEnabled, foldToPartnerEnabled, botDifficulty }
+// NOT: "yandan taş alma -> elini aç ya da geri koy" kuralı ve buna bağlı ceza
+// (çekilen taşın 10/20 katı) artık koşulsuz uygulanır, bu yüzden burada ayrı
+// bir "Ceza Kuralı" ayarı YOKTUR.
 export default function RulesPanel({ rules, isHost, onChange }) {
   const showFoldToPartner = rules.gameType === '2v2' && rules.foldingEnabled;
 
@@ -87,10 +90,6 @@ export default function RulesPanel({ rules, isHost, onChange }) {
             <ToggleSwitch disabled={!isHost} checked={rules.foldToPartnerEnabled} onChange={(v) => onChange('foldToPartnerEnabled', v)} onLabel="Var" offLabel="Yok" />
           </RuleRow>
         )}
-
-        <RuleRow label="Ceza Kuralı" hint="Yandan taş alana değil, o taşı atan kişiye ceza yazılır.">
-          <ToggleSwitch disabled={!isHost} checked={rules.penaltyToDiscarder} onChange={(v) => onChange('penaltyToDiscarder', v)} onLabel="Açık" offLabel="Kapalı" />
-        </RuleRow>
 
         <RuleRow label="Bot Zorluk Seviyesi">
           <select

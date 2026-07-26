@@ -5,8 +5,16 @@ const COLOR_TEXT_CLASS = { black: 'text-slate-900', red: 'text-red-600', blue: '
 
 const SIZE_CLASS = {
   normal: 'w-9 h-12 sm:w-11 sm:h-16',
-  small: 'w-4 h-6',
+  small: 'w-6 h-8 sm:w-7 sm:h-9',
 };
+
+// "small" boyutu (gösterge, açılan eller, rakip attıkları, atma rozeti vb.)
+// çok daha küçük bir kutuya sığdığı için rakam/sembol yazı boyutları da ayrı
+// tutulur — aksi halde "normal" boyutun font'u küçük kutuyu taşırıp rakamın
+// üstten, sembolün alttan kutuyu aşmasına (düzensiz görünüme) yol açıyordu.
+const NUMBER_TEXT_CLASS = { normal: 'text-base sm:text-xl', small: 'text-[10px] sm:text-xs' };
+const SYMBOL_TEXT_CLASS = { normal: 'text-[10px] sm:text-sm', small: 'text-[7px] sm:text-[8px]' };
+const JOKER_TEXT_CLASS = { normal: 'text-lg sm:text-2xl', small: 'text-xs sm:text-sm' };
 
 export const TileBack = ({ size = 'small', className = '' }) => (
   <div className={`${SIZE_CLASS[size]} rounded-md bg-gradient-to-br from-indigo-700 to-indigo-900 border border-indigo-950 shadow-md shrink-0 ${className}`} />
@@ -33,11 +41,11 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
     >
       {isOkey && !tile.isJoker && <span className="absolute -top-1.5 -right-1.5 text-[9px] sm:text-[10px] bg-fuchsia-600 text-white rounded-full w-3.5 h-3.5 sm:w-4 sm:h-4 flex items-center justify-center font-black leading-none shadow">O</span>}
       {tile.isJoker ? (
-        <span className="text-lg sm:text-2xl leading-none flex items-center justify-center">🃏</span>
+        <span className={`${JOKER_TEXT_CLASS[size]} leading-none flex items-center justify-center`}>🃏</span>
       ) : (
         <div className="flex flex-col items-center justify-center gap-0.5">
-          <span className={`text-base sm:text-xl font-black leading-none flex items-center justify-center ${colorClass}`}>{tile.number}</span>
-          <span className={`text-[10px] sm:text-sm leading-none flex items-center justify-center ${colorClass}`}>{COLOR_SYMBOLS[tile.color]}</span>
+          <span className={`${NUMBER_TEXT_CLASS[size]} font-black leading-none flex items-center justify-center ${colorClass}`}>{tile.number}</span>
+          <span className={`${SYMBOL_TEXT_CLASS[size]} leading-none flex items-center justify-center ${colorClass}`}>{COLOR_SYMBOLS[tile.color]}</span>
         </div>
       )}
     </div>
