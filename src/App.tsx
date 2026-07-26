@@ -25,6 +25,7 @@ import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
 import { createInitialCheckersBoard } from './games/checkers/logic.js';
 import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
+import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -83,6 +84,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => { setUser(currentUser); setLoadingAuth(false); const savedCode = localStorage.getItem('activeRoom'); if (savedCode && currentUser) setRoomCode(savedCode); });
     return () => unsubscribe();
   }, []);
+
 
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
@@ -165,14 +167,31 @@ export default function App() {
   }, []);
 
   const startBotGame = (gameId, difficulty) => {
-    if (gameId !== 'xox' || !user) return;
-    const initialState = {
-      gameId, host: user.uid, players: [user.uid, BOT_UID], spectators: [],
-      playerNames: { [user.uid]: nickname || 'Sen', [BOT_UID]: `Bot (${DIFFICULTY_LABELS[difficulty] || difficulty})` },
-      scores: { [user.uid]: 0, [BOT_UID]: 0 }, status: 'playing', board: Array(9).fill(null),
-      turn: user.uid, startingPlayer: user.uid, winner: null, winningLine: null, rematchRequestedBy: null,
-      abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
-    };
+    if (!user || (gameId !== 'xox' && gameId !== 'dama')) return;
+    let initialState;
+
+    if (gameId === 'dama') {
+      const isWhite = Math.random() > 0.5;
+      const playerColors = { [user.uid]: isWhite ? 'w' : 'b', [CHECKERS_BOT_UID]: isWhite ? 'b' : 'w' };
+      const whiteUid = isWhite ? user.uid : CHECKERS_BOT_UID;
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, CHECKERS_BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [CHECKERS_BOT_UID]: `Bot (${CHECKERS_DIFFICULTY_LABELS[difficulty] || difficulty})` },
+        scores: { [user.uid]: 0, [CHECKERS_BOT_UID]: 0 }, status: 'playing',
+        board: createInitialCheckersBoard(), playerColors, multiJumpIdx: null,
+        turn: whiteUid, startingPlayer: whiteUid, winner: null, rematchRequestedBy: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    } else {
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [BOT_UID]: `Bot (${DIFFICULTY_LABELS[difficulty] || difficulty})` },
+        scores: { [user.uid]: 0, [BOT_UID]: 0 }, status: 'playing', board: Array(9).fill(null),
+        turn: user.uid, startingPlayer: user.uid, winner: null, winningLine: null, rematchRequestedBy: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    }
+
     setBotDifficulty(difficulty);
     setIsBotGame(true);
     setRoomData(initialState);
@@ -216,6 +235,9 @@ export default function App() {
             t.set(roomRef, initialState);
          });
          success = true;
+         // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
+         // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
+         setRoomData(initialState); setCurrentView('room');
          setRoomCode(newCode); localStorage.setItem('activeRoom', newCode); setDisconnectCountdown(null);
        } catch (err) {
          if (err.message !== "exists") { setErrorMsg("Oda kurulamadı."); break; }
@@ -227,9 +249,10 @@ export default function App() {
 
   const joinRoom = async (code) => {
     if (!user || !code) return;
-    const cleanCode = code.trim().toUpperCase(); 
+    const cleanCode = code.trim().toUpperCase();
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
-    
+    let optimisticData = null;
+
     try {
       await runTransaction(db, async (transaction) => {
         const roomSnap = await transaction.get(roomRef);
@@ -286,9 +309,15 @@ export default function App() {
             } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
           }
           transaction.update(roomRef, updatePayload);
+          optimisticData = { ...data, ...updatePayload };
+        } else {
+          optimisticData = data;
         }
       });
-      
+
+      // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
+      // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
+      if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
       setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
       
     } catch (err) { 
@@ -438,7 +467,7 @@ export default function App() {
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
-                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
               </div>
             )}

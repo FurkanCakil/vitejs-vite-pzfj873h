@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { getValidCheckersMoves, checkCheckersWinner, createInitialCheckersBoard } from './logic.js';
-import { Crown, Loader2, Check, X } from 'lucide-react';
+import { BOT_UID, DIFFICULTY_LABELS, getBotTurn } from './bot.js';
+import { Crown, Loader2, Check, X, Bot } from 'lucide-react';
 
-export default function CheckersGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
+export default function CheckersGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
@@ -12,6 +13,11 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const updateRoom = async (patch) => {
+    if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
+  };
 
   const board = Array.isArray(roomData.board) ? roomData.board : Array(64).fill(null);
   
@@ -115,7 +121,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
            playSound('win');
         }
         
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), {
+        await updateRoom({
           board: newBoard,
           turn: winnerUid ? null : nextTurn,
           winner: winnerUid,
@@ -123,22 +129,71 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           multiJumpIdx: newMultiJumpIdx
         });
         setSelectedSquare(null);
-      } catch (err) { console.error(err); } 
+      } catch (err) { console.error(err); }
       finally { setIsSubmitting(false); }
     }
   };
 
-  const requestRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { rematchRequestedBy: user.uid }); };
+  // Bot rakip: sıra bota geldiğinde küçük bir gecikmeyle elini (zıplama zinciri dahil) tek seferde oynar.
+  useEffect(() => {
+    if (!isBot || isSpectator || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    const timer = setTimeout(() => {
+      const botColor = roomData.playerColors?.[BOT_UID];
+      const humanColor = botColor === 'w' ? 'b' : 'w';
+      const turn = getBotTurn(board, botDifficulty, botColor, humanColor);
+
+      if (!turn) { updateRoom({ winner: user.uid, turn: null }); return; }
+
+      const captured = turn.path.some(p => p.isJump);
+      playSound(captured ? 'capture' : 'move');
+
+      const newBoard = turn.board;
+      let winnerColor = checkCheckersWinner(newBoard);
+      let winnerUid = null;
+      let nextTurn = user.uid;
+
+      if (!winnerColor) {
+        let oppHasMoves = false;
+        for (let i = 0; i < 64; i++) {
+          if (newBoard[i]?.color === humanColor && getValidCheckersMoves(newBoard, i).length > 0) { oppHasMoves = true; break; }
+        }
+        if (!oppHasMoves) { winnerUid = BOT_UID; nextTurn = null; }
+      } else {
+        winnerUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === winnerColor) || null;
+      }
+
+      const newScores = { ...roomData.scores };
+      if (winnerUid) { newScores[winnerUid] = (newScores[winnerUid] || 0) + 1; playSound('win'); }
+
+      updateRoom({ board: newBoard, turn: winnerUid ? null : nextTurn, winner: winnerUid, scores: newScores, multiJumpIdx: null });
+    }, 500 + Math.random() * 500);
+    return () => clearTimeout(timer);
+  }, [isBot, roomData.turn, roomData.winner, roomData.status]);
+
+  const requestRematch = async () => {
+    if (isSpectator) return;
+    const newColors = {}; let whiteUid = null;
+    for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
+    if (isBot) {
+      await updateRoom({ board: createInitialCheckersBoard(), turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, winner: null, rematchRequestedBy: null, multiJumpIdx: null });
+      return;
+    }
+    await updateRoom({ rematchRequestedBy: user.uid });
+  };
   const acceptRematch = async () => {
     if (isSpectator) return;
     const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { 
-        board: createInitialCheckersBoard(), turn: whiteUid, startingPlayer: whiteUid, 
-        playerColors: newColors, winner: null, rematchRequestedBy: null, multiJumpIdx: null 
+    await updateRoom({
+        board: createInitialCheckersBoard(), turn: whiteUid, startingPlayer: whiteUid,
+        playerColors: newColors, winner: null, rematchRequestedBy: null, multiJumpIdx: null
     });
   };
-  const rejectRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed', closedBy: user.uid }); };
+  const rejectRematch = async () => {
+    if (isSpectator) return;
+    if (isBot) { leaveRoom(); return; }
+    await updateRoom({ status: 'closed', closedBy: user.uid });
+  };
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; 
   const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -150,6 +205,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
+      {isBot && !isSpectator && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       <div className="w-full flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 mb-4">
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p1Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
            <span className="font-bold text-white">{p1Name} ({p1ColorStr})</span>
