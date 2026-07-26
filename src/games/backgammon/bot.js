@@ -2,8 +2,7 @@ import { getBaseValidMoves, getStrictValidMoves, applyMove } from './logic.js';
 
 export const BOT_UID = 'BOT_PLAYER';
 
-// Şu an sadece Kolay/Orta uygulanıyor; Zor (1-ply expectiminimax) sonraki aşamada eklenecek.
-export const DIFFICULTY_LABELS = { easy: 'Kolay', medium: 'Orta' };
+export const DIFFICULTY_LABELS = { easy: 'Kolay', medium: 'Orta', hard: 'Zor' };
 
 // ============================================================
 // 1) TAM-EL (FULL TURN) ÜRETİCİSİ
@@ -77,7 +76,7 @@ const WEIGHTS = {
   blotFlat: 8,        // bir taş vurulursa sabit "tempo/pas riski" cezası
 };
 
-function pipCount(board, color, barCount) {
+export function pipCount(board, color, barCount) {
   let pips = barCount * 25;
   for (let i = 0; i < 24; i++) {
     const pt = board[i];
@@ -131,7 +130,13 @@ function countHittingRolls(board, blotIdx, hitterColor, hitterBar) {
   return count;
 }
 
-export function evaluateBoard(board, bar, borneOff, color) {
+// `fast: true` verilirse pahalı blot-vurma-olasılığı hesabı (countHittingRolls,
+// 21 zar kombinasyonu × zincirleme erişim kontrolü) atlanıp sabit bir ceza
+// kullanılır. Bu, 1-ply expectiminimax'ın iç döngüsünde (rakibin 21 zarının
+// her biri için tekrar tekrar çağrıldığı yerde) hesap maliyetini büyük
+// ölçüde düşürür; dış seçimler (kendi tam-ellerimiz arasından seçim) hâlâ
+// tam hassasiyetle (fast: false, varsayılan) değerlendirilir.
+export function evaluateBoard(board, bar, borneOff, color, { fast = false } = {}) {
   const opp = color === 'white' ? 'black' : 'white';
   const myBar = bar?.[color] || 0; const oppBar = bar?.[opp] || 0;
   const myBorne = borneOff?.[color] || 0; const oppBorne = borneOff?.[opp] || 0;
@@ -160,9 +165,13 @@ export function evaluateBoard(board, bar, borneOff, color) {
     }
 
     if (pt && pt.color === color && pt.count === 1) {
-      const hits = countHittingRolls(board, i, opp, oppBar);
-      const pipLoss = color === 'white' ? 24 - i : i + 1;
-      score -= (hits / 36) * (pipLoss * WEIGHTS.pip + WEIGHTS.blotFlat);
+      if (fast) {
+        score -= WEIGHTS.blotFlat;
+      } else {
+        const hits = countHittingRolls(board, i, opp, oppBar);
+        const pipLoss = color === 'white' ? 24 - i : i + 1;
+        score -= (hits / 36) * (pipLoss * WEIGHTS.pip + WEIGHTS.blotFlat);
+      }
     }
   }
   score += bestPrime * WEIGHTS.prime;
@@ -170,11 +179,77 @@ export function evaluateBoard(board, bar, borneOff, color) {
   return score;
 }
 
+function pickBestByEval(turns, color, options) {
+  let best = null; let bestScore = -Infinity;
+  for (const t of turns) {
+    const score = evaluateBoard(t.board, t.bar, t.borneOff, color, options);
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best;
+}
+
 // ============================================================
-// Dispatcher: Kolay = rastgele tam-el, Orta = 0-ply en iyi tam-el.
-// 'hard' henüz uygulanmadı; şimdilik 'medium' davranışına düşer.
+// 3) ZOR SEVİYE: 1-PLY EXPECTIMINIMAX
+// ============================================================
+// Verilen bir aday tahtadan sonra, rakibin 21 farklı ağırlıklı zar ihtimalinin
+// (çiftler 1/36, diğerleri 2/36) her birinde rakibin (kendi lehine) en iyi
+// tam-eli oynayacağını varsayıp, sonuçların bizim açımızdan beklenen
+// (ağırlıklı ortalama) değerini hesaplar. Rakip tarafın seçimi hızlı (fast)
+// eval ile yapılır — bu katman zaten K aday × 21 zar kadar tekrarlandığı için
+// asıl maliyeti oluşturan yer burasıdır; kendi tam-ellerimizi sıralarken hâlâ
+// tam hassasiyetli eval kullanılıyor (bkz. getBotFullTurnHard).
+function expectedValueAfterOpponentReply(board, bar, borneOff, color) {
+  const opp = color === 'white' ? 'black' : 'white';
+  let ev = 0;
+
+  for (let d1 = 1; d1 <= 6; d1++) {
+    for (let d2 = d1; d2 <= 6; d2++) {
+      const dice = d1 === d2 ? [d1, d1, d1, d1] : [d1, d2];
+      const weight = d1 === d2 ? 1 : 2; // 36 üzerinden
+
+      const oppTurns = getAllFullTurns(board, opp, dice, bar, borneOff);
+      let resultBoard = board, resultBar = bar, resultBorneOff = borneOff;
+      if (oppTurns.length > 0) {
+        const oppBest = pickBestByEval(oppTurns, opp, { fast: true });
+        resultBoard = oppBest.board; resultBar = oppBest.bar; resultBorneOff = oppBest.borneOff;
+      }
+
+      const myScore = evaluateBoard(resultBoard, resultBar, resultBorneOff, color, { fast: true });
+      ev += (weight / 36) * myScore;
+    }
+  }
+  return ev;
+}
+
+// K aday: kendi tam-ellerimiz arasından, tam hassasiyetli 0-ply eval'e göre
+// en iyi TOP_K tanesi seçilip ancak onlar için (maliyetli) 1-ply hesaplanır.
+const HARD_TOP_K = 6;
+
+function getBotFullTurnHard(board, color, dice, bar, borneOff) {
+  const turns = getAllFullTurns(board, color, dice, bar, borneOff);
+  if (turns.length === 0) return null;
+  if (turns.length === 1) return turns[0];
+
+  const scored = turns
+    .map(t => ({ t, staticScore: evaluateBoard(t.board, t.bar, t.borneOff, color) }))
+    .sort((a, b) => b.staticScore - a.staticScore);
+  const candidates = scored.slice(0, Math.min(HARD_TOP_K, scored.length));
+
+  let best = null; let bestEV = -Infinity;
+  for (const { t } of candidates) {
+    const ev = expectedValueAfterOpponentReply(t.board, t.bar, t.borneOff, color);
+    if (ev > bestEV) { bestEV = ev; best = t; }
+  }
+  return best;
+}
+
+// ============================================================
+// Dispatcher: Kolay = rastgele tam-el, Orta = 0-ply en iyi tam-el,
+// Zor = 1-ply expectiminimax.
 // ============================================================
 export function getBotFullTurn(board, color, dice, bar, borneOff, difficulty) {
+  if (difficulty === 'hard') return getBotFullTurnHard(board, color, dice, bar, borneOff);
+
   const turns = getAllFullTurns(board, color, dice, bar, borneOff);
   if (turns.length === 0) return null; // Bu zarla oynanabilir hamle yok.
 
@@ -182,10 +257,29 @@ export function getBotFullTurn(board, color, dice, bar, borneOff, difficulty) {
     return turns[Math.floor(Math.random() * turns.length)];
   }
 
-  let best = null; let bestScore = -Infinity;
-  for (const t of turns) {
-    const score = evaluateBoard(t.board, t.bar, t.borneOff, color);
-    if (score > bestScore) { bestScore = score; best = t; }
-  }
-  return best;
+  return pickBestByEval(turns, color);
+}
+
+// ============================================================
+// 4) ÇİFTLEME KÜPÜ (DOUBLE CUBE) — basit eşik tabanlı sezgi
+// ============================================================
+// Rollout/equity hesabı yapmadan, sadece pip farkına dayanan kaba bir kural:
+// belirgin bir öndeyken katla, belirgin geride değilsen kabul et. Kübün
+// zaten çok büyümüş olması (oyunun kaderini tek bir hataya bağlamamak için)
+// veya oyunun bitmeye çok yakın olması gibi ince noktalar kapsam dışıdır.
+const CUBE_OFFER_PIP_LEAD = 12;   // bu kadar (veya fazla) pip öndeysem katlamayı teklif et
+const CUBE_ACCEPT_PIP_DEFICIT = 14; // bu kadar (veya daha az) pip gerideysem teklifi kabul et
+
+export function shouldOfferDouble(board, bar, borneOff, color) {
+  const opp = color === 'white' ? 'black' : 'white';
+  const myPips = pipCount(board, color, bar?.[color] || 0);
+  const oppPips = pipCount(board, opp, bar?.[opp] || 0);
+  return (oppPips - myPips) >= CUBE_OFFER_PIP_LEAD;
+}
+
+export function shouldAcceptDouble(board, bar, borneOff, color) {
+  const opp = color === 'white' ? 'black' : 'white';
+  const myPips = pipCount(board, color, bar?.[color] || 0);
+  const oppPips = pipCount(board, opp, bar?.[opp] || 0);
+  return (myPips - oppPips) <= CUBE_ACCEPT_PIP_DEFICIT;
 }

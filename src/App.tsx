@@ -27,6 +27,7 @@ import { createInitialCheckersBoard } from './games/checkers/logic.js';
 import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
 import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
+import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -168,10 +169,23 @@ export default function App() {
   }, []);
 
   const startBotGame = (gameId, difficulty) => {
-    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc')) return;
+    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla')) return;
     let initialState;
 
-    if (gameId === 'dama') {
+    if (gameId === 'tavla') {
+      const isWhite = Math.random() > 0.5;
+      const playerColors = { [user.uid]: isWhite ? 'white' : 'black', [BACKGAMMON_BOT_UID]: isWhite ? 'black' : 'white' };
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, BACKGAMMON_BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [BACKGAMMON_BOT_UID]: `Bot (${BACKGAMMON_DIFFICULTY_LABELS[difficulty] || difficulty})` },
+        scores: { [user.uid]: 0, [BACKGAMMON_BOT_UID]: 0 }, status: 'playing',
+        board: createInitialBoard(), bar: { white: 0, black: 0 }, borneOff: { white: 0, black: 0 }, playerColors,
+        dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null },
+        turn: null, startingPlayer: null, winner: null, rematchRequestedBy: null,
+        cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    } else if (gameId === 'dama') {
       const isWhite = Math.random() > 0.5;
       const playerColors = { [user.uid]: isWhite ? 'w' : 'b', [CHECKERS_BOT_UID]: isWhite ? 'b' : 'w' };
       const whiteUid = isWhite ? user.uid : CHECKERS_BOT_UID;
@@ -481,7 +495,7 @@ export default function App() {
               <div className="w-full flex flex-col items-center">
                  <ErrorBoundary>
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
