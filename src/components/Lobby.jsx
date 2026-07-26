@@ -6,7 +6,7 @@ const GAMES = [
   { id: 'tavla', name: 'Tavla', desc: 'Zar at, pulları topla.', available: true, icon: '🎲' },
   { id: 'satranc', name: 'Satranç', desc: 'Şah mat zamanı.', available: true, icon: '♟️' },
   { id: 'dama', name: 'Dama', desc: 'Çapraz zıpla, şah ol.', available: true, icon: '⚪⚫' },
-  { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
+  { id: 'okey101', name: '101 Okey', desc: 'Özel oda: kurallar, takımlar, botlar.', available: true, icon: '🀄' },
 ];
 
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla'];
@@ -36,7 +36,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       <h2 className="text-2xl font-semibold mb-6 flex items-center gap-2"><Users className="w-6 h-6 text-slate-400" /> Oda Kur & Oyun Seç</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {GAMES.map(game => {
-          const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama');
+          const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama' || game.id === 'okey101');
           const isBotSupported = BOT_SUPPORTED_GAMES.includes(game.id);
           const showingBotSelect = botSelectGameId === game.id;
           return (
@@ -50,6 +50,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
               {game.id === 'tavla' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-600/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-700/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'satranc' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-white/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
+              {game.id === 'okey101' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-rose-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-cyan-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
 
               <div className="text-4xl mb-4 relative z-10 drop-shadow-md">{game.icon}</div><h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3><p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
               {game.available ? (
@@ -72,10 +73,11 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                         ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
                         ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
                         ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
-                      `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>
+                        ${game.id === 'okey101' ? 'bg-rose-600/20 text-rose-300 border-rose-500/50 hover:bg-rose-600 hover:text-white' : ''}
+                      `}><UserPlus className="w-4 h-4" /> {game.id === 'okey101' ? 'Özel Oda Kur' : 'Arkadaşla Oyna'}</button>
                     <button
                       disabled={!isBotSupported}
-                      title={!isBotSupported ? 'Yakında' : undefined}
+                      title={!isBotSupported ? (game.id === 'okey101' ? 'Botlar oda içinden host tarafından eklenir' : 'Yakında') : undefined}
                       onClick={() => setBotSelectGameId(game.id)}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
                     ><Bot className="w-4 h-4" /> Botla Oyna</button>

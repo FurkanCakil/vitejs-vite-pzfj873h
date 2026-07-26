@@ -20,6 +20,7 @@ import TicTacToeGame from './games/xox/TicTacToeGame.jsx';
 import TavlaGame from './games/backgammon/TavlaGame.jsx';
 import ChessGame from './games/chess/ChessGame.jsx';
 import CheckersGame from './games/checkers/CheckersGame.jsx';
+import Okey101Game from './games/okey101/Okey101Game.jsx';
 
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
@@ -28,6 +29,7 @@ import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
 import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
 import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
+import { isBotUid as isOkeyBotUid } from './games/okey101/botPlayers.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -51,6 +53,7 @@ export default function App() {
   const [isBotGame, setIsBotGame] = useState(false);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
+  const authInitiatedRef = useRef(false);
   const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
   roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown, isBotGame };
 
@@ -75,9 +78,17 @@ export default function App() {
   };
 
   useEffect(() => {
+    // StrictMode bu effect'i (dev modunda) mount->cleanup->mount şeklinde iki kez çalıştırır.
+    // Ref senkron ve aynı component instance'ında kalıcı olduğu için, ikinci çalıştırmada
+    // signInAnonymously'nin TEKRAR çağrılıp farklı bir anonim hesap açmasını (ve dolayısıyla
+    // sonradan "host"/"players" gibi Firestore alanlarına yazılan uid ile gerçek user.uid'nin
+    // birbirini tutmamasını) engelliyoruz.
     const initAuth = async () => {
-      try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); else await signInAnonymously(auth); } 
-      catch (err) { 
+      if (authInitiatedRef.current) return;
+      authInitiatedRef.current = true;
+      try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); else await signInAnonymously(auth); }
+      catch (err) {
+        authInitiatedRef.current = false;
         setErrorMsg("Bağlantı hatası oluştu.");
         setLoadingAuth(false); // Bu satırı ekliyoruz
       }
@@ -124,7 +135,7 @@ export default function App() {
           } 
         } 
         else {
-          if (data.status === 'waiting' && data.players?.length === 2 && data.host === user.uid) { updateDoc(roomRef, { status: 'playing' }).catch(()=>{}); }
+          if (data.status === 'waiting' && data.gameId !== 'okey101' && data.players?.length === 2 && data.host === user.uid) { updateDoc(roomRef, { status: 'playing' }).catch(()=>{}); }
           setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); localStorage.setItem('activeRoom', roomCode);
         }
       } else { leaveRoomLocal(); }
@@ -246,7 +257,7 @@ export default function App() {
          turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
        };
        
-       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); } 
+       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); }
        else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
        else if (gameId === 'dama') {
         const isWhite = Math.random() > 0.5;
@@ -254,7 +265,17 @@ export default function App() {
           board: createInitialCheckersBoard(),
           playerColors: { [user.uid]: isWhite ? 'w' : 'b' },
           turn: null, // İkinci oyuncu katılana kadar kesinlikle boş kalmalı
-          startingPlayer: null 
+          startingPlayer: null
+        });
+      }
+      else if (gameId === 'okey101') {
+        // NOT: Sadece oda/lobi altyapısı — oyun mantığı (taşlar, per vb.) burada YOK.
+        Object.assign(initialState, {
+          maxPlayers: 4,
+          isBotPlayer: {},
+          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, penaltyToDiscarder: false, botDifficulty: 'medium' },
+          teams: { A: [], B: [] },
+          countdownStartedAt: null,
         });
       }
 
@@ -291,9 +312,10 @@ export default function App() {
         const data = roomSnap.data();
         if (data.status === 'closed') throw new Error("closed");
 
-        if (data.players?.length >= 2 && !data.players.includes(user.uid)) {
-          if (data.spectators && data.spectators.includes(user.uid)) { 
-             throw new Error("already-spectator"); 
+        const maxPlayers = data.maxPlayers || 2;
+        if (data.players?.length >= maxPlayers && !data.players.includes(user.uid)) {
+          if (data.spectators && data.spectators.includes(user.uid)) {
+             throw new Error("already-spectator");
           }
           throw new Error("full");
         }
@@ -302,7 +324,7 @@ export default function App() {
           const missingUid = data.scores ? Object.keys(data.scores).find(uid => !data.players.includes(uid)) : null;
           const isResume = !!missingUid;
           const updatedPlayers = [...(data.players || []), user.uid];
-          let updatePayload = { players: updatedPlayers, status: 'playing', abandonedBy: null, abandonReason: null };
+          let updatePayload = { players: updatedPlayers, status: data.gameId === 'okey101' ? 'waiting' : 'playing', abandonedBy: null, abandonReason: null };
 
           if (!isResume) {
             updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' }; 
@@ -325,6 +347,9 @@ export default function App() {
               updatePayload.playerColors = { ...data.playerColors, [user.uid]: myColor };
               updatePayload.turn = whitePlayerUid;
               updatePayload.startingPlayer = whitePlayerUid;
+            } else if (data.gameId === 'okey101') {
+              // Yeni oyuncu takımsız (Bekleyenler havuzunda) katılır; status zaten yukarıda
+              // 'waiting' tutuldu — Okey101Lobby'nin geri sayım efekti eşiğe ulaşınca 'playing'e çevirecek.
             } else {
               const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
               updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
@@ -387,6 +412,32 @@ export default function App() {
         await runTransaction(db, async (transaction) => {
           const snap = await transaction.get(roomRef); if (!snap.exists()) return;
           const data = snap.data();
+
+          // Okey101 lobi aşamasında (henüz oyun başlamadıysa) ayrılma, tüm odayı
+          // kapatmak yerine sadece o oyuncuyu koltuktan kaldırır; host ayrılırsa
+          // kalan bir gerçek oyuncuya (yoksa herhangi birine) host devredilir.
+          // Bu, geri sayımın "biri ayrılırsa iptal olsun" kuralını da doğal olarak sağlar.
+          if (isPlayer && data.gameId === 'okey101' && data.status === 'waiting') {
+            const remainingPlayers = (data.players || []).filter(uid => uid !== user.uid);
+            if (remainingPlayers.length === 0) {
+              transaction.update(roomRef, { status: 'closed', closedBy: user.uid });
+              return;
+            }
+            const newTeams = { A: (data.teams?.A || []).filter(uid => uid !== user.uid), B: (data.teams?.B || []).filter(uid => uid !== user.uid) };
+            const newScores = { ...data.scores }; delete newScores[user.uid];
+            const newNames = { ...data.playerNames }; delete newNames[user.uid];
+            const newIsBot = { ...(data.isBotPlayer || {}) }; delete newIsBot[user.uid];
+            const newHost = data.host === user.uid
+              ? (remainingPlayers.find(uid => !isOkeyBotUid(uid)) || remainingPlayers[0])
+              : data.host;
+            transaction.update(roomRef, {
+              players: remainingPlayers, host: newHost, teams: newTeams,
+              scores: newScores, playerNames: newNames, isBotPlayer: newIsBot,
+              countdownStartedAt: null,
+            });
+            return;
+          }
+
           if (isPlayer) {
              if (data.players.length <= 1 || (data.status === 'abandoned' && data.abandonedBy !== user.uid)) {
                  transaction.update(roomRef, { status: 'closed', closedBy: user.uid });
@@ -484,7 +535,7 @@ export default function App() {
                </>
             )}
 
-            {roomData?.status === 'waiting' ? (
+            {roomData?.status === 'waiting' && roomData?.gameId !== 'okey101' ? (
               <div className="text-center py-12">
                 <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mx-auto mb-4" />
                 <h2 className="text-2xl font-bold mb-2">Rakip Bekleniyor...</h2>
@@ -498,6 +549,7 @@ export default function App() {
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                   {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                  </ErrorBoundary>
               </div>
             )}
