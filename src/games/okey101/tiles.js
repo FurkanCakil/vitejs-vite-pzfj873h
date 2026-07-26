@@ -76,25 +76,40 @@ export function isOkeyTile(tile, okeyInfo) {
   return tile.color === okeyInfo.color && tile.number === okeyInfo.number;
 }
 
-// Tek bir taşı (fromIdx) hedef slota (toIdx) taşır; aralarındaki taşlar/boşluklar kayar.
-export function reorderRow(row, fromIdx, toIdx) {
+// Sabit slotlu ıstaka fiziği: tek bir taşı (fromIdx) hedef slota (toIdx) taşır.
+// Diğer taşların konumu ASLA kaymaz — hedef slot boşsa taş oraya gider (eski
+// slotu boşalır), doluysa iki taş yer değiştirir (swap).
+export function moveTileToSlot(row, fromIdx, toIdx) {
+  if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || toIdx >= row.length) return row;
   const newRow = [...row];
-  const [moved] = newRow.splice(fromIdx, 1);
-  const adjustedTo = toIdx > fromIdx ? toIdx - 1 : toIdx;
-  newRow.splice(Math.max(0, Math.min(adjustedTo, newRow.length)), 0, moved);
+  const moved = newRow[fromIdx];
+  newRow[fromIdx] = newRow[toIdx];
+  newRow[toIdx] = moved;
   return newRow;
 }
 
-// Bitişik bir taş bloğunu (bir per'in tüm taşları) bozmadan hedef slota taşır.
-export function moveGroupBlock(row, tileIds, targetIndex) {
+// Bitişik bir taş bloğunu (bir per'in tüm taşları) sabit hedef slota taşır.
+// Hedef aralık TAMAMEN boş ya da bloğun kendi eski slotlarıyla örtüşüyorsa
+// yerleştirilir; aksi halde (dolu başka bir taşa denk gelirse) hiçbir şey
+// değişmez — diğer taşlar asla kaymaz.
+export function moveGroupBlockToSlot(row, tileIds, targetIndex) {
   const blockSet = new Set(tileIds);
-  const startIdx = row.findIndex((t) => t && blockSet.has(t.id));
-  if (startIdx === -1) return row;
-  const block = row.slice(startIdx, startIdx + tileIds.length);
-  const withoutBlock = [...row.slice(0, startIdx), ...row.slice(startIdx + tileIds.length)];
-  let insertAt = targetIndex > startIdx ? targetIndex - tileIds.length : targetIndex;
-  insertAt = Math.max(0, Math.min(insertAt, withoutBlock.length));
-  return [...withoutBlock.slice(0, insertAt), ...block, ...withoutBlock.slice(insertAt)];
+  const oldIndices = [];
+  row.forEach((t, i) => { if (t && blockSet.has(t.id)) oldIndices.push(i); });
+  if (oldIndices.length !== tileIds.length) return row;
+
+  const orderedBlock = oldIndices.map((i) => row[i]);
+  const oldSet = new Set(oldIndices);
+  const end = targetIndex + tileIds.length;
+  if (targetIndex < 0 || end > row.length) return row;
+  for (let i = targetIndex; i < end; i++) {
+    if (row[i] && !oldSet.has(i)) return row; // dolu ve bloğa ait değil -> reddet, kaydırma yok
+  }
+
+  const newRow = [...row];
+  oldIndices.forEach((i) => { newRow[i] = null; });
+  orderedBlock.forEach((tile, i) => { newRow[targetIndex + i] = tile; });
+  return newRow;
 }
 
 // Seçili taş id'lerinin rack üzerinde gerçekten yan yana (bitişik) olup olmadığını doğrular.

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { doc, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { doc, getDocFromServer, updateDoc, runTransaction } from 'firebase/firestore';
 import { Loader2 } from 'lucide-react';
 import Okey101Lobby from './Okey101Lobby.jsx';
 import PlayerRack from './PlayerRack.jsx';
@@ -19,6 +19,19 @@ import {
 
 const OPENED_TYPE_LABELS = { seri: 'Seri', set: 'Set', cift: 'Çift' };
 
+// Eşli (2v2) modda takım arkadaşları masada KARŞILIKLI otursun (ve tur sırası
+// ile oturma düzeni geometrisi tutarlı kalsın) diye oyuncu dizisini A1,B1,A2,B2
+// şeklinde alterne sıraya sokar (A1'in solu/sağı her zaman B2/B1 -> rakip,
+// karşısı A2 -> eş olur). Diğer modlarda veya takımlar tam değilse dokunulmaz.
+function seatOrderedPlayers(players, rules, teams) {
+  if (rules?.gameType !== '2v2' || !teams) return players;
+  const a = teams.A || []; const b = teams.B || [];
+  if (a.length !== 2 || b.length !== 2) return players;
+  const ordered = [a[0], b[0], a[1], b[1]];
+  const sameSet = ordered.length === players.length && ordered.every((uid) => players.includes(uid));
+  return sameSet ? ordered : players;
+}
+
 // 4. Faz: Gösterge/Okey belirleme, katı per doğrulaması (sadece toplam yetmez —
 // dizilim de doğru olmalı), Çift Açma (5 çift, 101 aranmaksızın), ve İşleme
 // (açık perlere tek taş ekleme/tacking). 3. Faz'ın tur/atma/ceza mimarisi
@@ -37,21 +50,33 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
+  // Nadiren bir Firestore transaction'ı (ağ/ortam kaynaklı) hiç sonuçlanmadan
+  // asılı kalabiliyor — bu, bot turunun tamamlanmasını sonsuza dek engeller.
+  // Bu "watchdog" her 20sn'de bir tetiklenerek bot-turu efektini (aşağıda)
+  // yeniden tetikler; efekt zaten çalışıyorsa ve gerçekten ilerliyorsa bunun
+  // hiçbir etkisi yoktur, ama asılı kalmış bir deneme varsa temiz bir yeniden
+  // başlangıç sağlar (bkz. `cancelled`/`botTurnLockRef` sıfırlama, cleanup'ta).
+  const [botWatchdogTick, setBotWatchdogTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setBotWatchdogTick((n) => n + 1), 20000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Oyun 'playing' fazına yeni geçtiyse (henüz taş dağıtılmamışsa) host taşları dağıtır,
   // Göstergeyi belirler (ve ondan Okey'i türetir), 15sn hazırlık fazını başlatır ve
   // turu ilk oyuncuya (22 taşlı) verir. İlk oyuncu zaten fazladan taşla başladığı için
   // ilk turunda tekrar çekmesi GEREKMEZ — hasDrawnThisTurn baştan true (gerçek kural).
   useEffect(() => {
     if (roomData.status !== 'playing' || roomData.racks || !isHost) return;
-    const players = roomData.players || [];
+    const players = seatOrderedPlayers(roomData.players || [], roomData.rules, roomData.teams);
     const { racks, drawPile, indicator } = dealTiles(players);
     const okey = computeOkeyInfo(indicator);
     const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {};
     players.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; });
     updateDoc(roomRef, {
-      racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
+      players, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
       setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
-      turn: players[0] || null, hasDrawnThisTurn: true,
+      turn: players[0] || null, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
     }).catch((err) => console.error('Okey101 taş dağıtım hatası:', err));
   }, [roomData.status, roomData.racks, isHost]);
@@ -69,9 +94,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // 6. Faz: Bot tur otomasyonu. Sadece host tetikler (tek bir tarayıcı botu
   // sürer). `roomData.turn` bir bota geçtiğinde: rastgele 1.5-2.5sn gecikme →
   // çekme kararı (yerden mi destede mi) → el açma denemesi (çift/per) →
-  // işleme (tacking) denemeleri → atma. Her adım arasında taze `getDoc` okuması
-  // yapılır (stale roomData prop'una göre değil, gerçek Firestore durumuna göre
-  // hareket eder). `botTurnLockRef` aynı tur için yeniden tetiklenmeyi engeller;
+  // işleme (tacking) denemeleri → atma. Her adım arasında taze `getDocFromServer`
+  // okuması yapılır (stale roomData prop'una veya `onSnapshot`'ın yerel watch
+  // cache'ine değil, doğrudan sunucudaki gerçek duruma göre hareket eder — bu
+  // olmadan bir transaction'ın hemen ardından gelen düz `getDoc` bazen eski
+  // veri döndürüp botu "sıkışmış" gibi gösterebiliyordu). `botTurnLockRef` aynı
+  // tur için yeniden tetiklenmeyi engeller;
   // bağımlılık dizisi bilinçli olarak dar tutuldu (racks/hasDrawnThisTurn HARİÇ)
   // çünkü botun kendi hamleleri sırasında oluşan roomData güncellemeleri
   // efekti erken iptal edip yarıda kesmemeli.
@@ -91,25 +119,28 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         await randomTurnDelay();
         if (cancelled) return;
 
-        let snap = await getDoc(roomRef);
+        let snap = await getDocFromServer(roomRef);
         if (!snap.exists()) return;
         let data = snap.data();
         if (cancelled || data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
 
         // 1) Çekme kararı: yerden almak bir peri tamamlıyorsa/çok değerliyse
-        // yerden al, aksi halde her zaman kapalı desteden çek.
+        // yerden al, aksi halde her zaman kapalı desteden çek. `forcedPileDraw`
+        // aktifse (bu turda daha önce bir yandan-taşı iptal edildiyse) sadece
+        // desteden çekilebilir.
         if (!data.hasDrawnThisTurn) {
           const rack = (data.racks?.[turnUid] || []).filter(Boolean);
           const prevUidForBot = getPrevTurnUid(data.players || [], turnUid);
           const discardPile = prevUidForBot ? (data.discardPiles?.[prevUidForBot] || []) : [];
           const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
-          if (topDiscard && shouldTakeDiscard(rack, topDiscard, data.okey || null)) {
+          const canTakeSide = !data.forcedPileDraw && topDiscard && shouldTakeDiscard(rack, topDiscard, data.okey || null);
+          if (canTakeSide) {
             await handleDrawDiscard(turnUid);
           } else {
             await handleDrawPile(turnUid);
           }
           if (cancelled) return;
-          snap = await getDoc(roomRef);
+          snap = await getDocFromServer(roomRef);
           if (!snap.exists()) return;
           data = snap.data();
           if (data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
@@ -117,37 +148,68 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
         // 2) El açma: tam 5 çift bulunduysa onu, yoksa toplamı >=101 olan greedy
         // per kombinasyonunu (varsa) masaya aç. Zaten açıksa yeni bulunan
-        // perleri (eşik aranmaksızın) işleyip masaya ekler.
+        // perleri (eşik aranmaksızın) işleyip masaya ekler. Yandan taş alıp
+        // henüz açmamışsa (pendingSideTake), açma BAŞARISIZ olursa taşı geri
+        // koyup desteden çekmeye zorlanır (2. Faz'da eklenen "yandan taş alma"
+        // kuralı — bkz. handleDrawDiscard/handleCancelSideTake).
+        const attemptOpen = async () => {
+          const okeyNow = data.okey || null;
+          const rackNow = (data.racks?.[turnUid] || []).filter(Boolean);
+          const alreadyOpened = !!data.hasOpened?.[turnUid];
+          if (!alreadyOpened) {
+            const pairs = pickBotPairs(rackNow, okeyNow);
+            if (pairs.length === 5) { await handleBotOpenMelds(turnUid, pairs, true); return; }
+            const melds = pickBotMelds(rackNow, okeyNow);
+            const total = melds.reduce((s, m) => s + m.value, 0);
+            if (melds.length > 0 && total >= OPEN_THRESHOLD) { await handleBotOpenMelds(turnUid, melds, false); return; }
+          } else {
+            const melds = pickBotMelds(rackNow, okeyNow);
+            if (melds.length > 0) await handleBotOpenMelds(turnUid, melds, false);
+          }
+        };
+
+        const pendingSideTake = data.sideTake?.uid === turnUid && !data.hasOpened?.[turnUid];
+
         await randomTurnDelay();
         if (cancelled) return;
-        snap = await getDoc(roomRef);
+        snap = await getDocFromServer(roomRef);
         if (!snap.exists()) return;
         data = snap.data();
         if (data.setupPhase || data.roundEnded || data.turn !== turnUid || !data.hasDrawnThisTurn) return;
 
-        const okeyForOpen = data.okey || null;
-        const rackForOpen = (data.racks?.[turnUid] || []).filter(Boolean);
-        const alreadyOpened = !!data.hasOpened?.[turnUid];
-        if (!alreadyOpened) {
-          const pairs = pickBotPairs(rackForOpen, okeyForOpen);
-          if (pairs.length === 5) {
-            await handleBotOpenMelds(turnUid, pairs, true);
-          } else {
-            const melds = pickBotMelds(rackForOpen, okeyForOpen);
-            const total = melds.reduce((s, m) => s + m.value, 0);
-            if (melds.length > 0 && total >= OPEN_THRESHOLD) {
-              await handleBotOpenMelds(turnUid, melds, false);
-            }
-          }
-        } else {
-          const melds = pickBotMelds(rackForOpen, okeyForOpen);
-          if (melds.length > 0) await handleBotOpenMelds(turnUid, melds, false);
-        }
+        await attemptOpen();
         if (cancelled) return;
-        snap = await getDoc(roomRef);
+        snap = await getDocFromServer(roomRef);
         if (!snap.exists()) return;
         data = snap.data();
         if (data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
+
+        if (pendingSideTake && !data.hasOpened?.[turnUid]) {
+          await handleCancelSideTake(turnUid);
+          if (cancelled) return;
+          snap = await getDocFromServer(roomRef);
+          if (!snap.exists()) return;
+          data = snap.data();
+          if (data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
+
+          await randomTurnDelay();
+          if (cancelled) return;
+          await handleDrawPile(turnUid);
+          if (cancelled) return;
+          snap = await getDocFromServer(roomRef);
+          if (!snap.exists()) return;
+          data = snap.data();
+          if (data.setupPhase || data.roundEnded || data.turn !== turnUid || !data.hasDrawnThisTurn) return;
+
+          await randomTurnDelay();
+          if (cancelled) return;
+          await attemptOpen();
+          if (cancelled) return;
+          snap = await getDocFromServer(roomRef);
+          if (!snap.exists()) return;
+          data = snap.data();
+          if (data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
+        }
 
         // 3) İşleme: elini açtıysa, ıstakada en az 1 taş (zorunlu atma için)
         // kalacak şekilde, masadaki (kendi/rakip) perlere uyan taşları işler.
@@ -162,7 +224,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             await randomTurnDelay();
             if (cancelled) return;
             await handleTackTile(opp.tile, { uid: opp.targetUid, groupIndex: opp.groupIndex, side: opp.side }, turnUid);
-            snap = await getDoc(roomRef);
+            snap = await getDocFromServer(roomRef);
             if (!snap.exists()) return;
             data = snap.data();
             if (data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
@@ -173,7 +235,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         // başka çaresi kalmadığında at (pickDiscardTile bu kuralı zaten uygular).
         await randomTurnDelay();
         if (cancelled) return;
-        snap = await getDoc(roomRef);
+        snap = await getDocFromServer(roomRef);
         if (!snap.exists()) return;
         data = snap.data();
         if (data.setupPhase || data.roundEnded || data.turn !== turnUid || !data.hasDrawnThisTurn) return;
@@ -190,7 +252,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
     return () => { cancelled = true; botTurnLockRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, roomData.status, roomData.turn, roomData.setupPhase, roomData.roundEnded]);
+  }, [isHost, roomData.status, roomData.turn, roomData.setupPhase, roomData.roundEnded, botWatchdogTick]);
 
   if (roomData.status !== 'playing') {
     return <Okey101Lobby roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />;
@@ -224,8 +286,31 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const mustDraw = isPlayer && isMyTurn && !hasDrawn;
   const mustDiscard = isPlayer && isMyTurn && hasDrawn;
   const prevUid = getPrevTurnUid(roomData.players || [], user.uid);
+  const nextUid = getNextTurnUid(roomData.players || [], user.uid);
+  const topUid = (roomData.players || []).find((uid) => uid !== user.uid && uid !== prevUid && uid !== nextUid) || null;
 
   const turnPlayerName = players.find((p) => p.uid === roomData.turn)?.name || '...';
+
+  // Kare masa düzeni: ben her zaman altta (ıstaka), SOLUMDAKİ (prevUid) taşımı
+  // alabileceğim/onun taşını çekebileceğim kişi, SAĞIMDAKİ (nextUid) taşımı
+  // atacağım kişi, ÜSTTEKİ kalan 4. oyuncu (Eşli modda -> eşim, bkz.
+  // seatOrderedPlayers). Rakiplerin ıstakadaki taşları asla gösterilmez.
+  const buildSeat = (uid) => {
+    const p = players.find((pl) => pl.uid === uid);
+    if (!p) return null;
+    const pile = roomData.discardPiles?.[uid] || [];
+    return {
+      player: p,
+      rackCount: roomData.racks?.[uid]?.filter(Boolean).length ?? 0,
+      topDiscard: pile.length > 0 ? pile[pile.length - 1] : null,
+      score: roomData.scores?.[uid] ?? 0,
+    };
+  };
+  const topSeat = buildSeat(topUid);
+  const leftSeat = buildSeat(prevUid);
+  const rightSeat = buildSeat(nextUid);
+
+  const mySideTakePending = roomData.sideTake?.uid === user.uid && !myHasOpened;
 
   const handleUpdateRack = (newRack, newGroups) => {
     updateDoc(roomRef, { [`racks.${user.uid}`]: newRack, [`groups.${user.uid}`]: newGroups })
@@ -250,16 +335,22 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => console.error('Okey101 çekme hatası:', err));
   };
 
+  // Yandan (soldan) taş alma: Ceza Kuralı açıksa VE oyuncu henüz elini
+  // açmamışsa, ceza HEMEN yazılmaz — bunun yerine oyuncu "sideTake" ile
+  // işaretlenir ve bu turu ya BAŞARILI bir açma (Seri/Çift Aç) ile ya da
+  // taşı geri koyup (handleCancelSideTake) desteden çekerek sürdürmek
+  // ZORUNDADIR. Ceza, ancak açma başarılı olduğunda (bkz. handleOpenSeries/
+  // handleOpenPairs/handleBotOpenMelds) taşı atan kişiye yazılır.
   const handleDrawDiscard = async (actingUid = user.uid) => {
     const fromUid = actingUid === user.uid ? prevUid : getPrevTurnUid(roomData.players || [], actingUid);
-    if (actingUid === user.uid && !mustDraw) return;
+    if (actingUid === user.uid && (!mustDraw || roomData.forcedPileDraw)) return;
     if (!fromUid) return;
-    let penaltyApplied = false;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.turn !== actingUid || data.hasDrawnThisTurn) return;
+      if (data.forcedPileDraw) return;
       const pile = [...(data.discardPiles?.[fromUid] || [])];
       if (pile.length === 0) return;
       const drawn = pile.pop();
@@ -268,15 +359,37 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (emptyIdx === -1) return;
       rack[emptyIdx] = drawn;
       const update = { [`discardPiles.${fromUid}`]: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true };
-      if (data.rules?.penaltyToDiscarder) {
-        update[`scores.${fromUid}`] = (data.scores?.[fromUid] || 0) - PENALTY_POINTS;
-        penaltyApplied = true;
+      if (data.rules?.penaltyToDiscarder && !data.hasOpened?.[actingUid]) {
+        update.sideTake = { uid: actingUid, fromUid, tileId: drawn.id };
       }
       t.update(roomRef, update);
     }).catch((err) => console.error('Okey101 yerden çekme hatası:', err));
-    if (penaltyApplied) {
-      showToast(`${players.find((p) => p.uid === fromUid)?.name || 'Rakip'} taşı yandan alındığı için -101 ceza aldı.`, 'amber');
-    }
+  };
+
+  // "Taşı Geri Koy / İptal": yandan aldığı taşla elini açamayan oyuncu, taşı
+  // sahibinin atış yığınına geri koyar ve bu tur artık SADECE ortadaki kapalı
+  // desteden çekebilir (forcedPileDraw).
+  const handleCancelSideTake = async (actingUid = user.uid) => {
+    await runTransaction(db, async (t) => {
+      const snap = await t.get(roomRef);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const st = data.sideTake;
+      if (!st || st.uid !== actingUid || data.turn !== actingUid || !data.hasDrawnThisTurn || data.hasOpened?.[actingUid]) return;
+      const rack = [...(data.racks?.[actingUid] || [])];
+      const idx = rack.findIndex((s) => s && s.id === st.tileId);
+      if (idx === -1) return;
+      const tile = rack[idx];
+      rack[idx] = null;
+      const pile = [...(data.discardPiles?.[st.fromUid] || []), tile];
+      t.update(roomRef, {
+        [`racks.${actingUid}`]: rack,
+        [`discardPiles.${st.fromUid}`]: pile,
+        hasDrawnThisTurn: false,
+        sideTake: null,
+        forcedPileDraw: true,
+      });
+    }).catch((err) => console.error('Okey101 taş geri koyma hatası:', err));
   };
 
   const handleDiscardTile = async (tile, actingUid = user.uid) => {
@@ -286,6 +399,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.turn !== actingUid || !data.hasDrawnThisTurn) return;
+      if (data.sideTake?.uid === actingUid && !data.hasOpened?.[actingUid]) return; // önce açmalı ya da geri koymalı
       const rack = [...(data.racks?.[actingUid] || [])];
       const idx = rack.findIndex((s) => s && s.id === tile.id);
       if (idx === -1) return;
@@ -325,6 +439,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           [`discardPiles.${actingUid}`]: discardPile,
           turn: null,
           hasDrawnThisTurn: false,
+          sideTake: null,
+          forcedPileDraw: false,
           roundEnded: true,
           roundResult,
           scores: newScores,
@@ -339,6 +455,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`discardPiles.${actingUid}`]: discardPile,
         turn: nextUid,
         hasDrawnThisTurn: false,
+        sideTake: null,
+        forcedPileDraw: false,
       });
     }).catch((err) => console.error('Okey101 atma hatası:', err));
   };
@@ -385,19 +503,31 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         delete myGroupsNow[r.gid];
       }
       const existingOpened = data.openedHands?.[user.uid] || [];
-
-      outcome = { success: true };
-      t.update(roomRef, {
+      const update = {
         [`racks.${user.uid}`]: newRack,
         [`groups.${user.uid}`]: myGroupsNow,
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
-      });
+      };
+      // Yandan taş alıp bu açılışla elini açan oyuncu varsa, ceza ŞİMDİ o taşı
+      // atan kişiye yazılır (bkz. handleDrawDiscard).
+      const st = data.sideTake;
+      let penalizedName = null;
+      if (st && st.uid === user.uid) {
+        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) - PENALTY_POINTS;
+        update.sideTake = null;
+        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+      }
+
+      outcome = { success: true, penalizedName };
+      t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 seri açma hatası:', err); outcome = null; });
 
     if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
     else if (outcome?.reason === 'below101') showToast('101\'e Ulaşamadınız! Ceza Yediniz.', 'red');
-    else if (outcome?.success === true) showToast('Per başarıyla açıldı!', 'emerald');
+    else if (outcome?.success === true) {
+      showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -101 ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
+    }
     return outcome;
   };
 
@@ -435,19 +565,29 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         delete myGroupsNow[gid];
       }
       const existingOpened = data.openedHands?.[user.uid] || [];
-
-      outcome = { success: true };
-      t.update(roomRef, {
+      const update = {
         [`racks.${user.uid}`]: newRack,
         [`groups.${user.uid}`]: myGroupsNow,
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
-      });
+      };
+      const st = data.sideTake;
+      let penalizedName = null;
+      if (st && st.uid === user.uid) {
+        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) - PENALTY_POINTS;
+        update.sideTake = null;
+        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+      }
+
+      outcome = { success: true, penalizedName };
+      t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 çift açma hatası:', err); outcome = null; });
 
     if (outcome?.reason === 'already-opened') showToast('Zaten elini açtın.', 'red');
     else if (outcome?.reason === 'invalid') showToast('Geçersiz Çift Seçimi! Tam olarak 5 çift gerekli.', 'red');
-    else if (outcome?.success === true) showToast('5 çift başarıyla açıldı!', 'emerald');
+    else if (outcome?.success === true) {
+      showToast(outcome.penalizedName ? `5 çift başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -101 ceza aldı.` : '5 çift başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
+    }
     return outcome;
   };
 
@@ -492,14 +632,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         });
       }
       const existingOpened = data.openedHands?.[actingUid] || [];
-
-      outcome = { success: true };
-      t.update(roomRef, {
+      const update = {
         [`racks.${actingUid}`]: actorRackNow,
         [`openedHands.${actingUid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${actingUid}`]: true,
-      });
+      };
+      const st = data.sideTake;
+      let penalizedName = null;
+      if (st && st.uid === actingUid) {
+        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) - PENALTY_POINTS;
+        update.sideTake = null;
+        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+      }
+
+      outcome = { success: true, penalizedName };
+      t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 bot açma hatası:', err); outcome = null; });
+    if (outcome?.penalizedName) showToast(`${outcome.penalizedName} taşı yandan alındığı için -101 ceza aldı.`, 'amber');
     return outcome;
   };
 
@@ -554,15 +703,15 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (!data.roundEnded) return;
-      const roundPlayers = data.players || [];
+      const roundPlayers = seatOrderedPlayers(data.players || [], data.rules, data.teams);
       const { racks, drawPile, indicator } = dealTiles(roundPlayers);
       const okey = computeOkeyInfo(indicator);
       const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {};
       roundPlayers.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; });
       t.update(roomRef, {
-        racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
+        players: roundPlayers, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
         setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
-        turn: roundPlayers[0] || null, hasDrawnThisTurn: true,
+        turn: roundPlayers[0] || null, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
       });
     }).catch((err) => console.error('Okey101 yeni tur hatası:', err));
@@ -594,15 +743,40 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       <SetupCountdown setupEndsAt={setupPhase ? roomData.setupEndsAt : null} />
 
       <OpponentStrip
-        players={players}
-        racks={roomData.racks}
-        discardPiles={roomData.discardPiles}
-        scores={roomData.scores}
+        topSeat={topSeat}
+        leftSeat={leftSeat}
+        rightSeat={rightSeat}
         hostUid={roomData.host}
-        myUid={user.uid}
-        takeableUid={mustDraw ? prevUid : null}
+        turnUid={roomData.turn}
+        takeableUid={mustDraw && !roomData.forcedPileDraw ? prevUid : null}
         onTakeDiscard={() => handleDrawDiscard(user.uid)}
-      />
+      >
+        <div className="flex flex-col items-center gap-2">
+          <div
+            onClick={mustDraw ? () => handleDrawPile() : undefined}
+            title={mustDraw ? 'Desteden çek' : undefined}
+            className={`flex items-center gap-2 bg-slate-900/70 border rounded-lg px-4 py-2 transition-colors ${mustDraw ? 'cursor-pointer border-amber-400 ring-2 ring-amber-400/50 animate-pulse' : 'border-slate-700 opacity-80'}`}
+          >
+            <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Çekilecek Taşlar</span>
+            <TileBack size="small" />
+            <span className="text-sm font-mono font-bold text-slate-200">{roomData.drawPile?.length ?? 0}</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap justify-center">
+            {roomData.indicator && (
+              <div className="flex items-center gap-2 bg-slate-900/70 border border-fuchsia-500/40 rounded-lg px-3 py-1.5">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gösterge</span>
+                <Tile tile={roomData.indicator} size="small" />
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-1.5">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Senin Attıkların</span>
+              {myTopDiscard ? <Tile tile={myTopDiscard} size="small" /> : <div className="w-4 h-6" />}
+            </div>
+          </div>
+        </div>
+      </OpponentStrip>
 
       {!setupPhase && (
         <div className={`text-center font-bold text-sm sm:text-base px-4 py-2 rounded-lg ${isMyTurn ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400'}`}>
@@ -610,29 +784,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         </div>
       )}
 
-      <div className="flex items-center gap-4 flex-wrap justify-center">
-        <div
-          onClick={mustDraw ? handleDrawPile : undefined}
-          title={mustDraw ? 'Desteden çek' : undefined}
-          className={`flex items-center gap-2 bg-slate-900/70 border rounded-lg px-4 py-2 transition-colors ${mustDraw ? 'cursor-pointer border-amber-400 ring-2 ring-amber-400/50 animate-pulse' : 'border-slate-700 opacity-80'}`}
-        >
-          <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Çekilecek Taşlar</span>
-          <TileBack size="small" />
-          <span className="text-sm font-mono font-bold text-slate-200">{roomData.drawPile?.length ?? 0}</span>
+      {mySideTakePending && (
+        <div className="w-full max-w-md flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/50 rounded-xl px-4 py-3">
+          <span className="text-xs sm:text-sm font-bold text-amber-300">Yandan taş aldın! Şimdi elini açmalısın (Seri/Çift Aç) ya da taşı geri koymalısın.</span>
+          <button
+            type="button"
+            onClick={() => handleCancelSideTake()}
+            className="shrink-0 text-xs font-bold bg-slate-900/70 hover:bg-slate-700 text-slate-200 border border-slate-600 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            Taşı Geri Koy
+          </button>
         </div>
-
-        {roomData.indicator && (
-          <div className="flex items-center gap-2 bg-slate-900/70 border border-fuchsia-500/40 rounded-lg px-4 py-2">
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Gösterge</span>
-            <Tile tile={roomData.indicator} size="small" />
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-700 rounded-lg px-4 py-2">
-          <span className="text-xs text-slate-400 font-bold uppercase tracking-widest">Senin Attıkların</span>
-          {myTopDiscard ? <Tile tile={myTopDiscard} size="small" /> : <div className="w-4 h-6" />}
-        </div>
-      </div>
+      )}
 
       {Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0) && (
         <div className="w-full bg-slate-900/60 border border-slate-700 rounded-xl p-3">
@@ -677,11 +840,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             onUpdateRack={handleUpdateRack}
             okeyInfo={okeyInfo}
             canAct={mustDiscard}
+            canDiscard={mustDiscard && !mySideTakePending}
             hasOpenedAlready={myHasOpened}
             onDiscardTile={handleDiscardTile}
             onOpenSeries={handleOpenSeries}
             onOpenPairs={handleOpenPairs}
             onTackTile={handleTackTile}
+            showToast={showToast}
           />
         ) : (
           <div className="text-center text-slate-400 text-sm py-6">Bu odada oyuncu değilsin, ıstaka görüntülenemiyor.</div>

@@ -1,18 +1,24 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Check, X, Layers, Rows3 } from 'lucide-react';
 import Tile from './Tile.jsx';
-import { RACK_ROW_LENGTH, RACK_SLOTS, reorderRow, moveGroupBlock, isContiguousSelection, isOkeyTile } from './tiles.js';
+import { RACK_ROW_LENGTH, RACK_SLOTS, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
+import { validateGroup } from './gameLogic.js';
 
 const DRAG_THRESHOLD_PX = 6;
 const TACK_HOVER_STYLE = { backgroundColor: 'rgba(251,191,36,0.55)' };
 
 // Oyuncunun kendi ıstakası: taş seçimi (per onaylamak / seri-çift açmak için),
-// sürükle-bırak ile yeniden sıralama, gruplanmış (per) taşların bir blok
-// halinde birlikte hareket etmesi, (canAct açıkken) taşı ıstaka dışına
-// sürükleyip atma (discard), ve (hasOpened + canAct iken) masadaki açık
-// perlere tek taş işleme (tacking) burada yönetilir. Sadece sahibi (isOwner)
-// etkileşime girebilir.
-export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyInfo, canAct = false, hasOpenedAlready = false, onDiscardTile, onOpenSeries, onOpenPairs, onTackTile }) {
+// SABİT SLOTLU sürükle-bırak (bir taş boş bir slota bırakılırsa SADECE o taş
+// oraya gider, doluysa iki taş yer değiştirir — diğer taşlar ASLA kaymaz),
+// gruplanmış (per) taşların bir blok halinde birlikte hareket etmesi, (canAct
+// açıkken) taşı ıstaka dışına sürükleyip atma (discard), ve (hasOpened + canAct
+// iken) masadaki açık perlere tek taş işleme (tacking) burada yönetilir.
+// Sadece sahibi (isOwner) etkileşime girebilir.
+export default function PlayerRack({
+  rack, groups, isOwner, onUpdateRack, okeyInfo,
+  canAct = false, canDiscard = false, hasOpenedAlready = false,
+  onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
+}) {
   const safeRack = rack && rack.length === RACK_SLOTS ? rack : Array(RACK_SLOTS).fill(null);
   const safeGroups = groups || {};
 
@@ -32,7 +38,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
   const selectedIds = useMemo(() => [...selected], [selected]);
   const allUngrouped = selectedIds.length > 0 && selectedIds.every((id) => !groupOf[id]);
   const contiguous = allUngrouped && isContiguousSelection(selectedIds, safeRack);
-  const canConfirmGroup = allUngrouped && contiguous && selectedIds.length >= 2;
+  const canAttemptConfirm = allUngrouped && selectedIds.length >= 2;
 
   // Seçimdeki her taş bir gruba ait VE o grupların TÜM taşları seçili mi?
   const selectedGroupIds = useMemo(() => {
@@ -74,7 +80,18 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
     }
   };
 
+  // "Per Onayla": 1) seçili taşlar ıstakada yan yana mı? 2) (3+ taş seçiliyse)
+  // seçim gerçekten geçerli bir per (set/seri) mi? İkisi de sağlanmıyorsa
+  // toast ile net bir hata mesajı gösterilir ve hiçbir şey gruplanmaz. Tam 2
+  // taşlık seçimler ("Çift Aç" için ön-hazırlık) per doğrulamasından muaftır
+  // — onların geçerliliği "Çift Aç" anında ayrı kuralla kontrol edilir.
   const confirmGroup = () => {
+    if (!contiguous) { showToast?.('Taşlar yan yana olmalı!', 'red'); return; }
+    if (selectedIds.length >= 3) {
+      const orderedTiles = safeRack.filter((t) => t && selected.has(t.id));
+      const result = validateGroup(orderedTiles, okeyInfo);
+      if (!result.valid) { showToast?.('Geçersiz Per Dizilimi!', 'red'); return; }
+    }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const ordered = safeRack.filter((t) => t && selected.has(t.id)).map((t) => t.id);
     commit(safeRack, { ...safeGroups, [gid]: ordered });
@@ -160,7 +177,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
 
     if (droppedOnDiscard) {
       // Bir per'e ait olsa bile atarken sadece TEK taş atılır (grup bölünür).
-      if (canAct && onDiscardTile) onDiscardTile(d.tile);
+      if (canDiscard && onDiscardTile) onDiscardTile(d.tile);
       return;
     }
 
@@ -173,9 +190,11 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
       if (targetGid && !d.tileIds.includes(targetTile.id)) return;
     }
 
+    // Sabit slot fiziği: sadece hedef slot (veya blok aralığı) etkilenir,
+    // diğer taşlar ASLA kaymaz (boşsa taş oraya gider, doluysa yer değiştirir).
     const newRack = d.tileIds.length > 1
-      ? moveGroupBlock(safeRack, d.tileIds, dropIndex)
-      : reorderRow(safeRack, d.fromIndex, dropIndex);
+      ? moveGroupBlockToSlot(safeRack, d.tileIds, dropIndex)
+      : moveTileToSlot(safeRack, d.fromIndex, dropIndex);
     onUpdateRack(newRack, safeGroups);
   };
 
@@ -216,19 +235,22 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
   return (
     <div className="w-full flex flex-col items-center gap-3">
       {isOwner && (
-        <div className="min-h-9 flex items-center justify-center gap-2 flex-wrap">
-          {canConfirmGroup && (
-            <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-3 py-1.5 rounded-lg transition-colors">
-              <Check className="w-3.5 h-3.5" /> Per Onayla
-            </button>
-          )}
-          {canRemoveGroup && (
-            <button type="button" onClick={removeGroup} className="flex items-center gap-1.5 text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/50 px-3 py-1.5 rounded-lg transition-colors">
-              <X className="w-3.5 h-3.5" /> Onayı Kaldır
-            </button>
-          )}
+        <div className="w-full max-w-2xl min-h-9 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            {canAttemptConfirm && (
+              <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-3 py-1.5 rounded-lg transition-colors">
+                <Check className="w-3.5 h-3.5" /> Per Onayla
+              </button>
+            )}
+            {canRemoveGroup && (
+              <button type="button" onClick={removeGroup} className="flex items-center gap-1.5 text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/50 px-3 py-1.5 rounded-lg transition-colors">
+                <X className="w-3.5 h-3.5" /> Onayı Kaldır
+              </button>
+            )}
+          </div>
+
           {allSelectedAreCompleteGroups && (
-            <>
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={openSeries}
@@ -247,7 +269,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
               >
                 <Layers className="w-3.5 h-3.5" /> Çift Aç
               </button>
-            </>
+            </div>
           )}
         </div>
       )}
@@ -257,7 +279,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyIn
         {renderRow(1)}
       </div>
 
-      {isOwner && canAct && (
+      {isOwner && canDiscard && (
         <div
           data-discard-zone="true"
           onPointerMove={handlePointerMove}
