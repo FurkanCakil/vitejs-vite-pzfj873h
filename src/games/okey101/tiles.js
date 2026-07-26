@@ -41,6 +41,7 @@ export function shuffle(array) {
 }
 
 // İlk oyuncuya (players[0]) 22, diğer 3'üne 21 taş dağıtır; kalanlar çekme destesidir.
+// Ayrıca kalan destenin en altından (jokerse bir üstünden) Gösterge taşını belirler.
 export function dealTiles(playerUids) {
   const shuffled = shuffle(createTileSet());
   let cursor = 0;
@@ -52,7 +53,27 @@ export function dealTiles(playerUids) {
     racks[uid] = rack;
   });
   const drawPile = shuffled.slice(cursor);
-  return { racks, drawPile };
+
+  let indicator = null;
+  let idx = drawPile.length - 1;
+  while (idx >= 0 && drawPile[idx].isJoker) idx--;
+  if (idx >= 0) { [indicator] = drawPile.splice(idx, 1); }
+
+  return { racks, drawPile, indicator };
+}
+
+// Göstergeden Okey'i (aynı renk, +1 sayı, 13 sonrası 1'e sarar) belirler.
+export function computeOkeyInfo(indicator) {
+  if (!indicator || indicator.isJoker) return null;
+  const number = indicator.number === 13 ? 1 : indicator.number + 1;
+  return { color: indicator.color, number };
+}
+
+export function isOkeyTile(tile, okeyInfo) {
+  if (!tile) return false;
+  if (tile.isJoker) return true; // Sahte Okey her zaman o elin Okey'i yerine geçer.
+  if (!okeyInfo) return false;
+  return tile.color === okeyInfo.color && tile.number === okeyInfo.number;
 }
 
 // Tek bir taşı (fromIdx) hedef slota (toIdx) taşır; aralarındaki taşlar/boşluklar kayar.

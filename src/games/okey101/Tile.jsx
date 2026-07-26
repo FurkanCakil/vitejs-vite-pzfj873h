@@ -14,7 +14,7 @@ export const TileBack = ({ size = 'small', className = '' }) => (
 
 // Tek bir Okey taşının görsel temsili. Erişilebilirlik için sayının altında
 // rengine karşılık gelen bir sembol de gösterilir (sadece renge güvenilmez).
-const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging, dimmed, size = 'normal', className = '', style, ...handlers }, ref) {
+const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging, dimmed, isOkey, size = 'normal', className = '', style, ...handlers }, ref) {
   if (!tile) return null;
   const colorClass = tile.isJoker ? 'text-purple-700' : COLOR_TEXT_CLASS[tile.color];
 
@@ -25,11 +25,13 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
       className={`relative select-none touch-none ${SIZE_CLASS[size]} rounded-md bg-gradient-to-b from-amber-50 to-amber-100 border flex flex-col items-center justify-center shadow-md transition-transform
         ${selected ? 'ring-2 ring-yellow-400 -translate-y-2 border-yellow-400' : 'border-slate-400'}
         ${grouped ? 'ring-2 ring-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]' : ''}
+        ${isOkey ? 'ring-2 ring-fuchsia-500 shadow-[0_0_10px_rgba(217,70,239,0.7)]' : ''}
         ${dragging ? 'opacity-30' : ''}
         ${dimmed ? 'opacity-60' : ''}
         ${className}`}
       {...handlers}
     >
+      {isOkey && !tile.isJoker && <span className="absolute -top-1.5 -right-1.5 text-[9px] sm:text-[10px] bg-fuchsia-600 text-white rounded-full w-3.5 h-3.5 sm:w-4 sm:h-4 flex items-center justify-center font-black leading-none shadow">O</span>}
       {tile.isJoker ? (
         <span className="text-lg sm:text-2xl leading-none">🃏</span>
       ) : (

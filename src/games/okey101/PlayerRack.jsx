@@ -1,22 +1,27 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, Layers, Rows3 } from 'lucide-react';
 import Tile from './Tile.jsx';
-import { RACK_ROW_LENGTH, RACK_SLOTS, reorderRow, moveGroupBlock, isContiguousSelection } from './tiles.js';
+import { RACK_ROW_LENGTH, RACK_SLOTS, reorderRow, moveGroupBlock, isContiguousSelection, isOkeyTile } from './tiles.js';
 
 const DRAG_THRESHOLD_PX = 6;
+const TACK_HOVER_STYLE = { backgroundColor: 'rgba(251,191,36,0.55)' };
 
-// Oyuncunun kendi ıstakası: taş seçimi (per onaylamak için), sürükle-bırak ile
-// yeniden sıralama, ve gruplanmış (per) taşların bir blok halinde birlikte
-// hareket etmesi burada yönetilir. Sadece sahibi (isOwner) etkileşime girebilir.
-export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
+// Oyuncunun kendi ıstakası: taş seçimi (per onaylamak / seri-çift açmak için),
+// sürükle-bırak ile yeniden sıralama, gruplanmış (per) taşların bir blok
+// halinde birlikte hareket etmesi, (canAct açıkken) taşı ıstaka dışına
+// sürükleyip atma (discard), ve (hasOpened + canAct iken) masadaki açık
+// perlere tek taş işleme (tacking) burada yönetilir. Sadece sahibi (isOwner)
+// etkileşime girebilir.
+export default function PlayerRack({ rack, groups, isOwner, onUpdateRack, okeyInfo, canAct = false, hasOpenedAlready = false, onDiscardTile, onOpenSeries, onOpenPairs, onTackTile }) {
   const safeRack = rack && rack.length === RACK_SLOTS ? rack : Array(RACK_SLOTS).fill(null);
   const safeGroups = groups || {};
 
   const [selected, setSelected] = useState(() => new Set());
   const [hoverIndex, setHoverIndex] = useState(null);
+  const [hoverDiscard, setHoverDiscard] = useState(false);
   const [ghost, setGhost] = useState(null); // { x, y, tile, count }
   const dragRef = useRef(null);
-  const slotRefs = useRef([]);
+  const tackHoverElRef = useRef(null);
 
   const groupOf = useMemo(() => {
     const map = {};
@@ -26,23 +31,40 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
 
   const selectedIds = useMemo(() => [...selected], [selected]);
   const allUngrouped = selectedIds.length > 0 && selectedIds.every((id) => !groupOf[id]);
-  const allSameExistingGroup = selectedIds.length > 0 && selectedIds.every((id) => groupOf[id] && groupOf[id] === groupOf[selectedIds[0]]);
   const contiguous = allUngrouped && isContiguousSelection(selectedIds, safeRack);
   const canConfirmGroup = allUngrouped && contiguous && selectedIds.length >= 2;
-  const canRemoveGroup = allSameExistingGroup;
+
+  // Seçimdeki her taş bir gruba ait VE o grupların TÜM taşları seçili mi?
+  const selectedGroupIds = useMemo(() => {
+    const gids = new Set();
+    selectedIds.forEach((id) => { const g = groupOf[id]; if (g) gids.add(g); });
+    return [...gids];
+  }, [selectedIds, groupOf]);
+  const allSelectedAreCompleteGroups = selectedIds.length > 0
+    && selectedIds.every((id) => groupOf[id])
+    && selectedGroupIds.every((gid) => (safeGroups[gid] || []).every((id) => selected.has(id)));
+  const canRemoveGroup = allSelectedAreCompleteGroups && selectedGroupIds.length === 1;
+  const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct;
+  const canOpenPairs = allSelectedAreCompleteGroups && selectedGroupIds.length === 5 && canAct && !hasOpenedAlready;
 
   const commit = (newRack, newGroups) => {
     setSelected(new Set());
     onUpdateRack(newRack, newGroups ?? safeGroups);
   };
 
+  // Gruplu bir taşa tıklamak artık o grubu seçimden EKLER/ÇIKARIR (diğer seçili
+  // gruplar korunur) — böylece "Seri Aç"/"Çift Aç" için birden fazla per aynı anda seçilebilir.
   const handleTileTap = (tile) => {
     if (!isOwner) return;
     const gid = groupOf[tile.id];
     if (gid) {
       const groupTileIds = safeGroups[gid] || [];
-      const alreadyFullySelected = groupTileIds.length > 0 && groupTileIds.every((id) => selected.has(id)) && selected.size === groupTileIds.length;
-      setSelected(alreadyFullySelected ? new Set() : new Set(groupTileIds));
+      const fullyIncluded = groupTileIds.length > 0 && groupTileIds.every((id) => selected.has(id));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        groupTileIds.forEach((id) => { if (fullyIncluded) next.delete(id); else next.add(id); });
+        return next;
+      });
     } else {
       setSelected((prev) => {
         const next = new Set(prev);
@@ -65,6 +87,22 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
     commit(safeRack, nextGroups);
   };
 
+  const openSeries = async () => {
+    if (!canOpenSeries || !onOpenSeries) return;
+    setSelected(new Set());
+    await onOpenSeries(selectedGroupIds);
+  };
+
+  const openPairs = async () => {
+    if (!canOpenPairs || !onOpenPairs) return;
+    setSelected(new Set());
+    await onOpenPairs(selectedGroupIds);
+  };
+
+  const clearTackHover = () => {
+    if (tackHoverElRef.current) { tackHoverElRef.current.style.backgroundColor = ''; tackHoverElRef.current = null; }
+  };
+
   // ---- Pointer tabanlı sürükle-bırak (mouse + dokunmatik ortak) ----
   const handlePointerDown = (e, index, tile) => {
     if (!isOwner || !tile) return;
@@ -85,21 +123,47 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
 
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const slotEl = el?.closest('[data-slot-index]');
-    setHoverIndex(slotEl ? Number(slotEl.dataset.slotIndex) : null);
+    const discardEl = el?.closest('[data-discard-zone]');
+    const tackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
+
+    if (tackEl !== tackHoverElRef.current) { clearTackHover(); if (tackEl) { tackEl.style.backgroundColor = TACK_HOVER_STYLE.backgroundColor; tackHoverElRef.current = tackEl; } }
+
+    if (tackEl) { setHoverIndex(null); setHoverDiscard(false); }
+    else if (slotEl) { setHoverIndex(Number(slotEl.dataset.slotIndex)); setHoverDiscard(false); }
+    else if (discardEl) { setHoverIndex(null); setHoverDiscard(true); }
+    else { setHoverIndex(null); setHoverDiscard(false); }
   };
 
-  const finishDrag = (e) => {
+  const finishDrag = () => {
     const d = dragRef.current;
     dragRef.current = null;
     setGhost(null);
     const dropIndex = hoverIndex;
+    const droppedOnDiscard = hoverDiscard;
+    const tackEl = tackHoverElRef.current;
+    clearTackHover();
     setHoverIndex(null);
+    setHoverDiscard(false);
     if (!d) return;
 
     if (!d.moved) {
       handleTileTap(d.tile);
       return;
     }
+
+    if (tackEl) {
+      if (onTackTile) {
+        onTackTile(d.tile, { uid: tackEl.dataset.tackUid, groupIndex: Number(tackEl.dataset.tackIndex), side: tackEl.dataset.tackSide });
+      }
+      return;
+    }
+
+    if (droppedOnDiscard) {
+      // Bir per'e ait olsa bile atarken sadece TEK taş atılır (grup bölünür).
+      if (canAct && onDiscardTile) onDiscardTile(d.tile);
+      return;
+    }
+
     if (dropIndex === null || dropIndex === d.fromIndex) return;
 
     // Hedef, taşınmayan BAŞKA bir grubun taşıysa reddet (grup bölünmesin).
@@ -127,7 +191,6 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
             <div
               key={index}
               data-slot-index={index}
-              ref={(el) => { slotRefs.current[index] = el; }}
               className={`w-9 h-12 sm:w-11 sm:h-16 rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
               onPointerMove={handlePointerMove}
               onPointerUp={finishDrag}
@@ -138,6 +201,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
                   tile={tile}
                   selected={selected.has(tile.id)}
                   grouped={!!groupOf[tile.id]}
+                  isOkey={isOkeyTile(tile, okeyInfo)}
                   dragging={dragRef.current?.moved && dragRef.current?.tileIds.includes(tile.id)}
                   onPointerDown={(e) => handlePointerDown(e, index, tile)}
                 />
@@ -152,7 +216,7 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
   return (
     <div className="w-full flex flex-col items-center gap-3">
       {isOwner && (
-        <div className="h-9 flex items-center justify-center gap-2">
+        <div className="min-h-9 flex items-center justify-center gap-2 flex-wrap">
           {canConfirmGroup && (
             <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-3 py-1.5 rounded-lg transition-colors">
               <Check className="w-3.5 h-3.5" /> Per Onayla
@@ -163,6 +227,28 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
               <X className="w-3.5 h-3.5" /> Onayı Kaldır
             </button>
           )}
+          {allSelectedAreCompleteGroups && (
+            <>
+              <button
+                type="button"
+                onClick={openSeries}
+                disabled={!canOpenSeries}
+                title={!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : undefined}
+                className="flex items-center gap-1.5 text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Rows3 className="w-3.5 h-3.5" /> Seri Aç
+              </button>
+              <button
+                type="button"
+                onClick={openPairs}
+                disabled={!canOpenPairs}
+                title={hasOpenedAlready ? 'Zaten elini açtın' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : 'Tam 5 çift seçmelisin')}
+                className="flex items-center gap-1.5 text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Layers className="w-3.5 h-3.5" /> Çift Aç
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -171,11 +257,20 @@ export default function PlayerRack({ rack, groups, isOwner, onUpdateRack }) {
         {renderRow(1)}
       </div>
 
-      {ghost && (
+      {isOwner && canAct && (
         <div
-          className="fixed z-[4000] pointer-events-none"
-          style={{ left: ghost.x - 20, top: ghost.y - 28 }}
+          data-discard-zone="true"
+          onPointerMove={handlePointerMove}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
+          className={`w-full max-w-xs rounded-xl border-2 border-dashed px-4 py-3 text-center text-xs font-bold uppercase tracking-widest transition-colors ${hoverDiscard ? 'border-red-400 bg-red-500/20 text-red-200' : 'border-slate-600 text-slate-400'}`}
         >
+          Turu bitirmek için bir taşı buraya sürükle
+        </div>
+      )}
+
+      {ghost && (
+        <div className="fixed z-[4000] pointer-events-none" style={{ left: ghost.x - 20, top: ghost.y - 28 }}>
           <div className="relative">
             <Tile tile={ghost.tile} />
             {ghost.count > 1 && (
