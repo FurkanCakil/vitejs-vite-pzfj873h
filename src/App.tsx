@@ -26,6 +26,7 @@ import { createInitialChessBoard, getBoardStateString } from './games/chess/logi
 import { createInitialCheckersBoard } from './games/checkers/logic.js';
 import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
+import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -167,7 +168,7 @@ export default function App() {
   }, []);
 
   const startBotGame = (gameId, difficulty) => {
-    if (!user || (gameId !== 'xox' && gameId !== 'dama')) return;
+    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc')) return;
     let initialState;
 
     if (gameId === 'dama') {
@@ -180,6 +181,21 @@ export default function App() {
         scores: { [user.uid]: 0, [CHECKERS_BOT_UID]: 0 }, status: 'playing',
         board: createInitialCheckersBoard(), playerColors, multiJumpIdx: null,
         turn: whiteUid, startingPlayer: whiteUid, winner: null, rematchRequestedBy: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    } else if (gameId === 'satranc') {
+      const isWhite = Math.random() > 0.5;
+      const playerColors = { [user.uid]: isWhite ? 'w' : 'b', [CHESS_BOT_UID]: isWhite ? 'b' : 'w' };
+      const whiteUid = isWhite ? user.uid : CHESS_BOT_UID;
+      const initBoard = createInitialChessBoard();
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, CHESS_BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [CHESS_BOT_UID]: `Bot (${CHESS_DIFFICULTY_LABELS[difficulty] || difficulty})` },
+        scores: { [user.uid]: 0, [CHESS_BOT_UID]: 0 }, status: 'playing',
+        board: initBoard, playerColors, captured: { w: [], b: [] }, halfmoveClock: 0,
+        positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null,
+        drawOffer: null, takebackOffer: null, winner: null, drawReason: null, winReason: null,
+        turn: whiteUid, startingPlayer: whiteUid, rematchRequestedBy: null,
         abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
       };
     } else {
@@ -466,7 +482,7 @@ export default function App() {
                  <ErrorBoundary>
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
-                   {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
               </div>

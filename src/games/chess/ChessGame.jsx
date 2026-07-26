@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Loader2, Check, X, Users, ArrowUpDown, Undo2, Handshake, Flag } from 'lucide-react';
+import { Loader2, Check, X, Users, ArrowUpDown, Undo2, Handshake, Flag, Bot } from 'lucide-react';
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { CHESS_ICONS, PIECE_VALUES, chessPieceStyle } from './constants.js';
 import { createInitialChessBoard, getStrictLegalMoves, isSquareAttacked, getBoardStateString, getGameState } from './logic.js';
+import { boardToFEN, uciMoveToIndices } from './fen.js';
+import { useStockfish } from './stockfishEngine.js';
+import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG } from './bot.js';
 
-export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
+export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
+
+  const updateRoom = async (patch) => {
+    if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
+  };
 
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [promotionPrompt, setPromotionPrompt] = useState(null); 
@@ -59,7 +67,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const p1Color = roomData.playerColors?.[p1Uid] || 'w'; const p2Color = roomData.playerColors?.[p2Uid] || 'b';
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
 
-  const executeMove = async (from, to, movingPiece, targetPiece, currentBoard) => {
+  const executeMove = async (from, to, movingPiece, targetPiece, currentBoard, moverUid = user.uid, moverColor = myColor) => {
     if (movingPiece.type === 'k' && Math.abs(from - to) === 2) {
       if (to === 62) { currentBoard[61] = currentBoard[63]; currentBoard[61].hasMoved = true; currentBoard[63] = null; } 
       if (to === 58) { currentBoard[59] = currentBoard[56]; currentBoard[59].hasMoved = true; currentBoard[56] = null; } 
@@ -80,10 +88,10 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     movingPiece.hasMoved = true; currentBoard[to] = movingPiece; currentBoard[from] = null;
 
     const newCaptured = { w: [...(roomData.captured?.w || [])], b: [...(roomData.captured?.b || [])] };
-    if (targetPiece && myColor) newCaptured[myColor].push(targetPiece.type);
+    if (targetPiece && moverColor) newCaptured[moverColor].push(targetPiece.type);
 
-    const oppUid = roomData.players.find(id => id !== user.uid) ?? null; 
-    const oppColor = myColor === 'w' ? 'b' : 'w';
+    const oppUid = roomData.players.find(id => id !== moverUid) ?? null;
+    const oppColor = moverColor === 'w' ? 'b' : 'w';
 
     let newHalfmoveClock = (roomData.halfmoveClock || 0) + 1;
     let newPositionHistory = [...(roomData.positionHistory || [])];
@@ -99,7 +107,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     const gameState = getGameState(currentBoard, oppColor, newHalfmoveClock, newPositionHistory, newEnPassantTarget);
     let newWinner = null, newDrawReason = null;
     
-    if (gameState === 'mate') { newWinner = user.uid; playSound('win'); } 
+    if (gameState === 'mate') { newWinner = moverUid; playSound('win'); }
     else if (gameState === 'draw_stalemate') { newWinner = 'Draw'; newDrawReason = 'stalemate'; }
     else if (gameState === 'draw_material') { newWinner = 'Draw'; newDrawReason = 'material'; }
     else if (gameState === 'draw_50move') { newWinner = 'Draw'; newDrawReason = '50move'; }
@@ -118,7 +126,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (newDrawReason) updatePayload.drawReason = newDrawReason;
     if (newWinner && newWinner !== 'Draw') updatePayload.scores = { ...roomData.scores, [newWinner]: (roomData.scores?.[newWinner] || 0) + 1 };
 
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), updatePayload);
+    await updateRoom(updatePayload);
     setSelectedSquare(null); setPromotionPrompt(null);
   };
 
@@ -149,17 +157,48 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
    }
  };
 
+  // Bot rakip: sıra bota geldiğinde Stockfish'e mevcut pozisyonu FEN olarak gönderip
+  // dönen bestmove'u (Worker içinde, ana thread'i bloklamadan) tahtada oynatır.
+  const botColor = isBot ? roomData.playerColors?.[BOT_UID] : null;
+  const { isReady: isEngineReady, getBestMove } = useStockfish(isBot, DIFFICULTY_CONFIG[botDifficulty]?.skillLevel ?? 10);
+  const [botThinking, setBotThinking] = useState(false);
+
+  useEffect(() => {
+    if (!isBot || isSpectator || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned' || !isEngineReady) return;
+    let cancelled = false;
+    setBotThinking(true);
+    const fen = boardToFEN(board, botColor, roomData.enPassantTarget, roomData.halfmoveClock || 0, 1);
+    const depth = DIFFICULTY_CONFIG[botDifficulty]?.depth ?? 8;
+
+    (async () => {
+      try {
+        const uciMove = await getBestMove(fen, depth);
+        if (cancelled || !uciMove) return;
+        const parsed = uciMoveToIndices(uciMove);
+        if (!parsed) return;
+        const { from, to, promotion } = parsed;
+        const freshBoard = board.map(p => p ? { ...p } : null);
+        const movingPiece = { ...freshBoard[from] };
+        if (promotion) movingPiece.type = promotion;
+        const targetPiece = freshBoard[to] ? { ...freshBoard[to] } : null;
+        await executeMove(from, to, movingPiece, targetPiece, freshBoard, BOT_UID, botColor);
+      } finally { if (!cancelled) setBotThinking(false); }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isBot, isEngineReady, roomData.turn, roomData.winner, roomData.status]);
+
   const handleResign = async () => {
     if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
     try {
        const oppUid = roomData.players.find(id => id !== user.uid) ?? null;
-       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { winner: oppUid, winReason: 'resign', turn: null, scores: { ...roomData.scores, [oppUid]: (roomData.scores?.[oppUid] || 0) + 1 }, drawOffer: null, takebackOffer: null });
+       await updateRoom({ winner: oppUid, winReason: 'resign', turn: null, scores: { ...roomData.scores, [oppUid]: (roomData.scores?.[oppUid] || 0) + 1 }, drawOffer: null, takebackOffer: null });
        setResignConfirm(false);
     } catch(err) {} finally { setIsSubmitting(false); }
   };
 
   const handleDrawOffer = async () => {
-    if (isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
+    if (isBot || isSpectator || roomData.winner || isSubmitting) return; setIsSubmitting(true);
     try {
        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
        await runTransaction(db, async (transaction) => {
@@ -176,34 +215,46 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const handleTakebackOffer = async () => {
-    if (isSpectator || roomData.winner || isSubmitting) return; 
+    if (isBot || isSpectator || roomData.winner || isSubmitting) return;
     const canTakeback = !isMyTurn && roomData.previousState && roomData.previousState.turn === user.uid;
     if (!canTakeback) { showToast("Geri alma isteği geçersiz."); return; }
-    
+
     setIsSubmitting(true);
-    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { takebackOffer: user.uid }); }
+    try { await updateRoom({ takebackOffer: user.uid }); }
     finally { setIsSubmitting(false); }
   };
 
   const answerTakeback = async (accept) => {
-    if (isSpectator || isSubmitting) return; setIsSubmitting(true);
+    if (isBot || isSpectator || isSubmitting) return; setIsSubmitting(true);
     try {
        if (accept && roomData.previousState) {
-           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), {
-               ...roomData.previousState, takebackOffer: null, drawOffer: null
-           });
-       } else { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { takebackOffer: null }); }
+           await updateRoom({ ...roomData.previousState, takebackOffer: null, drawOffer: null });
+       } else { await updateRoom({ takebackOffer: null }); }
     } finally { setIsSubmitting(false); }
   };
 
-  const requestRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { rematchRequestedBy: user.uid }); };
+  const requestRematch = async () => {
+    if (isSpectator) return;
+    const newColors = {}; let whiteUid = null;
+    for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
+    if (isBot) {
+      const initBoard = createInitialChessBoard();
+      await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
+      return;
+    }
+    await updateRoom({ rematchRequestedBy: user.uid });
+  };
   const acceptRematch = async () => {
     if (isSpectator) return; const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     const initBoard = createInitialChessBoard();
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
+    await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
   };
-  const rejectRematch = async () => { if (!isSpectator) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed', closedBy: user.uid }); };
+  const rejectRematch = async () => {
+    if (isSpectator) return;
+    if (isBot) { leaveRoom(); return; }
+    await updateRoom({ status: 'closed', closedBy: user.uid });
+  };
 
   let statusMsg = ""; let statusColor = "text-slate-300";
   if (roomData.winner) {
@@ -219,7 +270,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         }
     }
   } else {
-    if (isSpectator) { statusMsg = `${roomData.turn === p1Uid ? p1Name : p2Name} Hamle Bekleniyor...`; statusColor = "text-emerald-400"; } 
+    if (isSpectator) { statusMsg = `${roomData.turn === p1Uid ? p1Name : p2Name} Hamle Bekleniyor...`; statusColor = "text-emerald-400"; }
+    else if (isBot && botThinking) { statusMsg = "Bot Düşünüyor..."; statusColor = "text-slate-400"; }
     else { statusMsg = isMyTurn ? "Senin Sıran!" : "Rakibin Sırası..."; statusColor = isMyTurn ? "text-emerald-400" : "text-slate-400"; }
   }
 
@@ -258,6 +310,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       )}
       
+      {isBot && !isSpectator && <div className="text-center text-xs text-emerald-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty}){!isEngineReady && ' — Motor yükleniyor...'}</div>}
+
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4 min-h-[70px]">
          <div className={`flex flex-col items-start flex-1 min-w-0 pr-2 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-emerald-400/50' : ''}`}>
             <div className="flex items-center gap-2 w-full"><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} /><div className="text-sm font-bold text-slate-200 truncate">{p1Name}</div></div>
@@ -288,13 +342,15 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          <div className="flex-1 flex justify-end items-center gap-2">
             {!isSpectator && !roomData.winner && (
                <>
-                  {canTakeback && (
+                  {!isBot && canTakeback && (
                      <button onClick={handleTakebackOffer} disabled={isSubmitting || roomData.takebackOffer === user.uid} className="text-xs bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
                         <Undo2 className="w-3 h-3" /> {roomData.takebackOffer === user.uid ? 'İstek Gönderildi' : 'Geri Al'}
                      </button>
                   )}
-                  <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
-                  
+                  {!isBot && (
+                     <button onClick={handleDrawOffer} disabled={isSubmitting || roomData.drawOffer === user.uid} className="text-xs bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50"><Handshake className="w-3 h-3" /> {roomData.drawOffer === user.uid ? 'Teklif Edildi' : 'Berabere'}</button>
+                  )}
+
                   {!resignConfirm ? (
                      <button onClick={() => setResignConfirm(true)} disabled={isSubmitting} className="text-xs bg-red-600/30 hover:bg-red-600/50 border border-red-500/50 px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50">
                         <Flag className="w-3 h-3" /> Teslim Ol

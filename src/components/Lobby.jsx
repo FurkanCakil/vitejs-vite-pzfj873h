@@ -9,7 +9,7 @@ const GAMES = [
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
 ];
 
-const BOT_SUPPORTED_GAMES = ['xox', 'dama'];
+const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc'];
 
 const DIFFICULTIES = [
   { id: 'easy', label: 'Kolay', desc: 'Rastgele hamleler yapar.' },
