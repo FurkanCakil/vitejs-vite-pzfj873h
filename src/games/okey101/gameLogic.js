@@ -139,3 +139,64 @@ export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
   }
   return { valid: false };
 }
+
+// ============================================================
+// 5. FAZ: Tur sonu puanlama
+// ============================================================
+export const NON_OPENER_PENALTY = PENALTY_POINTS * 2; // 202 — elini açamayan oyuncu
+
+// Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. Okey (ve Sahte
+// Okey) 101 sayı kabul edilir, diğerleri kendi yüz değeriyle sayılır.
+export function computeRemainingTilesPenalty(rack, okeyInfo) {
+  let sum = 0;
+  (rack || []).forEach((tile) => {
+    if (!tile) return;
+    sum += isOkeyTile(tile, okeyInfo) ? 101 : tile.number;
+  });
+  return sum;
+}
+
+// Bir el (round) bittiğinde her oyuncunun bu turdaki net puan değişimini ve
+// (Eşli modda) takım havuzlamasını hesaplar. `roomData.scores` zaten anlık
+// (yandan-alma/açamama gibi) cezaları içerdiği için, o anlık cezaları
+// roundStartScores'a göre ayrıştırıp tablo için ayrıca raporluyoruz.
+export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard) {
+  const baseDelta = {};
+  players.forEach((uid) => {
+    if (uid === winnerUid) {
+      baseDelta[uid] = wonByOkeyDiscard ? -(PENALTY_POINTS * 2) : -PENALTY_POINTS;
+      return;
+    }
+    if (!hasOpened?.[uid]) {
+      baseDelta[uid] = NON_OPENER_PENALTY;
+    } else {
+      baseDelta[uid] = computeRemainingTilesPenalty(racks?.[uid], okeyInfo);
+    }
+  });
+
+  // Eşli (2v2): takımın iki üyesinin bu turki delta'sı ortak havuzda toplanıp
+  // ikisine de aynı şekilde uygulanır.
+  const pooledDelta = { ...baseDelta };
+  if (rules?.gameType === '2v2' && teams) {
+    for (const teamUids of [teams.A || [], teams.B || []]) {
+      if (teamUids.length < 2) continue;
+      const pooled = teamUids.reduce((s, uid) => s + (baseDelta[uid] || 0), 0);
+      teamUids.forEach((uid) => { pooledDelta[uid] = pooled; });
+    }
+  }
+
+  const multiplier = foldMultiplier || 1;
+  const newScores = { ...scores };
+  const perPlayer = {};
+  players.forEach((uid) => {
+    const interimPenalty = (scores?.[uid] || 0) - (roundStartScores?.[uid] || 0);
+    const roundDelta = pooledDelta[uid] * multiplier;
+    newScores[uid] = (scores?.[uid] || 0) + roundDelta;
+    perPlayer[uid] = { interimPenalty, roundDelta, total: interimPenalty + roundDelta };
+  });
+
+  return {
+    newScores,
+    roundResult: { winnerUid, wonByOkeyDiscard, foldMultiplier: multiplier, perPlayer },
+  };
+}

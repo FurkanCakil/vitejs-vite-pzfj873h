@@ -1,6 +1,6 @@
 // NOT: Bu dosya yalnızca oda/lobi altyapısı için "sahte oyuncu" (bot koltuğu)
 // üretir. Botların 101 Okey oynama mantığı (taş çekme/atma/per hesaplama vb.)
-// bilinçli olarak kapsam dışıdır ve burada YOKTUR.
+// './botAI.js' dosyasındadır.
 
 export const OKEY_BOT_PREFIX = 'OKEY_BOT_';
 
