@@ -1,5 +1,5 @@
-import React from 'react';
-import { Users } from 'lucide-react';
+import React, { useState } from 'react';
+import { Users, Bot, UserPlus, ArrowLeft } from 'lucide-react';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', desc: 'Klasik 3x3 strateji oyunu.', available: true, icon: '❌⭕' },
@@ -9,7 +9,17 @@ const GAMES = [
   { id: 'okey101', name: '101 Okey', desc: 'Katlamalı, ceza puanlı.', available: false, icon: '🀄' },
 ];
 
-export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom }) {
+const BOT_SUPPORTED_GAMES = ['xox'];
+
+const DIFFICULTIES = [
+  { id: 'easy', label: 'Kolay', desc: 'Rastgele hamleler yapar.' },
+  { id: 'medium', label: 'Orta', desc: 'Kazanır, bloklar, bazen rastgele oynar.' },
+  { id: 'hard', label: 'Zor', desc: 'Minimax ile yenilmez.' },
+];
+
+export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame }) {
+  const [botSelectGameId, setBotSelectGameId] = useState(null);
+
   return (
     <main className="max-w-5xl mx-auto">
       <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -27,26 +37,50 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {GAMES.map(game => {
           const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama');
+          const isBotSupported = BOT_SUPPORTED_GAMES.includes(game.id);
+          const showingBotSelect = botSelectGameId === game.id;
           return (
             <div key={game.id} className={`p-6 rounded-xl border-2 flex flex-col transition-all duration-300 relative overflow-hidden
                 ${!game.available ? 'bg-slate-800/60 border-slate-700 opacity-70 grayscale' : ''}
                 ${isPremium && game.id !== 'dama' ? 'bg-slate-800 border-indigo-500/40 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.id === 'dama' ? 'bg-slate-900 border-slate-700 hover:border-slate-400 shadow-[0_0_20px_rgba(255,255,255,0.07)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}`}>
-              
+
               {game.id === 'xox' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'tavla' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-600/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-700/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'satranc' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-white/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
-              
+
               <div className="text-4xl mb-4 relative z-10 drop-shadow-md">{game.icon}</div><h3 className="text-xl font-bold mb-2 relative z-10">{game.name}</h3><p className="text-sm text-slate-400 flex-grow mb-6 relative z-10">{game.desc}</p>
               {game.available ? (
-                <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className={`w-full relative z-10 py-2.5 rounded-lg font-bold transition-colors border
-                    ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
-                    ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
-                    ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
-                    ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
-                  `}>Oda Kur</button>
+                showingBotSelect ? (
+                  <div className="relative z-10 flex flex-col gap-2">
+                    <button onClick={() => setBotSelectGameId(null)} className="flex items-center gap-1 text-xs text-slate-400 hover:text-white mb-1 transition-colors">
+                      <ArrowLeft className="w-3.5 h-3.5" /> Geri
+                    </button>
+                    {DIFFICULTIES.map(d => (
+                      <button key={d.id} onClick={() => startBotGame(game.id, d.id)} className="w-full text-left bg-slate-900/60 hover:bg-indigo-600/40 border border-slate-600 hover:border-indigo-400 rounded-lg px-3 py-2 transition-colors">
+                        <div className="font-bold text-sm">{d.label}</div>
+                        <div className="text-[11px] text-slate-400">{d.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="relative z-10 flex gap-2">
+                    <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border
+                        ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
+                        ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
+                        ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
+                        ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
+                      `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>
+                    <button
+                      disabled={!isBotSupported}
+                      title={!isBotSupported ? 'Yakında' : undefined}
+                      onClick={() => setBotSelectGameId(game.id)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
+                    ><Bot className="w-4 h-4" /> Botla Oyna</button>
+                  </div>
+                )
               ) : ( <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2.5 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button> )}
             </div>
           )

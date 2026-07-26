@@ -24,6 +24,7 @@ import CheckersGame from './games/checkers/CheckersGame.jsx';
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
 import { createInitialCheckersBoard } from './games/checkers/logic.js';
+import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -42,10 +43,13 @@ export default function App() {
   
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const [spectatePrompt, setSpectatePrompt] = useState(null);
-  const [leftOverlayTimer, setLeftOverlayTimer] = useState(null); 
+  const [leftOverlayTimer, setLeftOverlayTimer] = useState(null);
 
-  const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown });
-  roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown };
+  const [isBotGame, setIsBotGame] = useState(false);
+  const [botDifficulty, setBotDifficulty] = useState('medium');
+
+  const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
+  roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown, isBotGame };
 
   useEffect(() => {
     const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
@@ -83,6 +87,7 @@ export default function App() {
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); localStorage.removeItem('activeRoom');
+    setIsBotGame(false);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
 
@@ -94,7 +99,7 @@ export default function App() {
   }, [leftOverlayTimer]);
 
   useEffect(() => {
-    if (!user || !roomCode) return;
+    if (!user || !roomCode || isBotGame) return;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -121,7 +126,7 @@ export default function App() {
       } else { leaveRoomLocal(); }
     });
     return () => unsubscribe();
-  }, [user, roomCode]);
+  }, [user, roomCode, isBotGame]);
 
   useEffect(() => {
     if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
@@ -135,11 +140,13 @@ export default function App() {
 
   useEffect(() => {
     const handleDisconnect = () => {
-      const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
+      const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
+      if (isBot) return;
       if (code && u && data && data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code), { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
     };
     const handleVisibility = () => {
-      const { roomCode: code, user: u, roomData: data } = roomStateRef.current;
+      const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
+      if (isBot) return;
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       if (document.visibilityState === 'hidden') { 
@@ -156,6 +163,23 @@ export default function App() {
     window.addEventListener('beforeunload', handleDisconnect); window.addEventListener('pagehide', handleDisconnect); window.addEventListener('visibilitychange', handleVisibility); 
     return () => { window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility); };
   }, []);
+
+  const startBotGame = (gameId, difficulty) => {
+    if (gameId !== 'xox' || !user) return;
+    const initialState = {
+      gameId, host: user.uid, players: [user.uid, BOT_UID], spectators: [],
+      playerNames: { [user.uid]: nickname || 'Sen', [BOT_UID]: `Bot (${DIFFICULTY_LABELS[difficulty] || difficulty})` },
+      scores: { [user.uid]: 0, [BOT_UID]: 0 }, status: 'playing', board: Array(9).fill(null),
+      turn: user.uid, startingPlayer: user.uid, winner: null, winningLine: null, rematchRequestedBy: null,
+      abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+    };
+    setBotDifficulty(difficulty);
+    setIsBotGame(true);
+    setRoomData(initialState);
+    setRoomCode('BOT-LOCAL');
+    setCurrentView('room');
+    setDisconnectCountdown(null);
+  };
 
   const createRoom = async (gameId) => {
     setIsCreatingRoom(true);
@@ -294,7 +318,8 @@ export default function App() {
   };
 
   const leaveRoom = async () => {
-    const currentCode = roomCode; 
+    if (isBotGame) { leaveRoomLocal(); return; }
+    const currentCode = roomCode;
     const isPlayer = roomData?.players?.includes(user?.uid);
     const isSpec = roomData?.spectators?.includes(user?.uid);
     if (currentCode && user && (isPlayer || isSpec)) {
@@ -377,19 +402,22 @@ export default function App() {
       )}
 
       {currentView === 'lobby' ? (
-        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} />
+        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} />
       ) : (
         <main className="max-w-5xl mx-auto flex flex-col items-center">
           {!isFullscreen && (
-            <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} />
+            <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} />
           )}
 
           <div className={isFullscreen ? "fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center p-2 sm:p-4" : "w-full bg-slate-800 rounded-2xl p-4 md:p-8 shadow-2xl border border-slate-700 flex flex-col items-center relative transition-all duration-300"}>
             {isFullscreen && (
                <>
                  <div className="fixed top-3 left-3 sm:top-6 sm:left-6 z-[6000] flex items-center gap-2 bg-slate-800/80 px-4 py-2 rounded-full border border-slate-600 shadow-lg backdrop-blur-md">
-                    <span className="text-xs text-slate-400">Kod:</span>
-                    <span className="font-mono font-bold text-indigo-300">{roomCode}</span>
+                    {isBotGame ? (
+                      <span className="text-xs font-bold text-indigo-300">Bot Modu</span>
+                    ) : (
+                      <><span className="text-xs text-slate-400">Kod:</span><span className="font-mono font-bold text-indigo-300">{roomCode}</span></>
+                    )}
                  </div>
                  <button onClick={toggleFullscreen} className="fixed top-3 right-3 sm:top-6 sm:right-6 z-[6000] bg-slate-800/80 hover:bg-slate-700 p-2 sm:p-3 rounded-full text-slate-300 transition-all shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-600 backdrop-blur-md" title="Tam Ekrandan Çık">
                     <Minimize className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -407,7 +435,7 @@ export default function App() {
             ) : (
               <div className="w-full flex flex-col items-center">
                  <ErrorBoundary>
-                   {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}

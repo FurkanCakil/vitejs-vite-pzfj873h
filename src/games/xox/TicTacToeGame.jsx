@@ -1,17 +1,23 @@
-import React, { useState } from 'react';
-import { Eye, Crown, Users, Loader2, Check, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Eye, Crown, Users, Loader2, Check, X, Bot } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
+import { BOT_UID, checkWinner, getBotMove, DIFFICULTY_LABELS } from './bot.js';
 
-export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom }) {
+export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
-  const isPlayer1 = roomData.players[0] === user.uid; 
-  const isPlayer2 = roomData.players?.[1] === user.uid; 
-  const isSpectator = !isPlayer1 && !isPlayer2; 
+  const isPlayer1 = roomData.players[0] === user.uid;
+  const isPlayer2 = roomData.players?.[1] === user.uid;
+  const isSpectator = !isPlayer1 && !isPlayer2;
   const mySymbol = isPlayer1 ? 'X' : (isPlayer2 ? 'O' : null);
   const isMyTurn = roomData.turn === user.uid;
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const updateRoom = async (patch) => {
+    if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
+  };
 
   const p1Uid = roomData.players[0]; const p2Uid = roomData.players?.[1];
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
@@ -24,21 +30,49 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
     setIsSubmitting(true);
     try {
       playSound('move'); const newBoard = [...board]; newBoard[index] = mySymbol;
-      const lines = [ [0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6] ];
-      let winInfo = null; for (let i = 0; i < lines.length; i++) { const [a,b,c] = lines[i]; if (newBoard[a] && newBoard[a]===newBoard[b] && newBoard[a]===newBoard[c]) winInfo = {winner: newBoard[a], line: lines[i]}; }
-      const nextTurn = roomData.players.find(id => id !== user.uid) || null; 
+      const winInfo = checkWinner(newBoard);
+      const nextTurn = roomData.players.find(id => id !== user.uid) || null;
       let up = { board: newBoard, turn: winInfo ? null : nextTurn, winner: winInfo ? winInfo.winner : (newBoard.every(c => c) ? 'Draw' : null), winningLine: winInfo?.line || null };
       if (winInfo) { playSound('win'); const wUid = winInfo.winner === 'X' ? p1Uid : p2Uid; up.scores = { ...roomData.scores, [wUid]: (roomData.scores?.[wUid] || 0) + 1 }; }
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), up);
+      await updateRoom(up);
     } catch(err) {} finally { setIsSubmitting(false); }
   };
 
-  const requestRematch = async () => { if (isSpectator) return; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { rematchRequestedBy: user.uid }); };
+  // Bot rakip: sıra bota geldiğinde küçük bir gecikmeyle hamlesini oynar.
+  useEffect(() => {
+    if (!isBot || isSpectator || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    const timer = setTimeout(() => {
+      const botSymbol = p1Uid === user.uid ? 'O' : 'X';
+      const humanSymbol = botSymbol === 'O' ? 'X' : 'O';
+      const index = getBotMove(board, botDifficulty, botSymbol, humanSymbol);
+      if (index === undefined || index === null) return;
+      playSound('move'); const newBoard = [...board]; newBoard[index] = botSymbol;
+      const winInfo = checkWinner(newBoard);
+      let up = { board: newBoard, turn: winInfo ? null : user.uid, winner: winInfo ? winInfo.winner : (newBoard.every(c => c) ? 'Draw' : null), winningLine: winInfo?.line || null };
+      if (winInfo) { playSound('win'); const wUid = winInfo.winner === 'X' ? p1Uid : p2Uid; up.scores = { ...roomData.scores, [wUid]: (roomData.scores?.[wUid] || 0) + 1 }; }
+      updateRoom(up);
+    }, 500 + Math.random() * 400);
+    return () => clearTimeout(timer);
+  }, [isBot, roomData.turn, roomData.winner, roomData.status]);
+
+  const requestRematch = async () => {
+    if (isSpectator) return;
+    if (isBot) {
+      const nextStarter = roomData.startingPlayer === user.uid ? BOT_UID : user.uid;
+      await updateRoom({ board: Array(9).fill(null), turn: nextStarter, startingPlayer: nextStarter, winner: null, winningLine: null, rematchRequestedBy: null });
+      return;
+    }
+    await updateRoom({ rematchRequestedBy: user.uid });
+  };
   const acceptRematch = async () => {
     if (isSpectator) return; const nextStarter = roomData.players.find(id => id !== roomData.startingPlayer) || roomData.players[0];
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { board: Array(9).fill(null), turn: nextStarter, startingPlayer: nextStarter, winner: null, winningLine: null, rematchRequestedBy: null });
+    await updateRoom({ board: Array(9).fill(null), turn: nextStarter, startingPlayer: nextStarter, winner: null, winningLine: null, rematchRequestedBy: null });
   };
-  const rejectRematch = async () => { if (isSpectator) return; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed', closedBy: user.uid }); };
+  const rejectRematch = async () => {
+    if (isSpectator) return;
+    if (isBot) { leaveRoom(); return; }
+    await updateRoom({ status: 'closed', closedBy: user.uid });
+  };
 
   let statusMsg = ""; let statusColor = "text-slate-300";
   if (roomData.winner) {
@@ -60,6 +94,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
         <div className="w-full flex flex-col items-center z-10">
           <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
             {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
+            {isBot && !isSpectator && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
             <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor} drop-shadow-md`}>{statusMsg}</div>
             <div className="flex justify-between items-start w-full px-2">
               <div className={`text-center flex flex-col items-center text-indigo-400 flex-1 min-w-0 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-indigo-400/50' : ''}`}><div className="flex items-center gap-1 mb-1 shrink-0">{p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}<span className="text-2xl font-bold">X</span></div><div className="text-xs truncate w-full px-1 font-medium">{p1Name} {isPlayer1 ? '(Sen)' : ''}</div><div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p1Score}</div></div>
