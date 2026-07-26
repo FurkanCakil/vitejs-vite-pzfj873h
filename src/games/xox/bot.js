@@ -39,14 +39,19 @@ function minimax(board, symbol, opponent, isMaximizing) {
   return isMaximizing ? Math.max(...scores) : Math.min(...scores);
 }
 
+// Aralarında puan farkı olmayan (dolayısıyla hepsi eşit derecede yenilmez)
+// hamleler arasından rastgele seçer — böylece bot her oyunda birebir aynı
+// (ya da sadece simetriği) hamleyi tekrar etmez, ama asla en iyiden daha
+// kötü bir hamle oynamaz.
 function getBestMove(board, symbol, opponent) {
-  let bestScore = -Infinity; let bestMove = null;
+  let bestScore = -Infinity; let bestMoves = [];
   for (const index of getEmptyIndices(board)) {
     const copy = [...board]; copy[index] = symbol;
     const score = minimax(copy, symbol, opponent, false);
-    if (score > bestScore) { bestScore = score; bestMove = index; }
+    if (score > bestScore) { bestScore = score; bestMoves = [index]; }
+    else if (score === bestScore) { bestMoves.push(index); }
   }
-  return bestMove;
+  return bestMoves[Math.floor(Math.random() * bestMoves.length)];
 }
 
 function getMediumMove(board, symbol, opponent) {

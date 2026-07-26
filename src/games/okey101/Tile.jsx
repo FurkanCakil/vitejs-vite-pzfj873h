@@ -33,12 +33,12 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
     >
       {isOkey && !tile.isJoker && <span className="absolute -top-1.5 -right-1.5 text-[9px] sm:text-[10px] bg-fuchsia-600 text-white rounded-full w-3.5 h-3.5 sm:w-4 sm:h-4 flex items-center justify-center font-black leading-none shadow">O</span>}
       {tile.isJoker ? (
-        <span className="text-lg sm:text-2xl leading-none">🃏</span>
+        <span className="text-lg sm:text-2xl leading-none flex items-center justify-center">🃏</span>
       ) : (
-        <>
-          <span className={`text-base sm:text-xl font-black leading-none ${colorClass}`}>{tile.number}</span>
-          <span className={`text-[10px] sm:text-sm leading-none mt-0.5 ${colorClass}`}>{COLOR_SYMBOLS[tile.color]}</span>
-        </>
+        <div className="flex flex-col items-center justify-center gap-0.5">
+          <span className={`text-base sm:text-xl font-black leading-none flex items-center justify-center ${colorClass}`}>{tile.number}</span>
+          <span className={`text-[10px] sm:text-sm leading-none flex items-center justify-center ${colorClass}`}>{COLOR_SYMBOLS[tile.color]}</span>
+        </div>
       )}
     </div>
   );

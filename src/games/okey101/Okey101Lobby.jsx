@@ -72,7 +72,9 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
     }).catch((err) => console.error("Okey101 yazma hatası:", err));
   };
 
-  // ---- Botlarla doldurma (sadece host) ----
+  // ---- Botlarla doldurma (sadece host): boş koltukları botlarla doldurur,
+  // Eşli modda kalan (bot/insan fark etmeksizin) atanmamış oyuncuları otomatik
+  // takımlara dağıtır ve oyunu (geri sayım beklemeden) doğrudan başlatır.
   const handleFillWithBots = async () => {
     if (!isHost) return;
     await runTransaction(db, async (t) => {
@@ -86,11 +88,25 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
       const bots = createBotPlayers(missing, currentPlayers.length, data.rules?.botDifficulty || 'medium');
       const newNames = { ...data.playerNames }; const newIsBot = { ...(data.isBotPlayer || {}) }; const newScores = { ...data.scores };
       bots.forEach((b) => { newNames[b.uid] = b.name; newIsBot[b.uid] = true; newScores[b.uid] = 0; });
+      const allPlayers = [...currentPlayers, ...bots.map((b) => b.uid)];
 
-      t.update(roomRef, {
-        players: [...currentPlayers, ...bots.map((b) => b.uid)],
+      const update = {
+        players: allPlayers,
         playerNames: newNames, isBotPlayer: newIsBot, scores: newScores,
-      });
+        countdownStartedAt: null,
+        status: 'playing',
+      };
+
+      if (data.rules?.gameType === '2v2') {
+        const nextTeams = { A: [...(data.teams?.A || [])], B: [...(data.teams?.B || [])] };
+        const assigned = new Set([...nextTeams.A, ...nextTeams.B]);
+        const pool = allPlayers.filter((u) => !assigned.has(u));
+        for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[pool[i], pool[j]] = [pool[j], pool[i]]; }
+        for (const uid of pool) { (nextTeams.A.length <= nextTeams.B.length ? nextTeams.A : nextTeams.B).push(uid); }
+        update.teams = nextTeams;
+      }
+
+      t.update(roomRef, update);
     }).catch((err) => console.error("Okey101 yazma hatası:", err));
   };
 

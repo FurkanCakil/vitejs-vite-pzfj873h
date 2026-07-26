@@ -8,6 +8,12 @@ import { isOkeyTile } from './tiles.js';
 export const OPEN_THRESHOLD = 101;
 export const PENALTY_POINTS = 101;
 
+// Yandan taş alma cezası: taşı atan oyuncuya, yandan çekilen taşın değerinin
+// (Seri/Set ile açarsa) 10 katı, (Çift ile açarsa) 20 katı ceza yazılır —
+// sadece ve sadece yandan alan oyuncu o taşla elini BAŞARIYLA AÇARSA.
+export const SIDE_TAKE_SERIES_MULTIPLIER = 10;
+export const SIDE_TAKE_PAIRS_MULTIPLIER = 20;
+
 export function getNextTurnUid(players, currentUid) {
   const idx = players.indexOf(currentUid);
   if (idx === -1) return players[0] || null;

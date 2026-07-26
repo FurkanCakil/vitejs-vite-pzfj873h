@@ -13,7 +13,7 @@ export const COLOR_LABELS = { black: 'Siyah', red: 'Kırmızı', blue: 'Mavi', y
 export const RACK_ROW_LENGTH = 13;
 export const RACK_SLOTS = RACK_ROW_LENGTH * 2;
 
-export const SETUP_DURATION_MS = 15000;
+export const SETUP_DURATION_MS = 30000;
 
 // 4 renk x (1-13) x 2 kopya = 104 + 2 Sahte Okey = 106 taş.
 export function createTileSet() {
@@ -112,7 +112,10 @@ export function moveGroupBlockToSlot(row, tileIds, targetIndex) {
   return newRow;
 }
 
-// Seçili taş id'lerinin rack üzerinde gerçekten yan yana (bitişik) olup olmadığını doğrular.
+// Seçili taş id'lerinin rack üzerinde "yan yana" olup olmadığını doğrular.
+// Boş (null) slotlar taşlar arasında serbestçe atlanabilir (kaydırma fiziği
+// nedeniyle atma/açma sonrası aralarda boşluk kalması normaldir) — tek şart,
+// seçili taşların arasında SEÇİLİ OLMAYAN başka bir taşın bulunmamasıdır.
 export function isContiguousSelection(selectedIds, rack) {
   if (selectedIds.length === 0) return false;
   const idSet = new Set(selectedIds);
@@ -120,8 +123,10 @@ export function isContiguousSelection(selectedIds, rack) {
   rack.forEach((t, i) => { if (t && idSet.has(t.id)) indices.push(i); });
   if (indices.length !== selectedIds.length) return false;
   indices.sort((a, b) => a - b);
-  for (let i = 1; i < indices.length; i++) {
-    if (indices[i] !== indices[i - 1] + 1) return false;
+  const min = indices[0]; const max = indices[indices.length - 1];
+  for (let i = min; i <= max; i++) {
+    const tile = rack[i];
+    if (tile && !idSet.has(tile.id)) return false; // aralarda yabancı bir taş var
   }
   return true;
 }

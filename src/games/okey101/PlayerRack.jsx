@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, Layers, Rows3 } from 'lucide-react';
 import Tile from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
@@ -16,7 +16,7 @@ const TACK_HOVER_STYLE = { backgroundColor: 'rgba(251,191,36,0.55)' };
 // Sadece sahibi (isOwner) etkileşime girebilir.
 export default function PlayerRack({
   rack, groups, isOwner, onUpdateRack, okeyInfo,
-  canAct = false, canDiscard = false, hasOpenedAlready = false,
+  canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
 }) {
   const safeRack = rack && rack.length === RACK_SLOTS ? rack : Array(RACK_SLOTS).fill(null);
@@ -26,6 +26,11 @@ export default function PlayerRack({
   const [hoverIndex, setHoverIndex] = useState(null);
   const [hoverDiscard, setHoverDiscard] = useState(false);
   const [ghost, setGhost] = useState(null); // { x, y, tile, count }
+  // Atma anında Firestore turu tamamlanana kadar taşı ıstakadan İYİMSER
+  // (optimistic) olarak gizler — algılanan gecikmeyi azaltır. `rack` propu
+  // gerçek veriyle güncellenince (taş gerçekten gitmiş olur) otomatik temizlenir.
+  const [optimisticDiscardId, setOptimisticDiscardId] = useState(null);
+  useEffect(() => { setOptimisticDiscardId(null); }, [rack]);
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
 
@@ -177,7 +182,7 @@ export default function PlayerRack({
 
     if (droppedOnDiscard) {
       // Bir per'e ait olsa bile atarken sadece TEK taş atılır (grup bölünür).
-      if (canDiscard && onDiscardTile) onDiscardTile(d.tile);
+      if (canDiscard && onDiscardTile) { setOptimisticDiscardId(d.tile.id); onDiscardTile(d.tile); }
       return;
     }
 
@@ -206,6 +211,7 @@ export default function PlayerRack({
         {slots.map((tile, i) => {
           const index = start + i;
           const isHover = hoverIndex === index && dragRef.current?.moved;
+          const hidden = tile && tile.id === optimisticDiscardId;
           return (
             <div
               key={index}
@@ -215,7 +221,7 @@ export default function PlayerRack({
               onPointerUp={finishDrag}
               onPointerCancel={finishDrag}
             >
-              {tile && (
+              {tile && !hidden && (
                 <Tile
                   tile={tile}
                   selected={selected.has(tile.id)}
@@ -274,22 +280,30 @@ export default function PlayerRack({
         </div>
       )}
 
-      <div className="w-full max-w-2xl flex flex-col gap-1.5 sm:gap-2 overflow-x-auto pb-1">
-        {renderRow(0)}
-        {renderRow(1)}
-      </div>
-
-      {isOwner && canDiscard && (
-        <div
-          data-discard-zone="true"
-          onPointerMove={handlePointerMove}
-          onPointerUp={finishDrag}
-          onPointerCancel={finishDrag}
-          className={`w-full max-w-xs rounded-xl border-2 border-dashed px-4 py-3 text-center text-xs font-bold uppercase tracking-widest transition-colors ${hoverDiscard ? 'border-red-400 bg-red-500/20 text-red-200' : 'border-slate-600 text-slate-400'}`}
-        >
-          Turu bitirmek için bir taşı buraya sürükle
+      <div className="w-full max-w-2xl relative">
+        <div className="flex flex-col gap-1.5 sm:gap-2 overflow-x-auto pb-1">
+          {renderRow(0)}
+          {renderRow(1)}
         </div>
-      )}
+
+        {isOwner && (
+          <div
+            data-discard-zone={canDiscard ? 'true' : undefined}
+            onPointerMove={canDiscard ? handlePointerMove : undefined}
+            onPointerUp={canDiscard ? finishDrag : undefined}
+            onPointerCancel={canDiscard ? finishDrag : undefined}
+            title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
+            className={`absolute -top-2.5 -right-2.5 sm:-top-3 sm:-right-3 w-9 h-12 sm:w-11 sm:h-16 rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
+              ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
+          >
+            {lastDiscardTile ? (
+              <Tile tile={lastDiscardTile} size="small" dimmed={!canDiscard} />
+            ) : canDiscard ? (
+              <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
+            ) : null}
+          </div>
+        )}
+      </div>
 
       {ghost && (
         <div className="fixed z-[4000] pointer-events-none" style={{ left: ghost.x - 20, top: ghost.y - 28 }}>
