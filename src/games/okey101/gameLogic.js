@@ -1,4 +1,12 @@
-import { isOkeyTile } from './tiles.js';
+import { isOkeyTile, effectiveTile } from './tiles.js';
+
+// Bir per'i "joker (gerçek Okey) sayısı" + "normal taşlar" olarak ayırır.
+// Sahte Okey normal taşlar arasında, temsil ettiği yüz değeriyle (göstergenin
+// 1 fazlası) yer alır — joker DEĞİLDİR.
+const splitTiles = (tiles, okeyInfo) => ({
+  jokerCount: tiles.filter((t) => isOkeyTile(t, okeyInfo)).length,
+  normals: tiles.filter((t) => !isOkeyTile(t, okeyInfo)).map((t) => effectiveTile(t, okeyInfo)),
+});
 
 // NOT: Bu dosya tur sırası, per (seri/set) katı doğrulaması, çift açma
 // doğrulaması, işleme (tacking) ve gizli-toplam puan hesabı için saf
@@ -80,8 +88,7 @@ function trySeriAnalysis(normals, jokerCount) {
 // hesaplar. Sadece sayı toplamı YETERLİ DEĞİLDİR — dizilim de doğru olmalı.
 export function validateGroup(tiles, okeyInfo) {
   if (!tiles || tiles.length < 3) return { valid: false };
-  const jokerCount = tiles.filter((t) => isOkeyTile(t, okeyInfo)).length;
-  const normals = tiles.filter((t) => !isOkeyTile(t, okeyInfo));
+  const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
 
   const setInfo = trySetAnalysis(normals, jokerCount);
   if (setInfo) return { valid: true, type: 'set', value: setInfo.total * setInfo.number };
@@ -105,14 +112,13 @@ export function validateGroup(tiles, okeyInfo) {
 // taşıyıp taşımadığı kontrol edilir.
 export function isProperlyOrderedGroup(tiles, type, okeyInfo) {
   if (type !== 'seri' || !tiles || tiles.length < 3) return true;
-  const normals = tiles.filter((t) => !isOkeyTile(t, okeyInfo));
-  const jokerCount = tiles.length - normals.length;
+  const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
   const info = trySeriAnalysis(normals, jokerCount);
   if (!info) return false;
   for (let i = 0; i < tiles.length; i++) {
     const tile = tiles[i];
-    if (isOkeyTile(tile, okeyInfo)) continue;
-    if (tile.number !== realNumber(info.start + i)) return false;
+    if (isOkeyTile(tile, okeyInfo)) continue; // joker her pozisyonda kabul
+    if (effectiveTile(tile, okeyInfo).number !== realNumber(info.start + i)) return false;
   }
   return true;
 }
@@ -143,9 +149,9 @@ export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo) 
     const tiles = tileIds.map((id) => tilesById[id]).filter(Boolean);
     if (tiles.length !== 2) return { valid: false };
     const [a, b] = tiles;
-    const aIsOkey = isOkeyTile(a, okeyInfo); const bIsOkey = isOkeyTile(b, okeyInfo);
-    if (aIsOkey || bIsOkey) continue; // joker herhangi bir taşın eşi olabilir
-    if (!(a.color === b.color && a.number === b.number)) return { valid: false };
+    if (isOkeyTile(a, okeyInfo) || isOkeyTile(b, okeyInfo)) continue; // joker (gerçek Okey) her taşın eşi olabilir
+    const ea = effectiveTile(a, okeyInfo); const eb = effectiveTile(b, okeyInfo);
+    if (!(ea.color === eb.color && ea.number === eb.number)) return { valid: false };
   }
   return { valid: true };
 }
@@ -191,13 +197,14 @@ export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
 // ============================================================
 export const NON_OPENER_PENALTY = PENALTY_POINTS * 2; // 202 — elini açamayan oyuncu
 
-// Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. Okey (ve Sahte
-// Okey) 101 sayı kabul edilir, diğerleri kendi yüz değeriyle sayılır.
+// Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. Sadece gerçek
+// Okey (joker) 101 sayı kabul edilir; Sahte Okey dahil diğer tüm taşlar kendi
+// (Sahte Okey için: temsil ettiği) yüz değeriyle sayılır.
 export function computeRemainingTilesPenalty(rack, okeyInfo) {
   let sum = 0;
   (rack || []).forEach((tile) => {
     if (!tile) return;
-    sum += isOkeyTile(tile, okeyInfo) ? 101 : tile.number;
+    sum += isOkeyTile(tile, okeyInfo) ? 101 : (effectiveTile(tile, okeyInfo).number || 0);
   });
   return sum;
 }

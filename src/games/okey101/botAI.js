@@ -4,11 +4,17 @@
 // per/çift üretemez. Gerçek işlemler (transaction) Okey101Game.jsx'te bu
 // fonksiyonların döndürdüğü kararları uygular.
 
-import { COLORS, isOkeyTile } from './tiles.js';
+import { COLORS, isOkeyTile, effectiveTile } from './tiles.js';
 import { validateGroup, canTackTile, isTileTackable } from './gameLogic.js';
 
-export const BOT_TURN_DELAY_MIN_MS = 1000;
-export const BOT_TURN_DELAY_MAX_MS = 1800;
+// Taşın kurallara göre geçerli yüz değeri. Sahte Okey artık joker DEĞİL; o elin
+// Okey'inin renk/sayısına sahip normal bir taş gibi davranır (bkz. tiles.js).
+// Arama fonksiyonları renk/sayı okurken HER ZAMAN bunu kullanmalı, yoksa Sahte
+// Okey'in color/number alanları null olduğu için hiçbir pere giremez.
+const eff = (tile, okeyInfo) => effectiveTile(tile, okeyInfo);
+
+export const BOT_TURN_DELAY_MIN_MS = 450;
+export const BOT_TURN_DELAY_MAX_MS = 900;
 
 export function randomTurnDelay() {
   const ms = BOT_TURN_DELAY_MIN_MS + Math.random() * (BOT_TURN_DELAY_MAX_MS - BOT_TURN_DELAY_MIN_MS);
@@ -23,9 +29,9 @@ const removeTiles = (pool, tiles) => {
 // ---- SET arama: bir sayı için farklı renklerden (gerekirse Okey/joker ile tamamlanmış) 3-4'lü grup ----
 function findBestSetForNumber(remaining, number, okeyInfo) {
   const jokers = remaining.filter((t) => isOkeyTile(t, okeyInfo));
-  const sameNumber = remaining.filter((t) => !isOkeyTile(t, okeyInfo) && t.number === number);
+  const sameNumber = remaining.filter((t) => !isOkeyTile(t, okeyInfo) && eff(t, okeyInfo).number === number);
   const byColor = {};
-  sameNumber.forEach((t) => { if (!byColor[t.color]) byColor[t.color] = t; }); // set'te aynı renkten sadece 1 taş
+  sameNumber.forEach((t) => { const c = eff(t, okeyInfo).color; if (!byColor[c]) byColor[c] = t; }); // set'te aynı renkten sadece 1 taş
   const distinct = Object.values(byColor);
 
   for (const size of [4, 3]) {
@@ -44,7 +50,7 @@ function findBestSetForNumber(remaining, number, okeyInfo) {
 // bunu doğru şekilde kontrol ediyor); ~13x13 = küçük bir arama, performans sorunu yaratmaz.
 function findBestSeriesForColor(remaining, color, okeyInfo) {
   const jokers = remaining.filter((t) => isOkeyTile(t, okeyInfo));
-  const colorTiles = remaining.filter((t) => !isOkeyTile(t, okeyInfo) && t.color === color);
+  const colorTiles = remaining.filter((t) => !isOkeyTile(t, okeyInfo) && eff(t, okeyInfo).color === color);
   if (colorTiles.length === 0) return null;
 
   let best = null;
@@ -59,7 +65,7 @@ function findBestSeriesForColor(remaining, color, okeyInfo) {
       for (let i = 0; i < len; i++) {
         const virtual = start + i;
         const real = ((virtual - 1) % 13) + 1;
-        const tile = colorTiles.find((t) => t.number === real && !usedColorTiles.includes(t));
+        const tile = colorTiles.find((t) => eff(t, okeyInfo).number === real && !usedColorTiles.includes(t));
         if (tile) { usedColorTiles.push(tile); slots.push(tile); } else { slots.push(null); }
       }
       const missing = slots.filter((s) => s === null).length;
@@ -106,12 +112,13 @@ export function pickBotMelds(handTiles, okeyInfo) {
   return melds;
 }
 
-// 5 çift arar (aynı renk+sayı ikilisi; Okey/Sahte Okey herhangi bir taşın eşi olabilir).
+// 5 çift arar (aynı renk+sayı ikilisi; sadece gerçek Okey herhangi bir taşın
+// eşi olabilir — Sahte Okey normal bir taş gibi kendi yüz değeriyle eşleşir).
 export function pickBotPairs(handTiles, okeyInfo) {
   const jokers = handTiles.filter((t) => isOkeyTile(t, okeyInfo));
   const normals = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
   const byKey = {};
-  normals.forEach((t) => { const k = `${t.color}-${t.number}`; (byKey[k] ??= []).push(t); });
+  normals.forEach((t) => { const e = eff(t, okeyInfo); const k = `${e.color}-${e.number}`; (byKey[k] ??= []).push(t); });
 
   const pairs = [];
   const usedJokers = [];
@@ -142,7 +149,7 @@ export function shouldTakeDiscard(handTiles, discardTile, okeyInfo) {
   const valueWith = meldsWith.reduce((s, m) => s + m.value, 0);
   if (usedInMeld && valueWith > valueWithout) return true;
 
-  return discardTile.number >= 12; // yüksek değerli tekil taş — ileride işe yarayabilir
+  return (eff(discardTile, okeyInfo).number || 0) >= 12; // yüksek değerli tekil taş — ileride işe yarayabilir
 }
 
 // Masadaki (kendi veya rakip) açık perlere işlenebilecek (tacking) tüm fırsatları tarar.
@@ -163,12 +170,14 @@ export function findTackOpportunities(handTiles, openedHandsAllPlayers, okeyInfo
 }
 
 function tileConnectionScore(tile, handTiles, okeyInfo) {
+  const self = eff(tile, okeyInfo);
   let score = 0;
   for (const other of handTiles) {
     if (other.id === tile.id) continue;
     if (isOkeyTile(other, okeyInfo)) { score += 1; continue; }
-    if (other.color === tile.color && Math.abs(other.number - tile.number) <= 2) score += 2;
-    if (other.number === tile.number && other.color !== tile.color) score += 1;
+    const o = eff(other, okeyInfo);
+    if (o.color === self.color && Math.abs(o.number - self.number) <= 2) score += 2;
+    if (o.number === self.number && o.color !== self.color) score += 1;
   }
   return score;
 }
@@ -183,12 +192,14 @@ function excludeTackable(candidates, openedHandsAllPlayers, okeyInfo) {
   return safe.length > 0 ? safe : candidates;
 }
 
-// Atılacak taşı seçer: KESİNLİKLE Okey taşını atmaz (elde başka taş kalmadığı
-// durum hariç), mümkünse "işlek" (masadaki bir pere uyan, atılırsa ceza yiyen)
-// bir taş da atmaz. Diğer taşlar arasında elindeki diğer taşlarla en az
-// "bağlantısı" olan (aynı renkte yakın komşusu / aynı sayıda eşi olmayan) en
-// gereksiz taşı, eşitlik durumunda en yüksek sayılı olanı tercih eder (bot
-// stratejisi: yüksek sayılı taşları elde tutmak daha risklidir).
+// Atılacak taşı seçer. Öncelik sırası:
+//   1. KESİNLİKLE Okey taşı atmaz (elde başka taş kalmadığı durum hariç).
+//   2. Mümkünse "işlek" (masadaki bir pere uyan, atılırsa -101 yenen) taş atmaz.
+//   3. Kalanlar arasında elindeki diğer taşlarla en az "bağlantısı" olan
+//      (bir per'e dönüşme ihtimali en düşük) taşı seçer.
+//   4. Eşitlikte EN DÜŞÜK sayılı olanı atar: hem yandan alınıp açılırsa yenecek
+//      ceza (çekilen taşın 10/20 katı) küçük kalsın, hem de yüksek değerli
+//      taşlar per yapma potansiyeli için elde tutulsun.
 export function pickDiscardTile(handTiles, okeyInfo, openedHandsAllPlayers = null) {
   if (handTiles.length === 0) return null;
   const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
@@ -198,7 +209,7 @@ export function pickDiscardTile(handTiles, okeyInfo, openedHandsAllPlayers = nul
   const sorted = [...candidates].sort((a, b) => {
     const diff = tileConnectionScore(a, handTiles, okeyInfo) - tileConnectionScore(b, handTiles, okeyInfo);
     if (diff !== 0) return diff;
-    return b.number - a.number;
+    return (eff(a, okeyInfo).number ?? 99) - (eff(b, okeyInfo).number ?? 99);
   });
   return sorted[0];
 }
@@ -216,6 +227,6 @@ export function pickSmallestSafeDiscard(handTiles, okeyInfo, openedHandsAllPlaye
   candidates = excludeTackable(candidates, openedHandsAllPlayers, okeyInfo);
   const unconnected = candidates.filter((t) => tileConnectionScore(t, handTiles, okeyInfo) === 0);
   const pool = unconnected.length > 0 ? unconnected : candidates;
-  const sorted = [...pool].sort((a, b) => (a.number ?? 99) - (b.number ?? 99));
+  const sorted = [...pool].sort((a, b) => (eff(a, okeyInfo).number ?? 99) - (eff(b, okeyInfo).number ?? 99));
   return sorted[0];
 }

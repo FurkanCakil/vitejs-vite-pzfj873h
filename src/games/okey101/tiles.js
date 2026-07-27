@@ -9,9 +9,33 @@ export const COLOR_SYMBOLS = { black: '♠', red: '♥', blue: '♦', yellow: '�
 
 export const COLOR_LABELS = { black: 'Siyah', red: 'Kırmızı', blue: 'Mavi', yellow: 'Sarı' };
 
-// 2 satır x 13 sütun = 26 slot. 22 taş + rahat düzenleme payı için yeterli.
-export const RACK_ROW_LENGTH = 13;
+// 2 satır x 15 sütun = 30 slot. 22 taş + rahat düzenleme payı için bolca yer.
+export const RACK_ROW_LENGTH = 15;
 export const RACK_SLOTS = RACK_ROW_LENGTH * 2;
+
+// Eski (2x13 = 26 slotluk) ıstakalar hâlâ Firestore'da duruyor olabilir; bunlar
+// satır yapısı korunarak yeni boyuta genişletilir (ilk satır ilk satıra, ikinci
+// satır ikinci satıra). Beklenmedik uzunluklar da güvenle doldurulur/kırpılır.
+export function normalizeRack(rack) {
+  const empty = Array(RACK_SLOTS).fill(null);
+  if (!Array.isArray(rack)) return empty;
+  if (rack.length === RACK_SLOTS) return rack;
+
+  const oldRowLength = rack.length % 2 === 0 ? rack.length / 2 : RACK_ROW_LENGTH;
+  const next = [...empty];
+  rack.forEach((tile, i) => {
+    if (!tile) return;
+    const row = Math.floor(i / oldRowLength);
+    const col = i % oldRowLength;
+    if (row > 1 || col >= RACK_ROW_LENGTH) {
+      const spare = next.findIndex((s) => s === null);
+      if (spare !== -1) next[spare] = tile;
+      return;
+    }
+    next[row * RACK_ROW_LENGTH + col] = tile;
+  });
+  return next;
+}
 
 export const SETUP_DURATION_MS = 30000;
 
@@ -69,11 +93,26 @@ export function computeOkeyInfo(indicator) {
   return { color: indicator.color, number };
 }
 
+// Bir taşın JOKER (her taşın yerine geçebilen "Okey") olup olmadığını söyler.
+// Bu SADECE gerçek Okey taşlarıdır: göstergenin 1 fazlası, aynı renk.
+//
+// ÖNEMLİ: "Sahte Okey" (isJoker) artık bir joker/wildcard DEĞİLDİR. Tek işlevi,
+// o elin Okey'ini (göstergenin 1 fazlasını) temsil eden NORMAL bir taş olmaktır
+// — bkz. `effectiveTile`. Bu yüzden ne joker sayılır, ne Okey gibi işaretlenir,
+// ne de atıldığında Okey atma cezası doğurur.
 export function isOkeyTile(tile, okeyInfo) {
-  if (!tile) return false;
-  if (tile.isJoker) return true; // Sahte Okey her zaman o elin Okey'i yerine geçer.
+  if (!tile || tile.isJoker) return false;
   if (!okeyInfo) return false;
   return tile.color === okeyInfo.color && tile.number === okeyInfo.number;
+}
+
+// Bir taşın oyun kurallarınca GEÇERLİ yüz değerini döndürür. Sahte Okey
+// (isJoker), o elin Okey'inin renk/sayısına sahip normal bir taş gibi davranır;
+// diğer tüm taşlar olduğu gibi kalır.
+export function effectiveTile(tile, okeyInfo) {
+  if (!tile) return tile;
+  if (tile.isJoker && okeyInfo) return { ...tile, color: okeyInfo.color, number: okeyInfo.number };
+  return tile;
 }
 
 // Sabit slotlu ıstaka fiziği: tek bir taşı (fromIdx) hedef slota (toIdx) taşır.
