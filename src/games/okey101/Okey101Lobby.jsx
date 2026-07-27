@@ -72,9 +72,12 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
     }).catch((err) => console.error("Okey101 yazma hatası:", err));
   };
 
-  // ---- Botlarla doldurma (sadece host): boş koltukları botlarla doldurur,
+  // ---- Botlarla doldurma (sadece host): boş koltukları botlarla doldurur ve
   // Eşli modda kalan (bot/insan fark etmeksizin) atanmamış oyuncuları otomatik
-  // takımlara dağıtır ve oyunu (geri sayım beklemeden) doğrudan başlatır.
+  // takımlara dağıtır. Oyunu KENDİSİ başlatmaz — 4 koltuk dolunca zaten devreye
+  // giren aşağıdaki "geri sayım" efekti (players.length === MAX_PLAYERS) 3sn
+  // sonra oyunu başlatır, böylece host'un ayrıca oyuncu atamasına gerek kalmaz
+  // ama yine de kısa bir "Maç Başlıyor" geri sayımı görünür.
   const handleFillWithBots = async () => {
     if (!isHost) return;
     await runTransaction(db, async (t) => {
@@ -93,8 +96,6 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
       const update = {
         players: allPlayers,
         playerNames: newNames, isBotPlayer: newIsBot, scores: newScores,
-        countdownStartedAt: null,
-        status: 'playing',
       };
 
       if (data.rules?.gameType === '2v2') {
@@ -147,7 +148,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
     <div className="w-full max-w-3xl flex flex-col gap-4">
       {countdownDisplay !== null && (
         <div className="w-full bg-indigo-600/20 border border-indigo-500/50 rounded-xl p-4 text-center animate-pulse">
-          <div className="text-sm text-indigo-300 font-bold uppercase tracking-widest mb-1">Oda Doldu, Başlıyor</div>
+          <div className="text-sm text-indigo-300 font-bold uppercase tracking-widest mb-1">Maç Başlıyor</div>
           <div className="text-4xl font-black text-white">{countdownDisplay}</div>
         </div>
       )}

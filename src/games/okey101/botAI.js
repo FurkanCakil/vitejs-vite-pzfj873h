@@ -5,10 +5,10 @@
 // fonksiyonların döndürdüğü kararları uygular.
 
 import { COLORS, isOkeyTile } from './tiles.js';
-import { validateGroup, canTackTile } from './gameLogic.js';
+import { validateGroup, canTackTile, isTileTackable } from './gameLogic.js';
 
-export const BOT_TURN_DELAY_MIN_MS = 1500;
-export const BOT_TURN_DELAY_MAX_MS = 2500;
+export const BOT_TURN_DELAY_MIN_MS = 1000;
+export const BOT_TURN_DELAY_MAX_MS = 1800;
 
 export function randomTurnDelay() {
   const ms = BOT_TURN_DELAY_MIN_MS + Math.random() * (BOT_TURN_DELAY_MAX_MS - BOT_TURN_DELAY_MIN_MS);
@@ -51,15 +51,21 @@ function findBestSeriesForColor(remaining, color, okeyInfo) {
   for (let start = 1; start <= 13; start++) {
     const maxLen = Math.min(13, colorTiles.length + jokers.length);
     for (let len = maxLen; len >= 3; len--) {
-      const used = []; let missing = 0;
+      // Her pozisyon için ya gerçek taşı ya da (bulunamazsa) null yerleştir —
+      // jokerler daha sonra TAM OLARAK bu boş (null) pozisyonlara sırayla
+      // yerleştirilir, sona eklenmez. Böylece bot'un açtığı seri HER ZAMAN
+      // görsel olarak da doğru artan sırada olur (ör. 9-10-11, "11-9-10" değil).
+      const usedColorTiles = []; const slots = [];
       for (let i = 0; i < len; i++) {
         const virtual = start + i;
         const real = ((virtual - 1) % 13) + 1;
-        const tile = colorTiles.find((t) => t.number === real && !used.includes(t));
-        if (tile) used.push(tile); else missing++;
+        const tile = colorTiles.find((t) => t.number === real && !usedColorTiles.includes(t));
+        if (tile) { usedColorTiles.push(tile); slots.push(tile); } else { slots.push(null); }
       }
-      if (missing > jokers.length || used.length === 0) continue;
-      const candidate = [...used, ...jokers.slice(0, missing)];
+      const missing = slots.filter((s) => s === null).length;
+      if (missing > jokers.length || usedColorTiles.length === 0) continue;
+      let jokerIdx = 0;
+      const candidate = slots.map((s) => s ?? jokers[jokerIdx++]);
       const result = validateGroup(candidate, okeyInfo);
       if (result.valid && result.type === 'seri') {
         if (!best || candidate.length > best.tiles.length || (candidate.length === best.tiles.length && result.value > best.value)) {
@@ -167,15 +173,27 @@ function tileConnectionScore(tile, handTiles, okeyInfo) {
   return score;
 }
 
+// Elindeki taşlar arasından, masada AÇIK duran perlere "işlek" (uyan) olanları
+// eler — atılırsa -101 ceza yer (bkz. gameLogic.js#isTileTackable). Güvenli
+// (işlek olmayan) hiç taş yoksa orijinal listeyi olduğu gibi döndürür (ceza
+// yemek kaçınılmazsa en azından atma kararı yine de verilebilsin diye).
+function excludeTackable(candidates, openedHandsAllPlayers, okeyInfo) {
+  if (!openedHandsAllPlayers) return candidates;
+  const safe = candidates.filter((t) => !isTileTackable(t, openedHandsAllPlayers, okeyInfo));
+  return safe.length > 0 ? safe : candidates;
+}
+
 // Atılacak taşı seçer: KESİNLİKLE Okey taşını atmaz (elde başka taş kalmadığı
-// durum hariç). Diğer taşlar arasında elindeki diğer taşlarla en az "bağlantısı"
-// olan (aynı renkte yakın komşusu / aynı sayıda eşi olmayan) en gereksiz taşı,
-// eşitlik durumunda en yüksek sayılı olanı tercih eder (bot stratejisi: yüksek
-// sayılı taşları elde tutmak daha risklidir).
-export function pickDiscardTile(handTiles, okeyInfo) {
+// durum hariç), mümkünse "işlek" (masadaki bir pere uyan, atılırsa ceza yiyen)
+// bir taş da atmaz. Diğer taşlar arasında elindeki diğer taşlarla en az
+// "bağlantısı" olan (aynı renkte yakın komşusu / aynı sayıda eşi olmayan) en
+// gereksiz taşı, eşitlik durumunda en yüksek sayılı olanı tercih eder (bot
+// stratejisi: yüksek sayılı taşları elde tutmak daha risklidir).
+export function pickDiscardTile(handTiles, okeyInfo, openedHandsAllPlayers = null) {
   if (handTiles.length === 0) return null;
   const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
-  const candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+  let candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+  candidates = excludeTackable(candidates, openedHandsAllPlayers, okeyInfo);
 
   const sorted = [...candidates].sort((a, b) => {
     const diff = tileConnectionScore(a, handTiles, okeyInfo) - tileConnectionScore(b, handTiles, okeyInfo);
@@ -186,14 +204,16 @@ export function pickDiscardTile(handTiles, okeyInfo) {
 }
 
 // Süre aşımı (hamle yapmayan oyuncu) için otomatik atış: KESİNLİKLE Okey
-// atmaz, ve hiçbir pere bağlantısı olmayan (connectionScore === 0) taşlar
-// arasından en KÜÇÜK sayılı olanı seçer. pickDiscardTile'ın aksine (o, bot
-// stratejisi gereği eşitlikte en büyüğü tercih eder), burada amaç oyuncuya
-// en az zararı veren/en masum atışı otomatik yapmaktır.
-export function pickSmallestSafeDiscard(handTiles, okeyInfo) {
+// atmaz, mümkünse "işlek" bir taş da atmaz, ve kalan taşlar arasından hiçbir
+// pere bağlantısı olmayan (connectionScore === 0) taşlar arasından en KÜÇÜK
+// sayılı olanı seçer. pickDiscardTile'ın aksine (o, bot stratejisi gereği
+// eşitlikte en büyüğü tercih eder), burada amaç oyuncuya en az zararı veren/en
+// masum atışı otomatik yapmaktır.
+export function pickSmallestSafeDiscard(handTiles, okeyInfo, openedHandsAllPlayers = null) {
   if (handTiles.length === 0) return null;
   const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
-  const candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+  let candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+  candidates = excludeTackable(candidates, openedHandsAllPlayers, okeyInfo);
   const unconnected = candidates.filter((t) => tileConnectionScore(t, handTiles, okeyInfo) === 0);
   const pool = unconnected.length > 0 ? unconnected : candidates;
   const sorted = [...pool].sort((a, b) => (a.number ?? 99) - (b.number ?? 99));

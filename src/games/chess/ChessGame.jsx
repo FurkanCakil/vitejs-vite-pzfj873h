@@ -172,7 +172,15 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
     (async () => {
       try {
-        const uciMove = await getBestMove(fen, depth);
+        // Motor çoğu pozisyonda (özellikle düşük derinlikte) neredeyse anında
+        // sonuç döndürüyor — bu da bota gerçekçi olmayan/robotik bir his
+        // veriyordu. En az ~1-2sn "düşünme" süresi geçmeden hamle oynanmaz
+        // (motor daha uzun sürerse zaten o süre zaten geçmiş olur).
+        const minThinkMs = 1100 + Math.random() * 900;
+        const [uciMove] = await Promise.all([
+          getBestMove(fen, depth),
+          new Promise((resolve) => setTimeout(resolve, minThinkMs)),
+        ]);
         if (cancelled || !uciMove) return;
         const parsed = uciMoveToIndices(uciMove);
         if (!parsed) return;

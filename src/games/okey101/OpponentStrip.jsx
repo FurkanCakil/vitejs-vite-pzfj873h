@@ -1,15 +1,18 @@
 import React from 'react';
 import { Crown, Bot as BotIcon, User } from 'lucide-react';
-import { TileBack } from './Tile.jsx';
 import Tile from './Tile.jsx';
 
-// Diğer oyuncuların ıstakadaki taşları GÖSTERİLMEZ (hile önleme) — sadece isim,
-// eldeki taş sayısı, skor ve (varsa) önlerindeki en üst attıkları taş gösterilir.
-function Seat({ player, rackCount, topDiscard, score, isHost, isTakeable, isCurrentTurn, onTakeDiscard, orientation }) {
+// Diğer oyuncuların ıstakadaki taşları/taş SAYISI GÖSTERİLMEZ (hile önleme +
+// istenmeyen bilgi kirliliği) — sadece isim, skor ve (varsa) en son attıkları
+// taş gösterilir. Son atılan taş, kartın masa MERKEZİNE bakan köşesinde
+// (benim kendi atma bölmemin ıstakamın köşesinde durması gibi) çapraz bir
+// rozet olarak yüzer.
+function Seat({ player, topDiscard, score, isHost, isTakeable, isCurrentTurn, onTakeDiscard, orientation }) {
   if (!player) return null;
   const vertical = orientation === 'left' || orientation === 'right';
+  const badgePos = orientation === 'left' ? '-top-3 -right-3' : orientation === 'right' ? '-top-3 -left-3' : '-bottom-3 -right-3';
   return (
-    <div className={`flex ${vertical ? 'flex-col' : 'flex-row'} items-center gap-2 bg-slate-900/70 border rounded-lg px-3 py-2 ${isTakeable ? 'border-amber-400' : isCurrentTurn ? 'border-indigo-500/60' : 'border-slate-700'}`}>
+    <div className={`relative flex ${vertical ? 'flex-col' : 'flex-row'} items-center gap-2 bg-slate-900/70 border rounded-lg px-3 py-2 ${isTakeable ? 'border-amber-400' : isCurrentTurn ? 'border-indigo-500/60' : 'border-slate-700'}`}>
       <div className="flex items-center gap-2 min-w-0">
         <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${player.isBot ? 'bg-amber-600/30 text-amber-300' : 'bg-indigo-600/30 text-indigo-300'}`}>
           {player.isBot ? <BotIcon className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
@@ -22,23 +25,16 @@ function Seat({ player, rackCount, topDiscard, score, isHost, isTakeable, isCurr
           <div className="text-[10px] text-slate-500 font-mono">{score ?? 0} puan</div>
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {topDiscard ? (
-          <div
-            onClick={isTakeable ? onTakeDiscard : undefined}
-            title={isTakeable ? 'Bu taşı çek' : undefined}
-            className={isTakeable ? 'cursor-pointer ring-2 ring-amber-400 rounded-md animate-pulse' : ''}
-          >
-            <Tile tile={topDiscard} size="small" />
-          </div>
-        ) : (
-          <div className="w-4 h-6" />
-        )}
-        <div className="flex items-center gap-1">
-          <TileBack size="small" />
-          <span className="text-xs font-mono font-bold text-slate-300">{rackCount}</span>
+
+      {topDiscard && (
+        <div
+          onClick={isTakeable ? onTakeDiscard : undefined}
+          title={isTakeable ? 'Bu taşı çek' : undefined}
+          className={`absolute ${badgePos} z-10 ${isTakeable ? 'cursor-pointer ring-2 ring-amber-400 rounded-md animate-pulse' : ''}`}
+        >
+          <Tile tile={topDiscard} size="small" />
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -52,7 +48,6 @@ function Seat({ player, rackCount, topDiscard, score, isHost, isTakeable, isCurr
 export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, turnUid, takeableUid, onTakeDiscard, children }) {
   const seatProps = (seat, orientation) => seat ? {
     player: seat.player,
-    rackCount: seat.rackCount,
     topDiscard: seat.topDiscard,
     score: seat.score,
     isHost: seat.player.uid === hostUid,

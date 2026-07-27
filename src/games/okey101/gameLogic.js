@@ -96,6 +96,27 @@ export function validateGroup(tiles, okeyInfo) {
   return { valid: false };
 }
 
+// Bir per'in (SADECE seri için anlamlı — set'te sıra önemsizdir) taş
+// DİZİLİMİNİN de (küme/toplam değil, GÖRSEL SIRANIN da) doğru artan sırada
+// olup olmadığını kontrol eder. `tiles` zaten `validateGroup` ile geçerli
+// bulunmuş bir seri OLMALIDIR (aksi halde false döner). Jokerler herhangi
+// bir pozisyonda kabul edilir (o pozisyondaki eksik sayıyı temsil ettikleri
+// varsayılır); sadece GERÇEK taşların kendi pozisyonlarına denk gelen sayıyı
+// taşıyıp taşımadığı kontrol edilir.
+export function isProperlyOrderedGroup(tiles, type, okeyInfo) {
+  if (type !== 'seri' || !tiles || tiles.length < 3) return true;
+  const normals = tiles.filter((t) => !isOkeyTile(t, okeyInfo));
+  const jokerCount = tiles.length - normals.length;
+  const info = trySeriAnalysis(normals, jokerCount);
+  if (!info) return false;
+  for (let i = 0; i < tiles.length; i++) {
+    const tile = tiles[i];
+    if (isOkeyTile(tile, okeyInfo)) continue;
+    if (tile.number !== realNumber(info.start + i)) return false;
+  }
+  return true;
+}
+
 // Birden fazla seçili per'in HEPSİNİN geçerli olup olmadığını kontrol eder.
 // Tek bir geçersiz per varsa "Geçersiz Per Dizilimi!" ile tüm işlem reddedilmeli.
 export function validateGroups(groupsMap, tilesById, selectedGroupIds, okeyInfo) {
@@ -144,6 +165,25 @@ export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
     if (result.valid) return { valid: true, newTiles: alt };
   }
   return { valid: false };
+}
+
+// Bir taşın "işlek" olup olmadığını kontrol eder: masadaki (herhangi bir
+// oyuncunun) açık en az bir seri/set'inin sağına ya da soluna tam oturuyorsa
+// (bkz. canTackTile) o taş işlektir. Okey/Sahte Okey taşı da HER ZAMAN işlek
+// sayılır (kendisi zaten her yere işlenebilir bir taştır). Bu, "işlek ya da
+// Okey bir taş atan oyuncuya -101 ceza yazılır" kuralını uygulamak için
+// kullanılır (bkz. handleDiscardTile).
+export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
+  if (!tile) return false;
+  if (isOkeyTile(tile, okeyInfo)) return true;
+  for (const groups of Object.values(openedHandsAllPlayers || {})) {
+    for (const g of (groups || [])) {
+      if (!g || g.type === 'cift') continue;
+      if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) return true;
+      if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) return true;
+    }
+  }
+  return false;
 }
 
 // ============================================================

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, Layers, Rows3 } from 'lucide-react';
 import Tile from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup } from './gameLogic.js';
+import { validateGroup, isProperlyOrderedGroup } from './gameLogic.js';
 
 const DRAG_THRESHOLD_PX = 6;
 const TACK_HOVER_STYLE = { backgroundColor: 'rgba(251,191,36,0.55)' };
@@ -96,6 +96,10 @@ export default function PlayerRack({
       const orderedTiles = safeRack.filter((t) => t && selected.has(t.id));
       const result = validateGroup(orderedTiles, okeyInfo);
       if (!result.valid) { showToast?.('Geçersiz Per Dizilimi!', 'red'); return; }
+      if (!isProperlyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
+        showToast?.('Perinizi düzgün diziniz!', 'red');
+        return;
+      }
     }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const ordered = safeRack.filter((t) => t && selected.has(t.id)).map((t) => t.id);
@@ -175,7 +179,10 @@ export default function PlayerRack({
 
     if (tackEl) {
       if (onTackTile) {
-        onTackTile(d.tile, { uid: tackEl.dataset.tackUid, groupIndex: Number(tackEl.dataset.tackIndex), side: tackEl.dataset.tackSide });
+        const target = { uid: tackEl.dataset.tackUid, groupIndex: Number(tackEl.dataset.tackIndex) };
+        if (tackEl.dataset.tackReplaceTileId) target.replaceTileId = tackEl.dataset.tackReplaceTileId;
+        else target.side = tackEl.dataset.tackSide;
+        onTackTile(d.tile, target);
       }
       return;
     }
@@ -293,7 +300,7 @@ export default function PlayerRack({
             onPointerUp={canDiscard ? finishDrag : undefined}
             onPointerCancel={canDiscard ? finishDrag : undefined}
             title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
-            className={`absolute -top-8 -right-6 sm:-top-10 sm:-right-8 w-9 h-12 sm:w-11 sm:h-16 rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
+            className={`absolute -top-16 -right-10 sm:-top-20 sm:-right-14 w-9 h-12 sm:w-11 sm:h-16 rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
               ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
           >
             {lastDiscardTile ? (

@@ -242,17 +242,26 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
         let curBoard = board;
         let curBar = { ...botBar };
         let curBorneOff = { ...botBorneOff };
-        const newUsedDice = [...usedDice];
-        let hitOpponent = false;
+        let newUsedDice = [...usedDice];
 
-        for (const move of path) {
+        // Zarların (özellikle dublede 4 hamle) hepsini TEK seferde uygulayıp
+        // yazmak yerine, her taşı TEK TEK oynatıp aralarında kısa bir bekleme
+        // ile ekrana yansıtıyoruz — gerçekçi bir oyun hissi için.
+        for (let i = 0; i < path.length; i++) {
+          if (cancelled) return;
+          const move = path[i];
           const targetPt = curBoard[move.to];
-          if (targetPt && targetPt.color && targetPt.color !== botColor) hitOpponent = true;
+          const hit = !!(targetPt && targetPt.color && targetPt.color !== botColor);
           const result = applyMove(curBoard, curBar, curBorneOff, botColor, move.from, move.to);
           curBoard = result.board; curBar = result.bar; curBorneOff = result.borneOff;
-          newUsedDice.push(move.die);
+          newUsedDice = [...newUsedDice, move.die];
+          playSound(hit ? 'capture' : 'move');
+          if (i < path.length - 1) {
+            await updateRoom({ board: curBoard, bar: curBar, borneOff: curBorneOff, dice, usedDice: newUsedDice });
+            await new Promise((resolve) => setTimeout(resolve, 550 + Math.random() * 300));
+            if (cancelled) return;
+          }
         }
-        playSound(hitOpponent ? 'capture' : 'move');
 
         if (curBorneOff[botColor] >= 15) {
           playSound('win');
