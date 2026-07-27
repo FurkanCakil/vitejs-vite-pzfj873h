@@ -116,4 +116,10 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
   );
 });
 
-export default Tile;
+// PERFORMANS: Aynı taş, aynı görsel durumla (Firestore'dan yeni veri gelmediği
+// sürece `tile`/`okeyInfo` referansları SABİT kalır) tekrar tekrar render
+// edilmesin diye memoize edilir. Bu, ıstakadaki 30 slot dışındaki taşların
+// (rakip attıkları, gösterge, açılan eller, çekme/atma bölmeleri) ilgisiz bir
+// state değişikliğinde (ör. 30sn geri sayımın her 250ms'de bir tetiklenmesi)
+// gereksiz yere yeniden çizilmesini engeller.
+export default React.memo(Tile);

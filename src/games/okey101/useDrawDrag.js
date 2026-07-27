@@ -7,18 +7,36 @@ import { useCallback, useRef, useState } from 'react';
 //   - Hareket etmeden bırakılırsa (klasik tık) ıstakadaki İLK boş slota çeker.
 //   - Sürüklenip ıstakadaki belirli bir slotun üzerinde bırakılırsa TAM O
 //     SLOTA çeker.
-// Sürüklerken imleci takip eden bir "ghost" gösterilir; ghost'un konumu hiçbir
-// CSS geçişine tabi değildir (birebir/gecikmesiz hareket), sadece ilk anda
-// hafifçe büyür.
+// Sürüklerken imleci takip eden bir "ghost" gösterilir.
+//
+// PERFORMANS: Ghost'un POZİSYONU React state'i ile DEĞİL, `ghostElRef`
+// üzerinden doğrudan DOM yazımıyla (style.transform) güncellenir. Eskiden her
+// piksel hareketinde `setPos({x,y})` çağrılıp TÜM ağacın yeniden render
+// edilmesine yol açıyordu — bu da (özellikle taş çekerken) hissedilen
+// donma/takılmaların bir kaynağıydı. `active`/`grown` sadece MOUNT/UNMOUNT ve
+// büyüme animasyonu için birer state'tir, sürüklenirken sürekli değişmezler.
 export default function useDrawDrag({ enabled, onDraw }) {
   const dragRef = useRef(null);
   const growTimerRef = useRef(null);
-  const [pos, setPos] = useState(null);
+  const ghostElRef = useRef(null);
+  const [active, setActive] = useState(false);
   const [grown, setGrown] = useState(false);
+
+  const applyPos = (el, x, y) => {
+    if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  };
+
+  const ghostRef = useCallback((el) => {
+    ghostElRef.current = el;
+    const d = dragRef.current;
+    // Node YENİ mount olduysa son bilinen imleç konumunu HEMEN uygula —
+    // aksi halde bir kare boyunca (0,0)'da yanıp sönme görülür.
+    if (el && d && d.x !== undefined) applyPos(el, d.x, d.y);
+  }, []);
 
   const reset = useCallback(() => {
     if (growTimerRef.current) { clearTimeout(growTimerRef.current); growTimerRef.current = null; }
-    setPos(null);
+    setActive(false);
     setGrown(false);
   }, []);
 
@@ -26,6 +44,7 @@ export default function useDrawDrag({ enabled, onDraw }) {
     if (!enabled) return;
     e.preventDefault();
     dragRef.current = { targetIndex: null, moved: false };
+    setActive(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   }, [enabled]);
 
@@ -36,7 +55,8 @@ export default function useDrawDrag({ enabled, onDraw }) {
       d.moved = true;
       growTimerRef.current = setTimeout(() => setGrown(true), 80);
     }
-    setPos({ x: e.clientX, y: e.clientY });
+    d.x = e.clientX; d.y = e.clientY;
+    applyPos(ghostElRef.current, e.clientX, e.clientY);
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const slotEl = el?.closest('[data-slot-index]');
     d.targetIndex = slotEl ? Number(slotEl.dataset.slotIndex) : null;
@@ -54,5 +74,5 @@ export default function useDrawDrag({ enabled, onDraw }) {
     ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp }
     : {};
 
-  return { pos, grown, handlers };
+  return { active, grown, ghostRef, handlers };
 }

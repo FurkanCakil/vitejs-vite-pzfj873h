@@ -6,7 +6,7 @@ import { Trophy, Crown, Bot as BotIcon, User, Layers } from 'lucide-react';
 // gruplanıp ortak puanları gösterilir.
 export default function RoundResultBoard({ players, roundResult, scores, rules, teams, openedWithPairs, isHost, onStartNewRound }) {
   if (!roundResult) return null;
-  const { winnerUid, wonByOkeyDiscard, foldMultiplier, perPlayer } = roundResult;
+  const { winnerUid, wonByOkeyDiscard, wentOutFromHand, foldMultiplier, perPlayer } = roundResult;
   // Kapalı deste bitip el kimse bitiremeden sona erdiyse kazanan YOKTUR.
   const noWinner = !winnerUid;
   const winnerName = players.find((p) => p.uid === winnerUid)?.name || '???';
@@ -55,6 +55,7 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
               <>
                 <span className="font-bold text-emerald-400">{winnerName}</span> elini bitirdi!
                 {wonByOkeyDiscard && <span className="block text-xs text-fuchsia-300 font-bold mt-1">Okey Atarak Bitirdi! (×2 Ceza Bonusu)</span>}
+                {wentOutFromHand && <span className="block text-xs text-amber-300 font-bold mt-1">Elden Bitirdi! (×2 Ceza Bonusu)</span>}
               </>
             )}
           </p>

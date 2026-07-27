@@ -157,6 +157,19 @@ export default function App() {
       let savedCode = null;
       savedCode = safeStorage.get('activeRoom');
       if (savedCode && currentUser) { restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
+
+      // Firestore BAĞLANTISINI ERKENDEN ISITIR: SDK'nın gerçek ağ kanalını
+      // (WebChannel/gRPC el sıkışması) kurması, o oturumdaki İLK okuma/yazma
+      // isteğinde ekstra bir gecikme olarak hissediliyordu — özellikle
+      // "Özel Oda Kur" butonuna basıldığında (o an henüz hiçbir Firestore
+      // isteği yapılmamışsa) oda oluşturma transaction'ı bu soğuk başlangıç
+      // gecikmesini üstleniyordu. Kullanıcı lobide oyun seçerken (birkaç
+      // saniye insan etkileşim süresi) bu ucuz, sonucu önemsenmeyen okuma
+      // arka planda bağlantıyı ısıtır; buton basıldığında kanal çoktan
+      // hazırdır.
+      if (currentUser) {
+        getDoc(doc(db, 'artifacts', appId, 'public', 'data', '__warmup__')).catch(() => { /* sonuç önemsiz, sadece bağlantıyı ısıtır */ });
+      }
     });
     return () => unsubscribe();
   }, []);

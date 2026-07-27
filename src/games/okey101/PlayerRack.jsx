@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, Layers, Rows3 } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
-import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection } from './tiles.js';
+import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
 import { validateGroup, isProperlyOrderedGroup } from './gameLogic.js';
 import useViewport from '../../hooks/useViewport.js';
 
@@ -10,9 +10,11 @@ const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
 
 // 3. madde: Okey artık hiçbir çerçeve/rozetle belli edilmediği için oyuncu onu
 // kendisi fark etmek zorunda. Fark ettiği taşı unutmamak adına (gerçek hayatta
-// okeyi ters çevirip masaya koymak gibi) bir taşa 1sn basılı tutarak taşı TERS
-// ÇEVİREBİLİR; 1sn daha basılı tutunca taş normale döner. Tamamen yerel/kişisel
-// bir işarettir, sunucuya yazılmaz ve kimse göremez.
+// okeyi ters çevirip masaya koymak gibi) SADECE GERÇEK OKEY taşına 1sn basılı
+// tutarak taşı TERS ÇEVİREBİLİR; 1sn daha basılı tutunca taş normale döner.
+// Diğer taşlar ters çevrilemez (kullanıcı isteği: yanlışlıkla her taşı
+// çevirip karıştırmasın). Tamamen yerel/kişisel bir işarettir, sunucuya
+// yazılmaz ve kimse göremez.
 const LONG_PRESS_MS = 1000;
 
 // Istaka, 15 sütunu HER ZAMAN kullanılabilir genişliğe sığdırır: taş genişliği
@@ -99,7 +101,7 @@ function useRackMetrics({ compact, viewportHeight, cols, rows }) {
 // Sadece sahibi (isOwner) etkileşime girebilir.
 export default function PlayerRack({
   rack, groups, isOwner, onUpdateRack, okeyInfo,
-  canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
+  canAct = false, canDiscard = false, isFinishingDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
   pendingDraw = null, flipTileId = null, compact = false,
@@ -115,7 +117,26 @@ export default function PlayerRack({
   const [selected, setSelected] = useState(() => new Set());
   const [hoverIndex, setHoverIndex] = useState(null);
   const [hoverDiscard, setHoverDiscard] = useState(false);
-  const [ghost, setGhost] = useState(null); // { x, y, tiles }
+  // PERFORMANS: `ghost` artık SADECE sürüklenen taşların KİMLİĞİNİ tutar
+  // (mount/unmount), POZİSYONU DEĞİL. Eskiden fare/parmak her piksel
+  // hareket ettiğinde `setGhost({x,y,...})` ile YENİ bir obje verilip TÜM
+  // PlayerRack (30 taş slotu dahil) yeniden render ediliyordu — bu da özellikle
+  // per yaparken/taş taşırken hissedilen donma/takılmaların ASIL sebebiydi.
+  // Pozisyon artık `ghostElRef` üzerinden DOĞRUDAN DOM'a (style.transform)
+  // yazılır; React re-render'ı TETİKLEMEZ (bkz. handlePointerMove).
+  const [ghost, setGhost] = useState(null); // { tiles, grabOffset }
+  const ghostElRef = useRef(null);
+  const setGhostElRef = (el) => {
+    ghostElRef.current = el;
+    // Node YENİ mount olduysa (drag zaten başlamışsa) son bilinen imleç
+    // konumunu HEMEN uygula — aksi halde bir kare boyunca (0,0)'da yanıp
+    // sönme (flaş) görülür.
+    const d = dragRef.current;
+    if (el && d && d.lastX !== undefined) applyGhostTransform(el, d.lastX, d.lastY, d.grabOffset);
+  };
+  const applyGhostTransform = (el, x, y, grabOffset) => {
+    el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(calc(-50% - ${grabOffset * (tileW + gap)}px), -50%)`;
+  };
   // Uzun basılarak ters çevrilmiş taşların id'leri (sadece bu tarayıcıda).
   const [flippedIds, setFlippedIds] = useState(() => new Set());
   const longPressTimerRef = useRef(null);
@@ -325,29 +346,41 @@ export default function PlayerRack({
     dragRef.current = { fromIndex, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
     e.currentTarget.setPointerCapture?.(e.pointerId);
 
-    // 2sn basılı tutma -> taşı ters çevir / düzelt (bkz. LONG_PRESS_MS).
+    // 1sn basılı tutma -> taşı ters çevir / düzelt (bkz. LONG_PRESS_MS).
+    // SADECE gerçek Okey taşında çalışır — diğer taşlar ters çevrilemez.
     clearLongPress();
-    longPressTimerRef.current = setTimeout(() => {
-      longPressTimerRef.current = null;
-      const d = dragRef.current;
-      if (!d || d.moved || d.tile.id !== tile.id) return;
-      d.longPressed = true;
-      setFlippedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(tile.id)) next.delete(tile.id); else next.add(tile.id);
-        return next;
-      });
-    }, LONG_PRESS_MS);
+    if (isOkeyTile(tile, okeyInfo)) {
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTimerRef.current = null;
+        const d = dragRef.current;
+        if (!d || d.moved || d.tile.id !== tile.id) return;
+        d.longPressed = true;
+        setFlippedIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(tile.id)) next.delete(tile.id); else next.add(tile.id);
+          return next;
+        });
+      }, LONG_PRESS_MS);
+    }
   };
 
   const handlePointerMove = (e) => {
     const d = dragRef.current;
     if (!d) return;
     const dx = e.clientX - d.startX; const dy = e.clientY - d.startY;
-    if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) { d.moved = true; clearLongPress(); }
+    if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
+      d.moved = true;
+      clearLongPress();
+      // Ghost'u sadece BİR KEZ (hareket başladığında) mount ediyoruz — bundan
+      // sonraki pozisyon güncellemeleri state DEĞİL, doğrudan DOM yazımı
+      // (bkz. applyGhostTransform). Bu, sürükleme sırasında PlayerRack'in
+      // (ve 30 taş slotunun) her piksel için yeniden render olmasını önler.
+      setGhost({ tiles: d.tiles, grabOffset: d.grabOffset });
+    }
     if (!d.moved) return;
 
-    setGhost({ x: e.clientX, y: e.clientY, tiles: d.tiles, grabOffset: d.grabOffset });
+    d.lastX = e.clientX; d.lastY = e.clientY;
+    if (ghostElRef.current) applyGhostTransform(ghostElRef.current, e.clientX, e.clientY, d.grabOffset);
 
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const slotEl = el?.closest('[data-slot-index]');
@@ -490,6 +523,12 @@ export default function PlayerRack({
     </div>
   );
 
+  // 2. madde: elde tam 1 taş kaldığında (isFinishingDiscard) bu bölme artık
+  // "Sağa At" değil "Ortaya At"tır — o taş kimseye gitmez, oyunu ORTADA
+  // (Göstergenin yanında) bitirir (bkz. Okey101Game#centerDiscard). Aynı
+  // sürükleme jesti korunur, sadece etiket/renk/hedef anlamı değişir.
+  const discardLabel = isFinishingDiscard ? 'Ortaya At (Bitir)' : 'Sağa At';
+  const discardHint = isFinishingDiscard ? 'Elini bitirmek için son taşını buraya sürükle' : 'Turu bitirmek için bir taşı buraya sürükle';
   const discardSlot = (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -497,18 +536,22 @@ export default function PlayerRack({
         onPointerMove={canDiscard ? handlePointerMove : undefined}
         onPointerUp={canDiscard ? finishDrag : undefined}
         onPointerCancel={canDiscard ? finishDrag : undefined}
-        title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
+        title={canDiscard ? discardHint : 'Son attığın taş'}
         style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
         className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
-          ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
+          ${canDiscard
+            ? (hoverDiscard
+              ? (isFinishingDiscard ? 'border-emerald-400 bg-emerald-500/30 scale-110' : 'border-red-400 bg-red-500/30 scale-110')
+              : (isFinishingDiscard ? 'border-emerald-400 bg-emerald-400/10 animate-pulse' : 'border-amber-400 bg-amber-400/10 animate-pulse'))
+            : 'border-slate-600/70 bg-slate-900/40'}`}
       >
-        {lastDiscardTile
+        {lastDiscardTile && !isFinishingDiscard
           ? <Tile tile={lastDiscardTile} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canDiscard} />
           : canDiscard
-            ? <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
+            ? <span className={`text-[8px] font-bold text-center leading-tight px-0.5 ${isFinishingDiscard ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>{isFinishingDiscard ? 'BİTİR' : 'AT'}</span>
             : null}
       </div>
-      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">Sağa At</span>
+      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">{discardLabel}</span>
     </div>
   );
 
@@ -585,12 +628,11 @@ export default function PlayerRack({
       )}
 
       {/* Sürükleme hayaleti: bir per taşınıyorsa TÜM per soluk şekilde imleci takip
-          eder, tutulan taş tam imlecin altında kalacak biçimde hizalanır. */}
+          eder, tutulan taş tam imlecin altında kalacak biçimde hizalanır.
+          POZİSYON React state'i DEĞİL, `ghostElRef` üzerinden doğrudan DOM
+          yazımıyla güncellenir (bkz. handlePointerMove) — performans için. */}
       {ghost && (
-        <div
-          className="fixed z-[4000] pointer-events-none opacity-80"
-          style={{ left: ghost.x, top: ghost.y, transform: `translate(calc(-50% - ${ghost.grabOffset * (tileW + gap)}px), -50%)` }}
-        >
+        <div ref={setGhostElRef} className="fixed left-0 top-0 z-[4000] pointer-events-none opacity-80">
           <div className="flex items-center" style={{ gap: `${gap}px` }}>
             {ghost.tiles.map((tl) => (
               <Tile key={tl.id} tile={tl} okeyInfo={okeyInfo} width={tileW} faceDown={flippedIds.has(tl.id)} />

@@ -356,11 +356,26 @@ export function computeRemainingTilesPenalty(rack, okeyInfo) {
   return sum;
 }
 
+// Kazananın bitiriş şekline bağlı özel bonuslar (bkz. computeRoundEnd):
+//   - Okey ile bitirme (elindeki/çektiği son taş olarak GERÇEK Okey'i atarak
+//     bitirmek): kazananın kendi ödülü zaten iki katına çıkıyordu (aşağıda).
+//   - "Elden" bitirme: oyuncu bu TURA elini hiç açmamış olarak girip AYNI
+//     turda tüm elini (tüm perlerini) açıp son taşla bitirirse.
+// Her iki durumda da DİĞER oyuncuların bu tur sonu cezaları KATLANIR (bu iki
+// bonus aynı anda gerçekleşirse -teorik olarak mümkün- çarpanlar birleşir).
+export const OKEY_DISCARD_OPPONENT_MULTIPLIER = 2;
+export const WENT_OUT_FROM_HAND_OPPONENT_MULTIPLIER = 2;
+
 // Bir el (round) bittiğinde her oyuncunun bu turdaki net puan değişimini ve
 // (Eşli modda) takım havuzlamasını hesaplar. `roomData.scores` zaten anlık
 // (yandan-alma/açamama gibi) cezaları içerdiği için, o anlık cezaları
 // roundStartScores'a göre ayrıştırıp tablo için ayrıca raporluyoruz.
-export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, openedWithPairs, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard) {
+export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, openedWithPairs, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard, wentOutFromHand = false) {
+  // Diğer (kazanmayan) oyuncuların bu turki cezasına uygulanan toplam katsayı.
+  let opponentBonusMultiplier = 1;
+  if (wonByOkeyDiscard) opponentBonusMultiplier *= OKEY_DISCARD_OPPONENT_MULTIPLIER;
+  if (wentOutFromHand) opponentBonusMultiplier *= WENT_OUT_FROM_HAND_OPPONENT_MULTIPLIER;
+
   const baseDelta = {};
   players.forEach((uid) => {
     if (uid === winnerUid) {
@@ -368,12 +383,12 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
       return;
     }
     if (!hasOpened?.[uid]) {
-      baseDelta[uid] = NON_OPENER_PENALTY;
+      baseDelta[uid] = NON_OPENER_PENALTY * opponentBonusMultiplier;
     } else {
       // ÇİFT ile açan oyuncu, elinde kalan taşların İKİ KATI ceza yazar;
       // Seri/Set ile açan taşların kendi değeri kadar ceza yazar (5. madde).
       const remaining = computeRemainingTilesPenalty(racks?.[uid], okeyInfo);
-      baseDelta[uid] = openedWithPairs?.[uid] ? remaining * PAIRS_OPENER_PENALTY_MULTIPLIER : remaining;
+      baseDelta[uid] = (openedWithPairs?.[uid] ? remaining * PAIRS_OPENER_PENALTY_MULTIPLIER : remaining) * opponentBonusMultiplier;
     }
   });
 
@@ -400,6 +415,6 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
 
   return {
     newScores,
-    roundResult: { winnerUid, wonByOkeyDiscard, foldMultiplier: multiplier, perPlayer },
+    roundResult: { winnerUid, wonByOkeyDiscard, wentOutFromHand, foldMultiplier: multiplier, perPlayer },
   };
 }
