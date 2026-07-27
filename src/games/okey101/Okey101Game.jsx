@@ -1001,6 +1001,45 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         outcome = { success: true };
       }
 
+      // Eli bitirme: TAŞ ATMADAN, elindeki son taşı da işleyerek (tacking)
+      // ıstakayı tamamen boşaltmak da GEÇERLİ bir bitiriştir (gerçek 101 Okey
+      // kuralı). Bu kontrol eskiden SADECE handleDiscardTile'da vardı; bu
+      // yüzden bir oyuncu son taşını atmak yerine işlediğinde tur hiç bitmiyor,
+      // `hasDrawnThisTurn` true'da asılı kalıp oyun tıkanıyordu (özellikle
+      // botlar TAM bu şekilde takılıyordu).
+      const rackEmptiedByTack = !target.replaceTileId && newRack.every((s) => s === null);
+      if (rackEmptiedByTack) {
+        const { newScores, roundResult } = computeRoundEnd({
+          players: data.players || [],
+          scores: { ...(data.scores || {}), ...nextScores },
+          roundStartScores: data.roundStartScores || {},
+          hasOpened: data.hasOpened || {},
+          openedWithPairs: data.openedWithPairs || {},
+          racks: { ...(data.racks || {}), [actingUid]: newRack },
+          rules: data.rules || {},
+          teams: data.teams || null,
+          okeyInfo: okeyNow,
+          foldMultiplier: data.foldMultiplier || 1,
+        }, actingUid, false);
+
+        outcome.roundEnded = true;
+        t.update(roomRef, {
+          ...update,
+          [`racks.${actingUid}`]: newRack,
+          [`openedHands.${target.uid}`]: targetOpened,
+          turn: null,
+          turnDeadline: null,
+          hasDrawnThisTurn: false,
+          sideTake: null,
+          forcedPileDraw: false,
+          roundEnded: true,
+          roundResult,
+          scores: newScores,
+        });
+        outcome.next = { ...data, roundEnded: true, roundResult, scores: newScores };
+        return;
+      }
+
       update[`racks.${actingUid}`] = newRack;
       update[`openedHands.${target.uid}`] = targetOpened;
       t.update(roomRef, update);
@@ -1013,6 +1052,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => { console.error('Okey101 işleme hatası:', err); outcome = null; });
 
     if (outcome?.success === false) showToast('Bu taş buraya uymuyor, ıstakana geri döndü.', 'red');
+    else if (outcome?.roundEnded) showToast('Elini taş atmadan işleyerek bitirdin!', 'emerald');
     else if (outcome?.success === true && outcome.wonOkey) {
       showToast(outcome.penalizedName ? `Okey'i kazandın! ${outcome.penalizedName} -101 ceza aldı.` : 'Okey\'i kazandın!', 'emerald');
     }
@@ -1087,7 +1127,6 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         hostUid={roomData.host}
         turnUid={roomData.turn}
         okeyInfo={okeyInfo}
-        myName={roomData.playerNames?.[user.uid] || 'Sen'}
       >
         <div className="flex items-center gap-2">
           <div

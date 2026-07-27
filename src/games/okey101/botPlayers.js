@@ -4,7 +4,11 @@
 
 export const OKEY_BOT_PREFIX = 'OKEY_BOT_';
 
-const BOT_DISPLAY_NAMES = ['Ayşe', 'Mehmet', 'Zeynep', 'Ali', 'Fatma', 'Can', 'Elif', 'Burak'];
+const BOT_DISPLAY_NAMES = [
+  'Ayşe', 'Mehmet', 'Zeynep', 'Ali', 'Fatma', 'Can', 'Elif', 'Burak',
+  'Deniz', 'Selin', 'Emre', 'Gizem', 'Kerem', 'Nazlı', 'Onur', 'Pınar',
+  'Serkan', 'Tuğçe', 'Umut', 'Yasemin', 'Hakan', 'İrem', 'Barış', 'Ceren',
+];
 
 export const BOT_DIFFICULTY_LABELS = { easy: 'Kolay', medium: 'Orta', hard: 'Zor' };
 
@@ -13,13 +17,25 @@ export function isBotUid(uid) {
 }
 
 // `count` adet, `startIndex`'ten devam eden benzersiz bot koltuğu üretir.
+//
+// İsimler LİSTEDEKİ SIRAYA göre değil, HER ÇAĞRIDA rastgele karıştırılıp
+// baştan seçilir. Eskiden isim = BOT_DISPLAY_NAMES[startIndex % 8] idi; host
+// tek başınayken (yani hemen her oyunda) startIndex hep aynı (1, 2, 3...)
+// olduğu için "Kalanı Botlarla Doldur" HER SEFERİNDE birebir aynı 3 ismi
+// (Mehmet, Zeynep, Ali) üretiyordu.
 export function createBotPlayers(count, startIndex, difficulty) {
   const label = BOT_DIFFICULTY_LABELS[difficulty] || difficulty;
+  const pool = [...BOT_DISPLAY_NAMES];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
   const bots = [];
   for (let i = 0; i < count; i++) {
     const idx = startIndex + i;
     const uid = `${OKEY_BOT_PREFIX}${idx}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-    const name = `Bot ${BOT_DISPLAY_NAMES[idx % BOT_DISPLAY_NAMES.length]} (${label})`;
+    const displayName = pool[i % pool.length];
+    const name = `Bot ${displayName} (${label})`;
     bots.push({ uid, name });
   }
   return bots;
