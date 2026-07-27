@@ -151,6 +151,51 @@ export function moveGroupBlockToSlot(row, tileIds, targetIndex) {
   return newRow;
 }
 
+// Oyuncunun ıstakayı düzenlemesi (sürükle-bırak) SADECE bir KONUM bilgisidir;
+// ıstakada HANGİ taşların bulunduğuna her zaman sunucudaki hâli karar verir.
+//
+// Bu ayrım kritik: eskiden düzenleme, tüm ıstaka dizisini olduğu gibi üzerine
+// yazıyordu. Oyuncu taşı çektikten hemen sonra (sunucudan gelen anlık güncelleme
+// daha ıstakaya işlenmeden) taşlarını düzenlerse, elindeki BAYAT dizi sunucuya
+// yazılıyor ve YENİ ÇEKİLEN TAŞ TAMAMEN KAYBOLUYORDU. Kaybolan taş yandan
+// alınmış bir taşsa (`sideTake`) oyuncu ne elini açabiliyor, ne taşı geri
+// koyabiliyor, ne de atabiliyordu — masa kalıcı olarak kilitleniyordu.
+export function mergeRackLayout(serverRack, desiredRack) {
+  const server = normalizeRack(serverRack);
+  const desired = normalizeRack(desiredRack);
+  const wantedIndex = new Map();
+  desired.forEach((tile, i) => { if (tile) wantedIndex.set(tile.id, i); });
+
+  const merged = Array(RACK_SLOTS).fill(null);
+  const leftovers = [];
+  server.forEach((tile, serverIdx) => {
+    if (!tile) return;
+    const idx = wantedIndex.get(tile.id);
+    if (idx !== undefined && merged[idx] === null) merged[idx] = tile;
+    else leftovers.push({ tile, serverIdx }); // istemcinin bilmediği (yeni çekilen) ya da çakışan taş
+  });
+  // Istemcinin hiç bilmediği taşlar (ör. az önce çekilen) önce SUNUCUDAKİ
+  // slotlarında tutulmaya çalışılır; orası da doluysa ilk boş slota konur.
+  leftovers.forEach(({ tile, serverIdx }) => {
+    if (merged[serverIdx] === null) { merged[serverIdx] = tile; return; }
+    const free = merged.findIndex((s) => s === null);
+    if (free !== -1) merged[free] = tile;
+  });
+  return merged;
+}
+
+// Perler (groups) de aynı şekilde sunucudaki taş kümesine göre budanır:
+// artık ıstakada olmayan taşlar gruptan düşer, 2'nin altına inen grup silinir.
+export function pruneGroups(groups, rack) {
+  const alive = new Set((rack || []).filter(Boolean).map((t) => t.id));
+  const next = {};
+  Object.entries(groups || {}).forEach(([gid, tileIds]) => {
+    const kept = (tileIds || []).filter((id) => alive.has(id));
+    if (kept.length >= 2) next[gid] = kept;
+  });
+  return next;
+}
+
 // Seçili taş id'lerinin rack üzerinde "yan yana" olup olmadığını doğrular.
 // Boş (null) slotlar taşlar arasında serbestçe atlanabilir (kaydırma fiziği
 // nedeniyle atma/açma sonrası aralarda boşluk kalması normaldir) — tek şart,

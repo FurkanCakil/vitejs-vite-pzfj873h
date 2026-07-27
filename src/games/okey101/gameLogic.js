@@ -48,38 +48,83 @@ function trySetAnalysis(normals, jokerCount) {
   return { number, total };
 }
 
-function trySeriAnalysis(normals, jokerCount) {
-  if (normals.length === 0) return null;
+// Bir seri için OLASI TÜM sayı pencerelerini (start..end) döndürür. Jokerler
+// (gerçek Okey) pencerede eksik kalan sayıları temsil eder.
+//
+// ÖNEMLİ: Eskiden bulunan İLK pencere döndürülüyordu; bu, jokerin ıstakadaki
+// GÖRSEL yerinden bağımsız olarak hep "mümkün olan en küçük başlangıcı"
+// seçtiği için ör. [10, 11, Okey] perinin 10-11-12 değil 9-10-11 sayılmasına
+// (ve dolayısıyla hem yanlış puanlanmasına hem de "düzgün dizilmemiş"
+// görünmesine) yol açıyordu. Artık tüm pencereler üretilir; hangisinin
+// kullanılacağına `pickSeriWindow` taşların GERÇEK SIRASINA bakarak karar verir.
+function seriWindows(normals, jokerCount) {
+  const out = [];
+  if (normals.length === 0) return out;
   const color = normals[0].color;
-  if (!normals.every((t) => t.color === color)) return null;
+  if (!normals.every((t) => t.color === color)) return out;
   const rawNumbers = normals.map((t) => t.number);
-  if (new Set(rawNumbers).size !== rawNumbers.length) return null; // aynı seride tekrar eden sayı olamaz
+  if (new Set(rawNumbers).size !== rawNumbers.length) return out; // aynı seride tekrar eden sayı olamaz
   const total = normals.length + jokerCount;
-  if (total < 3 || total > 13) return null;
+  if (total < 3 || total > 13) return out;
 
-  const tryWindow = (numbers) => {
+  const collect = (numbers) => {
+    if (new Set(numbers).size !== numbers.length) return;
     const sorted = [...numbers].sort((a, b) => a - b);
     const min = sorted[0]; const max = sorted[sorted.length - 1];
-    if (max - min + 1 > total) return null;
-    for (let start = max - total + 1; start <= min; start++) {
+    if (max - min + 1 > total) return;
+    // start >= 1: "0-1-2" gibi var olmayan bir seriye izin verilmez (eskiden
+    // Okey+1+2 böyle okunup 6 yerine 3 puan sayılıyordu).
+    // start <= 13: 14+ ile başlayan pencere zaten 1+ ile başlayanın aynısıdır.
+    for (let start = Math.max(1, max - total + 1); start <= Math.min(13, min); start++) {
       const end = start + total - 1;
-      if (sorted.every((n) => n >= start && n <= end)) return { start, end };
+      if (sorted.every((n) => n >= start && n <= end)) out.push({ color, start, end });
     }
-    return null;
   };
 
-  let win = tryWindow(rawNumbers);
-  if (win) return { color, start: win.start, end: win.end };
-
+  collect(rawNumbers);
   // 13'ten sonra 1 gelebilir: küçük sayıları (1-3) +13 kaydırıp 13 ile aynı pencereye sığıyor mu dene.
   if (rawNumbers.includes(13) || rawNumbers.some((n) => n <= 3)) {
-    const wrappedNumbers = rawNumbers.map((n) => (n <= 3 ? n + 13 : n));
-    if (new Set(wrappedNumbers).size === wrappedNumbers.length) {
-      win = tryWindow(wrappedNumbers);
-      if (win) return { color, start: win.start, end: win.end };
-    }
+    collect(rawNumbers.map((n) => (n <= 3 ? n + 13 : n)));
   }
-  return null;
+
+  const seen = new Set();
+  return out.filter((w) => {
+    const key = `${w.start}-${w.end}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function seriWindowValue(win) {
+  let value = 0;
+  for (let n = win.start; n <= win.end; n++) value += realNumber(n);
+  return value;
+}
+
+// Taşların GÖRSEL sırası bu pencereyle birebir uyuşuyor mu? (Jokerler her
+// pozisyonda kabul edilir; sadece gerçek taşların kendi pozisyonlarına denk
+// gelen sayıyı taşıyıp taşımadığına bakılır.)
+function windowMatchesOrder(tiles, win, okeyInfo) {
+  if (tiles.length !== win.end - win.start + 1) return false;
+  for (let i = 0; i < tiles.length; i++) {
+    const tile = tiles[i];
+    if (isOkeyTile(tile, okeyInfo)) continue;
+    if (effectiveTile(tile, okeyInfo).number !== realNumber(win.start + i)) return false;
+  }
+  return true;
+}
+
+// Bir seri için KULLANILACAK pencereyi seçer: önce taşların görsel sırasıyla
+// uyumlu olanlar, onların içinden (ya da hiçbiri uymuyorsa tümünün içinden)
+// en değerli olan.
+function pickSeriWindow(tiles, okeyInfo) {
+  const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
+  const windows = seriWindows(normals, jokerCount);
+  if (windows.length === 0) return null;
+  const inOrder = windows.filter((w) => windowMatchesOrder(tiles, w, okeyInfo));
+  const pool = inOrder.length > 0 ? inOrder : windows;
+  return pool.reduce((best, w) => (seriWindowValue(w) > seriWindowValue(best) ? w : best));
 }
 
 // Bir per'in (taş dizisinin) geçerli bir SET (farklı renk, aynı sayı) ya da
@@ -93,12 +138,8 @@ export function validateGroup(tiles, okeyInfo) {
   const setInfo = trySetAnalysis(normals, jokerCount);
   if (setInfo) return { valid: true, type: 'set', value: setInfo.total * setInfo.number };
 
-  const seriInfo = trySeriAnalysis(normals, jokerCount);
-  if (seriInfo) {
-    let value = 0;
-    for (let n = seriInfo.start; n <= seriInfo.end; n++) value += realNumber(n);
-    return { valid: true, type: 'seri', value };
-  }
+  const win = pickSeriWindow(tiles, okeyInfo);
+  if (win) return { valid: true, type: 'seri', value: seriWindowValue(win) };
 
   return { valid: false };
 }
@@ -113,14 +154,35 @@ export function validateGroup(tiles, okeyInfo) {
 export function isProperlyOrderedGroup(tiles, type, okeyInfo) {
   if (type !== 'seri' || !tiles || tiles.length < 3) return true;
   const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
-  const info = trySeriAnalysis(normals, jokerCount);
-  if (!info) return false;
-  for (let i = 0; i < tiles.length; i++) {
-    const tile = tiles[i];
-    if (isOkeyTile(tile, okeyInfo)) continue; // joker her pozisyonda kabul
-    if (effectiveTile(tile, okeyInfo).number !== realNumber(info.start + i)) return false;
+  return seriWindows(normals, jokerCount).some((w) => windowMatchesOrder(tiles, w, okeyInfo));
+}
+
+// Bir per'in taşlarını masaya konmadan önce DOĞRU sıraya dizer (sadece seri
+// için anlamlıdır; set'te sıra önemsizdir). Jokerler temsil ettikleri sayının
+// pozisyonuna yerleştirilir. Diziliş çözümlenemezse taşlar olduğu gibi döner.
+//
+// Masaya yazılan HER per bundan geçirilir: hem oyuncunun hem botun açtığı
+// perler ekranda her zaman "9-10-11-12" gibi doğru sırada görünür.
+export function orderGroupTiles(tiles, type, okeyInfo) {
+  if (type !== 'seri' || !tiles || tiles.length < 3) return tiles;
+  const win = pickSeriWindow(tiles, okeyInfo);
+  if (!win) return tiles;
+  if (windowMatchesOrder(tiles, win, okeyInfo)) return tiles;
+
+  const pool = [...tiles];
+  const slots = [];
+  for (let n = win.start; n <= win.end; n++) {
+    const want = realNumber(n);
+    const idx = pool.findIndex((t) => !isOkeyTile(t, okeyInfo) && effectiveTile(t, okeyInfo).number === want);
+    if (idx === -1) { slots.push(null); continue; }
+    slots.push(pool[idx]);
+    pool.splice(idx, 1);
   }
-  return true;
+  const jokers = pool.filter((t) => isOkeyTile(t, okeyInfo));
+  let jokerIdx = 0;
+  const filled = slots.map((t) => t ?? jokers[jokerIdx++]);
+  if (filled.length !== tiles.length || filled.some((t) => !t)) return tiles;
+  return filled;
 }
 
 // Birden fazla seçili per'in HEPSİNİN geçerli olup olmadığını kontrol eder.
@@ -166,27 +228,36 @@ export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo, 
 // sağına, 1'de başlayan bir serinin soluna taş eklenemez. (Zaten 12-13-1 gibi
 // sarmalı olarak AÇILMIŞ bir per geçerliliğini korur — burada kısıtlanan sadece
 // masadaki bir seriyi bu sınırın ötesine UZATMAKTIR.)
-function seriTackBoundaryOk(groupTiles, side, okeyInfo) {
-  const { jokerCount, normals } = splitTiles(groupTiles, okeyInfo);
-  const info = trySeriAnalysis(normals, jokerCount);
-  if (!info) return true; // analiz edilemiyorsa burada engelleme, validateGroup karar versin
-  const wanted = side === 'left' ? info.start - 1 : info.end + 1;
-  return wanted >= 1 && wanted <= 13;
-}
-
 export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
-  if (groupType === 'cift' || !groupTiles || groupTiles.length === 0) return { valid: false };
-  if (groupType === 'seri' && !seriTackBoundaryOk(groupTiles, side, okeyInfo)) return { valid: false };
-  const candidateOrdered = side === 'left' ? [newTile, ...groupTiles] : [...groupTiles, newTile];
-  let result = validateGroup(candidateOrdered, okeyInfo);
-  if (result.valid) return { valid: true, newTiles: candidateOrdered };
+  if (groupType === 'cift' || !groupTiles || groupTiles.length === 0 || !newTile) return { valid: false };
 
-  // Set'te sıra anlamsızdır; tek yönlü denemede geçersiz çıktıysa diğer ucu da dene.
-  if (groupType === 'set') {
-    const alt = side === 'left' ? [...groupTiles, newTile] : [newTile, ...groupTiles];
-    result = validateGroup(alt, okeyInfo);
-    if (result.valid) return { valid: true, newTiles: alt };
+  if (groupType === 'seri') {
+    const win = pickSeriWindow(groupTiles, okeyInfo);
+    if (!win) return { valid: false };
+    // Seri 13 -> 1 sınırını AŞAMAZ (13'te bitenin sağına, 1'de başlayanın soluna eklenemez).
+    const wanted = side === 'left' ? win.start - 1 : win.end + 1;
+    if (wanted < 1 || wanted > 13) return { valid: false };
+
+    // KRİTİK: Taş, o ucun beklediği TAM renk+sayı olmalı. Eskiden sadece
+    // `validateGroup` çağrılıyordu; o küme (set) temelli çalıştığı ve sırayı
+    // umursamadığı için 9-10-11 perinin SOLUNA 12 eklenmesini de kabul edip
+    // masaya "12-9-10-11" gibi bozuk diziler yazıyordu. Gerçek Okey (joker)
+    // her sayıyı temsil edebildiği için muaftır.
+    if (!isOkeyTile(newTile, okeyInfo)) {
+      const e = effectiveTile(newTile, okeyInfo);
+      if (e.color !== win.color || e.number !== realNumber(wanted)) return { valid: false };
+    }
+
+    const newTiles = side === 'left' ? [newTile, ...groupTiles] : [...groupTiles, newTile];
+    const result = validateGroup(newTiles, okeyInfo);
+    if (!result.valid || result.type !== 'seri') return { valid: false };
+    return { valid: true, newTiles };
   }
+
+  // SET: sıra anlamsızdır, taş sona eklenir (4. renk eksikse geçerli olur).
+  const newTiles = [...groupTiles, newTile];
+  const result = validateGroup(newTiles, okeyInfo);
+  if (result.valid && result.type === 'set') return { valid: true, newTiles };
   return { valid: false };
 }
 

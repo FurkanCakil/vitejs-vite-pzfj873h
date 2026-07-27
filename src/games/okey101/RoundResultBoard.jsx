@@ -7,6 +7,8 @@ import { Trophy, Crown, Bot as BotIcon, User, Layers } from 'lucide-react';
 export default function RoundResultBoard({ players, roundResult, scores, rules, teams, openedWithPairs, isHost, onStartNewRound }) {
   if (!roundResult) return null;
   const { winnerUid, wonByOkeyDiscard, foldMultiplier, perPlayer } = roundResult;
+  // Kapalı deste bitip el kimse bitiremeden sona erdiyse kazanan YOKTUR.
+  const noWinner = !winnerUid;
   const winnerName = players.find((p) => p.uid === winnerUid)?.name || '???';
   const isTeamMode = rules?.gameType === '2v2' && teams;
 
@@ -44,11 +46,17 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
     <div className="absolute inset-0 z-[4500] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 rounded-[2rem]">
       <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-5 sm:p-6">
         <div className="flex flex-col items-center mb-4 text-center">
-          <Trophy className="w-10 h-10 text-yellow-400 mb-2 drop-shadow" />
+          <Trophy className={`w-10 h-10 mb-2 drop-shadow ${noWinner ? 'text-slate-500' : 'text-yellow-400'}`} />
           <h3 className="text-xl font-bold text-white">Tur Sonucu</h3>
           <p className="text-sm text-slate-300 mt-1">
-            <span className="font-bold text-emerald-400">{winnerName}</span> elini bitirdi!
-            {wonByOkeyDiscard && <span className="block text-xs text-fuchsia-300 font-bold mt-1">Okey Atarak Bitirdi! (×2 Ceza Bonusu)</span>}
+            {noWinner ? (
+              <span className="font-bold text-slate-300">Kapalı deste bitti — el kimse bitiremeden sona erdi.</span>
+            ) : (
+              <>
+                <span className="font-bold text-emerald-400">{winnerName}</span> elini bitirdi!
+                {wonByOkeyDiscard && <span className="block text-xs text-fuchsia-300 font-bold mt-1">Okey Atarak Bitirdi! (×2 Ceza Bonusu)</span>}
+              </>
+            )}
           </p>
           {foldMultiplier > 1 && (
             <div className="flex items-center gap-1 mt-2 text-xs text-amber-300 font-bold bg-amber-500/10 px-2 py-1 rounded-full">

@@ -9,6 +9,8 @@ import { auth, db, appId } from './firebase/config.js';
 import { generateRoomCode } from './utils/roomCode.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 
+import useViewport from './hooks/useViewport.js';
+
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Lobby from './components/Lobby.jsx';
 import RoomHeader from './components/RoomHeader.jsx';
@@ -45,6 +47,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const isOnline = useOnlineStatus(); // Custom Hook'umuzu kullanıyoruz
+  const { isCompact } = useViewport();
   const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -554,11 +557,18 @@ export default function App() {
   // kritik; bu yüzden bu oyunda dış/iç boşluklar dar ekranda belirgin şekilde
   // kısılır (sm ve üstünde eski görünüm korunur).
   const isOkeyTable = roomData?.gameId === 'okey101' && currentView === 'room';
-  const pagePadding = isOkeyTable ? 'p-1.5 sm:p-4 md:p-8' : 'p-4 md:p-8';
-  const cardPadding = isOkeyTable ? 'p-1.5 sm:p-4 md:p-8' : 'p-4 md:p-8';
+  // Telefon YATAY (compact) modda 101 Okey MASASI tüm ekranı kullanır: dış/iç
+  // boşluklar ve üst başlık tamamen kaldırılır, sayfa hiç kaydırılmaz. Aksi
+  // halde ıstaka ekranın altından taşıyordu.
+  // Sadece oyun BAŞLADIĞINDA devreye girer — lobi/kural ekranı normal akışta
+  // kalmalı, yoksa sayfa kaydırılamadığı için alt kısmına ulaşılamaz.
+  const okeyCompact = isOkeyTable && isCompact && roomData?.status === 'playing';
+  const pagePadding = okeyCompact ? 'p-0' : (isOkeyTable ? 'p-1 sm:p-4 md:p-8' : 'p-4 md:p-8');
+  const cardPadding = okeyCompact ? 'p-0' : (isOkeyTable ? 'p-1 sm:p-4 md:p-8' : 'p-4 md:p-8');
+  const hideChrome = isFullscreen || okeyCompact;
 
   return (
-    <div className={`min-h-screen bg-slate-900 text-slate-100 font-sans relative ${pagePadding}`}>
+    <div className={`bg-slate-900 text-slate-100 font-sans relative overflow-x-hidden ${okeyCompact ? 'h-[100dvh] overflow-y-hidden' : 'min-h-screen'} ${pagePadding}`}>
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-center py-2 font-bold z-[100000] flex justify-center items-center gap-2 shadow-md">
           <WifiOff className="w-5 h-5" /> İnternet bağlantınız koptu. Yeniden bağlanılıyor...
@@ -585,7 +595,7 @@ export default function App() {
         </div>
       )}
 
-      {!isFullscreen && (
+      {!hideChrome && (
         <header className="max-w-5xl mx-auto flex items-center justify-between mb-4 md:mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
           <div className="flex items-center gap-3">
             <Gamepad2 className="w-8 h-8 text-indigo-400" />
@@ -598,14 +608,14 @@ export default function App() {
       {currentView === 'lobby' ? (
         <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} />
       ) : (
-        <main className="max-w-5xl mx-auto flex flex-col items-center">
-          {!isFullscreen && (
+        <main className={`max-w-5xl mx-auto flex flex-col items-center ${okeyCompact ? 'h-full w-full' : ''}`}>
+          {!hideChrome && (
             <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} />
           )}
 
           <div className={isFullscreen
-            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center ${isOkeyTable ? 'p-1 sm:p-3' : 'p-2 sm:p-4'}`
-            : `w-full bg-slate-800 rounded-2xl ${cardPadding} shadow-2xl border border-slate-700 flex flex-col items-center relative transition-all duration-300`}>
+            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 ${isCompact ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden flex flex-col items-center justify-center ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
+            : `w-full bg-slate-800 ${okeyCompact ? 'h-full rounded-none border-0' : 'rounded-2xl border border-slate-700 shadow-2xl'} ${cardPadding} flex flex-col items-center relative transition-all duration-300`}>
             {isFullscreen && (
                <>
                  <div className="fixed top-3 left-3 sm:top-6 sm:left-6 z-[6000] flex items-center gap-2 bg-slate-800/80 px-4 py-2 rounded-full border border-slate-600 shadow-lg backdrop-blur-md">
@@ -629,7 +639,7 @@ export default function App() {
                 {!isFullscreen && <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">{roomCode}</div>}
               </div>
             ) : (
-              <div className="w-full flex flex-col items-center">
+              <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''}`}>
                  <ErrorBoundary>
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
