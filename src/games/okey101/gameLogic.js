@@ -139,10 +139,14 @@ export function computeSelectedGroupsValue(results) {
   return results.reduce((sum, r) => sum + (r.valid ? r.value : 0), 0);
 }
 
-// Çift açma: seçili her per TAM 2 taş olmalı ve (Okey/Sahte Okey herhangi bir
-// taşın eşi sayılabilir) aynı renk+sayı çifti oluşturmalı; TAM 5 çift gerekir.
-export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo) {
-  if (selectedGroupIds.length !== 5) return { valid: false };
+// Çift açma / çift işleme: seçili her per TAM 2 taş olmalı ve (gerçek Okey
+// herhangi bir taşın eşi sayılabilir) aynı renk+sayı çifti oluşturmalı.
+//
+// `requireFive` true ise (İLK açılış) TAM 5 çift gerekir. false ise (zaten
+// açmış bir oyuncunun elindeki çiftleri masaya sürmesi — bkz. PAIR_* kuralları)
+// en az 1 çift yeterlidir.
+export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo, requireFive = true) {
+  if (requireFive ? selectedGroupIds.length !== 5 : selectedGroupIds.length < 1) return { valid: false };
   for (const gid of selectedGroupIds) {
     const tileIds = groupsMap[gid] || [];
     if (tileIds.length !== 2) return { valid: false };
@@ -158,8 +162,21 @@ export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo) 
 
 // Masadaki açık bir per/seriye (cift HARİÇ) tek bir taş eklemenin (işleme/tacking)
 // diziyi bozup bozmadığını kontrol eder. Geçerliyse yeni taş dizisini döndürür.
+// İŞLEME sırasında bir seri 13 -> 1 sınırını AŞAMAZ: 13'te biten bir serinin
+// sağına, 1'de başlayan bir serinin soluna taş eklenemez. (Zaten 12-13-1 gibi
+// sarmalı olarak AÇILMIŞ bir per geçerliliğini korur — burada kısıtlanan sadece
+// masadaki bir seriyi bu sınırın ötesine UZATMAKTIR.)
+function seriTackBoundaryOk(groupTiles, side, okeyInfo) {
+  const { jokerCount, normals } = splitTiles(groupTiles, okeyInfo);
+  const info = trySeriAnalysis(normals, jokerCount);
+  if (!info) return true; // analiz edilemiyorsa burada engelleme, validateGroup karar versin
+  const wanted = side === 'left' ? info.start - 1 : info.end + 1;
+  return wanted >= 1 && wanted <= 13;
+}
+
 export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
   if (groupType === 'cift' || !groupTiles || groupTiles.length === 0) return { valid: false };
+  if (groupType === 'seri' && !seriTackBoundaryOk(groupTiles, side, okeyInfo)) return { valid: false };
   const candidateOrdered = side === 'left' ? [newTile, ...groupTiles] : [...groupTiles, newTile];
   let result = validateGroup(candidateOrdered, okeyInfo);
   if (result.valid) return { valid: true, newTiles: candidateOrdered };
@@ -171,6 +188,62 @@ export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
     if (result.valid) return { valid: true, newTiles: alt };
   }
   return { valid: false };
+}
+
+// Masadaki açık bir per'in HANGİ uçlarına hâlâ taş eklenebileceğini söyler.
+// Per'in yanında gösterilen "bir taşlık kesik çizgili boş yer" (işleme alanı)
+// tam olarak buna göre çizilir:
+//   - Çift (cift): hiçbir uç açık değildir (çifte tek taş işlenmez).
+//   - Set: sıra anlamsız olduğu için tek bir boşluk yeter (4. renk eksikse).
+//   - Seri: 1..13 arası HER olası taş, gerçek `canTackTile` doğrulayıcısıyla
+//     her iki uçta denenir. Böylece ekranda görünen boşluk, gerçekten bir taş
+//     kabul edecek uçlarla BİREBİR aynı olur (ör. seri 1'de başlıyorsa solda,
+//     13'te bitiyorsa sağda boşluk gösterilmez).
+export function getGroupOpenEnds(tiles, type, okeyInfo) {
+  const closed = { left: false, right: false };
+  if (!tiles || tiles.length === 0 || type === 'cift') return closed;
+  if (type === 'set') return { left: false, right: tiles.length < 4 };
+
+  // Serinin rengi: gerçek Okey (joker) taşları serinin renginden farklı bir
+  // renge sahip olabileceği için onlar atlanır; Sahte Okey zaten temsil ettiği
+  // (yani serinin) rengiyle değerlendirilir.
+  const anchor = tiles.find((t) => t && !isOkeyTile(t, okeyInfo));
+  const color = anchor ? effectiveTile(anchor, okeyInfo).color : null;
+  if (!color) return closed;
+
+  const ends = { left: false, right: false };
+  for (let number = 1; number <= 13; number++) {
+    if (ends.left && ends.right) break;
+    const probe = { id: '__probe__', color, number, isJoker: false };
+    if (!ends.left && canTackTile(tiles, type, probe, 'left', okeyInfo).valid) ends.left = true;
+    if (!ends.right && canTackTile(tiles, type, probe, 'right', okeyInfo).valid) ends.right = true;
+  }
+  return ends;
+}
+
+// ============================================================
+// Çift açma kuralları (bkz. 5. madde)
+// ============================================================
+// - Henüz elini açmamış oyuncu: TAM 5 çift ile açabilir (101 aranmaz).
+// - ÇİFT ile açmış oyuncu: artık seri/set (per) açamaz; sadece elinde kalan
+//   çiftleri masaya sürebilir ve tek tek taş işleyebilir (tacking).
+// - SERİ/SET ile açmış oyuncu: elindeki çiftleri ancak masada ÇİFT ile açmış
+//   (kendisi dışında ya da dahil, fark etmez) en az bir oyuncu varsa sürebilir.
+export function anyPairsOnTable(openedWithPairs) {
+  return Object.values(openedWithPairs || {}).some(Boolean);
+}
+
+// Bu oyuncu ŞU AN masaya çift sürebilir mi? (İlk açılış dahil.)
+export function canPlayerLayPairs(uid, hasOpened, openedWithPairs) {
+  if (!hasOpened?.[uid]) return true;              // ilk açılış: 5 çift ile açabilir
+  if (openedWithPairs?.[uid]) return true;         // çift açan: kalan çiftlerini sürebilir
+  return anyPairsOnTable(openedWithPairs);         // seri açan: ancak biri çift açtıysa
+}
+
+// Bu oyuncu masaya yeni bir SERİ/SET (per) sürebilir mi?
+// Çift ile açmış oyuncu ASLA per açamaz/işleyemez.
+export function canPlayerLayMelds(uid, openedWithPairs) {
+  return !openedWithPairs?.[uid];
 }
 
 // Bir taşın "işlek" olup olmadığını kontrol eder: masadaki (herhangi bir
@@ -197,6 +270,9 @@ export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
 // ============================================================
 export const NON_OPENER_PENALTY = PENALTY_POINTS * 2; // 202 — elini açamayan oyuncu
 
+// ÇİFT ile açan oyuncunun tur sonunda elinde kalan taşlara uygulanan ceza katı.
+export const PAIRS_OPENER_PENALTY_MULTIPLIER = 2;
+
 // Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. Sadece gerçek
 // Okey (joker) 101 sayı kabul edilir; Sahte Okey dahil diğer tüm taşlar kendi
 // (Sahte Okey için: temsil ettiği) yüz değeriyle sayılır.
@@ -213,7 +289,7 @@ export function computeRemainingTilesPenalty(rack, okeyInfo) {
 // (Eşli modda) takım havuzlamasını hesaplar. `roomData.scores` zaten anlık
 // (yandan-alma/açamama gibi) cezaları içerdiği için, o anlık cezaları
 // roundStartScores'a göre ayrıştırıp tablo için ayrıca raporluyoruz.
-export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard) {
+export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, openedWithPairs, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard) {
   const baseDelta = {};
   players.forEach((uid) => {
     if (uid === winnerUid) {
@@ -223,7 +299,10 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
     if (!hasOpened?.[uid]) {
       baseDelta[uid] = NON_OPENER_PENALTY;
     } else {
-      baseDelta[uid] = computeRemainingTilesPenalty(racks?.[uid], okeyInfo);
+      // ÇİFT ile açan oyuncu, elinde kalan taşların İKİ KATI ceza yazar;
+      // Seri/Set ile açan taşların kendi değeri kadar ceza yazar (5. madde).
+      const remaining = computeRemainingTilesPenalty(racks?.[uid], okeyInfo);
+      baseDelta[uid] = openedWithPairs?.[uid] ? remaining * PAIRS_OPENER_PENALTY_MULTIPLIER : remaining;
     }
   });
 

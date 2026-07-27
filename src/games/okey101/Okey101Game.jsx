@@ -7,18 +7,19 @@ import OpponentStrip from './OpponentStrip.jsx';
 import SetupCountdown from './SetupCountdown.jsx';
 import RoundResultBoard from './RoundResultBoard.jsx';
 import Tile, { TileBack } from './Tile.jsx';
+import useDrawDrag from './useDrawDrag.js';
 import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
-  validatePairs, canTackTile, isTileTackable, computeRoundEnd, OPEN_THRESHOLD, PENALTY_POINTS,
-  SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
+  validatePairs, canTackTile, isTileTackable, computeRoundEnd, getGroupOpenEnds,
+  anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds,
+  OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
 import {
   randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from './botAI.js';
 
-const OPENED_TYPE_LABELS = { seri: 'Seri', set: 'Set', cift: 'Çift' };
 const TURN_DURATION_MS = 30000;
 // Bir bot turu bu süreyi aşarsa (ağ/transaction asılması) yeni bir deneme
 // kilidi devralabilir. Normal bir tur artık ~3-6sn sürüyor.
@@ -97,51 +98,43 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     return () => clearInterval(interval);
   }, [roomData.setupPhase, roomData.turnDeadline]);
 
-  // Ortadaki kapalı desteden SÜRÜKLEYEREK de çekilebilsin diye (sadece
-  // tıklama değil) bir pointer-sürükleme: hareket olmadan bırakılırsa (klasik
-  // tık) ilk boş slota, sürüklenip ıstakadaki BELİRLİ bir slotun üzerinde
-  // bırakılırsa (varsa boşsa) TAM O SLOTA çeker. Sürüklerken taş-renginde
-  // (kapalı/bilinmeyen yüzlü) bir "ghost" gösterilir ve ıstakaya yaklaşırken
-  // büyür; bırakılınca çekilen taş o noktada kısaca dönerek (flip) açığa çıkar.
-  const pileDragRef = useRef(null);
-  const pileGhostGrowTimerRef = useRef(null);
-  const [pileGhostPos, setPileGhostPos] = useState(null);
-  const [pileGhostGrown, setPileGhostGrown] = useState(false);
-  const [pileReveal, setPileReveal] = useState(null); // { x, y, tile, key }
+  // Çekilen taş, Firestore turu tamamlanmadan ÖNCE bırakıldığı slotta gösterilir.
+  // Hangi taşın geleceğini istemci zaten bilir (deste ve atılan taşlar herkese
+  // açık veridir), bu yüzden sunucu gidiş-dönüşünü beklemek gereksiz bir gecikme
+  // (ve oyuncunun 30sn'lik süresinden yeme) yaratıyordu. Taş slotta kısa bir
+  // "flip" ile açılır; imleçte ayrıca yüzen bir kopya GÖSTERİLMEZ (eskiden
+  // slottaki taşla üst üste biniyordu).
+  const [pendingDraw, setPendingDraw] = useState(null); // { tile, index }
+  const [drawFlipId, setDrawFlipId] = useState(null);
+  const drawFlipTimerRef = useRef(null);
+  const pendingDrawTimerRef = useRef(null);
+  useEffect(() => () => {
+    if (drawFlipTimerRef.current) clearTimeout(drawFlipTimerRef.current);
+    if (pendingDrawTimerRef.current) clearTimeout(pendingDrawTimerRef.current);
+  }, []);
 
-  const handlePileDrawPointerDown = (e) => {
-    if (!mustDraw) return;
-    pileDragRef.current = { moved: false, targetIndex: null };
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-  };
-  const handlePileDrawPointerMove = (e) => {
-    const d = pileDragRef.current;
-    if (!d) return;
-    if (!d.moved) {
-      d.moved = true;
-      pileGhostGrowTimerRef.current = setTimeout(() => setPileGhostGrown(true), 120);
-    }
-    setPileGhostPos({ x: e.clientX, y: e.clientY });
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const slotEl = el?.closest('[data-slot-index]');
-    d.targetIndex = slotEl ? Number(slotEl.dataset.slotIndex) : null;
-  };
-  const handlePileDrawPointerUp = async (e) => {
-    const d = pileDragRef.current;
-    pileDragRef.current = null;
-    if (pileGhostGrowTimerRef.current) { clearTimeout(pileGhostGrowTimerRef.current); pileGhostGrowTimerRef.current = null; }
-    const dropX = pileGhostPos?.x ?? e.clientX;
-    const dropY = pileGhostPos?.y ?? e.clientY;
-    setPileGhostPos(null);
-    setPileGhostGrown(false);
-    if (!d) return;
-    const result = await handleDrawPile(undefined, d.targetIndex);
-    if (result?.success && result.tile) {
-      const revealKey = Date.now();
-      setPileReveal({ x: dropX, y: dropY, tile: result.tile, key: revealKey });
-      setTimeout(() => setPileReveal((cur) => (cur?.key === revealKey ? null : cur)), 650);
-    }
-  };
+  // Sunucu gerçek ıstakayı yazınca iyimser gösterim kendiliğinden düşer.
+  useEffect(() => {
+    if (!pendingDraw) return;
+    const myRackNow = roomData.racks?.[user.uid] || [];
+    if (myRackNow.some((t) => t && t.id === pendingDraw.tile.id)) setPendingDraw(null);
+  }, [roomData.racks, pendingDraw, user.uid]);
+
+  // ---- Çekme etkileşimi (deste + soldan gelen taş, ikisi de sürüklenebilir) ----
+  // NOT: Hook'lar aşağıdaki erken return'lerden ÖNCE çağrılmak zorunda olduğu
+  // için gereken durumlar burada ham `roomData`'dan türetiliyor.
+  const amPlayer = (roomData.players || []).includes(user.uid);
+  const canDrawNow = roomData.status === 'playing' && !!roomData.racks && !roomData.setupPhase
+    && !roomData.roundEnded && roomData.turn === user.uid && !roomData.hasDrawnThisTurn && amPlayer;
+  const prevSeatUid = getPrevTurnUid(roomData.players || [], user.uid);
+  const incomingTile = prevSeatUid
+    ? ((roomData.discardPiles?.[prevSeatUid] || []).slice(-1)[0] || null)
+    : null;
+  const canTakeIncomingNow = canDrawNow && !roomData.forcedPileDraw && !!incomingTile;
+
+  const performDrawRef = useRef(null);
+  const pileDrag = useDrawDrag({ enabled: canDrawNow, onDraw: (idx) => performDrawRef.current?.('pile', idx) });
+  const incomingDrag = useDrawDrag({ enabled: canTakeIncomingNow, onDraw: (idx) => performDrawRef.current?.('discard', idx) });
 
   // Oyun 'playing' fazına yeni geçtiyse (henüz taş dağıtılmamışsa) host taşları dağıtır,
   // Göstergeyi belirler (ve ondan Okey'i türetir), 15sn hazırlık fazını başlatır ve
@@ -152,10 +145,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const players = seatOrderedPlayers(roomData.players || [], roomData.rules, roomData.teams);
     const { racks, drawPile, indicator } = dealTiles(players);
     const okey = computeOkeyInfo(indicator);
-    const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {};
-    players.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; });
+    const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {}; const openedWithPairs = {};
+    players.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; openedWithPairs[uid] = false; });
     updateDoc(roomRef, {
-      players, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
+      players, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened, openedWithPairs,
       setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
       turn: players[0] || null, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
@@ -245,20 +238,37 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           const okeyNow = data.okey || null;
           const rackNow = (data.racks?.[turnUid] || []).filter(Boolean);
           const alreadyOpened = !!data.hasOpened?.[turnUid];
-          let result = null;
+          const apply2 = (r) => { if (r?.success && r.next) data = r.next; };
+
           if (!alreadyOpened) {
             const pairs = pickBotPairs(rackNow, okeyNow);
-            if (pairs.length === 5) result = await handleBotOpenMelds(turnUid, pairs, true);
-            else {
-              const melds = pickBotMelds(rackNow, okeyNow);
-              const total = melds.reduce((s, m) => s + m.value, 0);
-              if (melds.length > 0 && total >= OPEN_THRESHOLD) result = await handleBotOpenMelds(turnUid, melds, false);
-            }
-          } else {
+            if (pairs.length === 5) { apply2(await handleBotOpenMelds(turnUid, pairs, true)); return; }
             const melds = pickBotMelds(rackNow, okeyNow);
-            if (melds.length > 0) result = await handleBotOpenMelds(turnUid, melds, false);
+            const total = melds.reduce((s, m) => s + m.value, 0);
+            if (melds.length > 0 && total >= OPEN_THRESHOLD) apply2(await handleBotOpenMelds(turnUid, melds, false));
+            return;
           }
-          if (result?.success && result.next) data = result.next;
+
+          // Çift ile açan bot artık per (seri/set) süremez; sadece elinde kalan
+          // çiftleri masaya sürer (5. madde).
+          if (data.openedWithPairs?.[turnUid]) {
+            const pairs = pickBotPairs(rackNow, okeyNow);
+            if (pairs.length > 0) apply2(await handleBotOpenMelds(turnUid, pairs, true));
+            return;
+          }
+
+          // Seri/Set ile açan bot: perlerini sürer; ayrıca masada çift açan
+          // biri varsa elindeki çiftleri de işleyebilir.
+          const melds = pickBotMelds(rackNow, okeyNow);
+          if (melds.length > 0) apply2(await handleBotOpenMelds(turnUid, melds, false));
+          if (anyPairsOnTable(data.openedWithPairs)) {
+            const rackAfter = (data.racks?.[turnUid] || []).filter(Boolean);
+            const pairs = pickBotPairs(rackAfter, okeyNow);
+            // Atacak taş kalsın diye tüm eli çift olarak masaya sürmez.
+            if (pairs.length > 0 && rackAfter.length - pairs.length * 2 >= 1) {
+              apply2(await handleBotOpenMelds(turnUid, pairs, true));
+            }
+          }
         };
 
         const pendingSideTake = data.sideTake?.uid === turnUid && !data.hasOpened?.[turnUid];
@@ -482,7 +492,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // kural — bir "Ceza Kuralı" ayarına bağlı DEĞİLDİR). Ceza, ancak açma
   // başarılı olduğunda (bkz. handleOpenSeries/handleOpenPairs/
   // handleBotOpenMelds) taşı atan kişiye yazılır.
-  const handleDrawDiscard = async (explicitUid) => {
+  const handleDrawDiscard = async (explicitUid, targetIndex = null) => {
     const actingUid = explicitUid || user.uid;
     const fromUid = actingUid === user.uid ? prevUid : getPrevTurnUid(roomData.players || [], actingUid);
     if (!explicitUid && (!mustDraw || roomData.forcedPileDraw)) return { success: false };
@@ -498,7 +508,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (pile.length === 0) return;
       const drawn = pile.pop();
       const rack = [...(data.racks?.[actingUid] || [])];
-      const emptyIdx = rack.findIndex((s) => s === null);
+      const hasTarget = targetIndex !== null && targetIndex !== undefined && rack[targetIndex] === null;
+      const emptyIdx = hasTarget ? targetIndex : rack.findIndex((s) => s === null);
       if (emptyIdx === -1) return;
       rack[emptyIdx] = drawn;
       const update = { [`discardPiles.${fromUid}`]: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true };
@@ -521,6 +532,39 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => { console.error('Okey101 yerden çekme hatası:', err); outcome = { success: false }; });
     return outcome;
   };
+
+  // Insan oyuncunun çekme akışı (hem kapalı deste hem soldan gelen taş için).
+  // Taş, sunucu cevabı BEKLENMEDEN hedef slotta gösterilir; hangi taşın
+  // geleceğini istemci zaten bilir. Işlem başarısız olursa iyimser gösterim
+  // hemen geri alınır.
+  const performDraw = async (source, targetIndex) => {
+    if (!mustDraw) return;
+    const rackNow = roomData.racks?.[user.uid] || [];
+    const known = source === 'pile'
+      ? ((roomData.drawPile || []).slice(-1)[0] || null)
+      : incomingTile;
+    const wantedIdx = (targetIndex !== null && targetIndex !== undefined && rackNow[targetIndex] === null)
+      ? targetIndex
+      : rackNow.findIndex((s) => s === null);
+
+    if (known && wantedIdx !== -1) {
+      setPendingDraw({ tile: known, index: wantedIdx });
+      setDrawFlipId(known.id);
+      if (drawFlipTimerRef.current) clearTimeout(drawFlipTimerRef.current);
+      drawFlipTimerRef.current = setTimeout(() => setDrawFlipId(null), 220);
+      // Emniyet: sunucu beklenenden farklı bir taş yazarsa iyimser gösterim
+      // sonsuza dek asılı kalmasın.
+      if (pendingDrawTimerRef.current) clearTimeout(pendingDrawTimerRef.current);
+      pendingDrawTimerRef.current = setTimeout(() => setPendingDraw(null), 2500);
+    }
+
+    const result = source === 'pile'
+      ? await handleDrawPile(undefined, targetIndex)
+      : await handleDrawDiscard(undefined, targetIndex);
+    if (!result?.success) { setPendingDraw(null); setDrawFlipId(null); }
+    return result;
+  };
+  performDrawRef.current = performDraw;
 
   // "Taşı Geri Koy / İptal": yandan aldığı taşla elini açamayan oyuncu, taşı
   // sahibinin atış yığınına geri koyar ve bu tur artık SADECE ortadaki kapalı
@@ -597,6 +641,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           scores: data.scores || {},
           roundStartScores: data.roundStartScores || {},
           hasOpened: data.hasOpened || {},
+          openedWithPairs: data.openedWithPairs || {},
           racks: { ...(data.racks || {}), [actingUid]: rack },
           rules: data.rules || {},
           teams: data.teams || null,
@@ -624,8 +669,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // İşlek (masadaki -kendisinin ya da rakibinin- bir seri/set'e tam
       // oturan) ya da Okey bir taş atılırsa, atan oyuncuya -101 ceza yazılır
       // (tur/eli bitiren atışlar hariç — o puanlama computeRoundEnd'de ayrı
-      // ele alınıyor, üstüne ayrıca bu ceza eklenmez).
-      const carelessDiscard = isTileTackable(tile, data.openedHands || {}, okeyNow);
+      // ele alınıyor, üstüne ayrıca bu ceza eklenmez). İkisi AYRI durumlardır
+      // ve oyuncuya da ayrı ayrı bildirilir.
+      const discardedOkey = isOkeyTile(tile, okeyNow);
+      const discardedTackable = !discardedOkey && isTileTackable(tile, data.openedHands || {}, okeyNow);
+      const carelessDiscard = discardedOkey || discardedTackable;
       const update = {
         [`racks.${actingUid}`]: rack,
         [`groups.${actingUid}`]: actorGroupsNext,
@@ -639,13 +687,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (carelessDiscard) {
         update[`scores.${actingUid}`] = (data.scores?.[actingUid] || 0) - PENALTY_POINTS;
       }
-      outcome = { success: true, carelessDiscard };
+      outcome = { success: true, carelessDiscard, discardedOkey, discardedTackable };
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 atma hatası:', err); outcome = null; });
 
-    if (outcome?.carelessDiscard) {
-      showToast('İşlek ya da Okey bir taş attın! -101 ceza aldın.', 'red');
-    }
+    if (outcome?.discardedOkey) showToast('Okey attın! -101 ceza aldın.', 'red');
+    else if (outcome?.discardedTackable) showToast('İşlek taş attın! -101 ceza aldın.', 'red');
     return outcome;
   };
 
@@ -659,6 +706,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.turn !== user.uid || !data.hasDrawnThisTurn) return;
+
+      // ÇİFT ile açan oyuncu artık masaya seri/set (per) süremez — sadece
+      // kalan çiftlerini sürebilir ve tek tek taş işleyebilir (5. madde).
+      if (!canPlayerLayMelds(user.uid, data.openedWithPairs)) {
+        outcome = { success: false, reason: 'pairs-opener' };
+        return;
+      }
 
       const myRackNow = data.racks?.[user.uid] || [];
       const myGroupsNow = { ...(data.groups?.[user.uid] || {}) };
@@ -712,7 +766,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 seri açma hatası:', err); outcome = null; });
 
-    if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
+    if (outcome?.reason === 'pairs-opener') showToast('Çift açtığın için per (seri/set) açamazsın. Sadece çift sürebilir ve tek tek taş işleyebilirsin.', 'red');
+    else if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
     else if (outcome?.reason === 'below101') showToast('101\'e Ulaşamadınız! Ceza Yediniz.', 'red');
     else if (outcome?.success === true) {
       showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
@@ -720,8 +775,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     return outcome;
   };
 
-  // "Çift Aç": tam 5 çift gerekir (Okey/Sahte Okey herhangi bir taşın eşi olabilir),
-  // 101 toplamı ARANMAZ. Sadece ilk açılış hamlesi olarak kullanılabilir.
+  // "Çift Aç" / "Çift İşle" (5. madde):
+  //   - Henüz açmamış oyuncu: TAM 5 çift ile açar (101 toplamı ARANMAZ) ve
+  //     `openedWithPairs` olarak işaretlenir (tur sonunda 2 kat ceza yer).
+  //   - ÇİFT ile açmış oyuncu: kalan çiftlerini (1+) masaya sürebilir.
+  //   - SERİ/SET ile açmış oyuncu: elindeki çiftleri ANCAK masada çift açmış
+  //     bir oyuncu varsa sürebilir; bu onu "çift açan" yapmaz (cezası değişmez).
   const handleOpenPairs = async (selectedGroupIds) => {
     if (!mustDiscard || selectedGroupIds.length === 0) return;
     let outcome = null;
@@ -730,7 +789,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.turn !== user.uid || !data.hasDrawnThisTurn) return;
-      if (data.hasOpened?.[user.uid]) { outcome = { success: false, reason: 'already-opened' }; return; }
+
+      const alreadyOpened = !!data.hasOpened?.[user.uid];
+      if (!canPlayerLayPairs(user.uid, data.hasOpened, data.openedWithPairs)) {
+        outcome = { success: false, reason: 'no-pairs-on-table' };
+        return;
+      }
 
       const myRackNow = data.racks?.[user.uid] || [];
       const myGroupsNow = { ...(data.groups?.[user.uid] || {}) };
@@ -738,8 +802,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const validGroupIds = selectedGroupIds.filter((gid) => myGroupsNow[gid]);
 
       const okeyNow = data.okey || null;
-      const { valid } = validatePairs(myGroupsNow, tilesById, validGroupIds, okeyNow);
-      if (!valid) { outcome = { success: false, reason: 'invalid' }; return; }
+      // İlk açılışta TAM 5 çift şart; sonraki turlarda 1+ çift yeterlidir.
+      const { valid } = validatePairs(myGroupsNow, tilesById, validGroupIds, okeyNow, !alreadyOpened);
+      if (!valid) { outcome = { success: false, reason: alreadyOpened ? 'invalid-pair' : 'invalid' }; return; }
 
       const newRack = [...myRackNow];
       const openedNow = [];
@@ -760,6 +825,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
       };
+      // Sadece İLK açılışını çiftle yapan oyuncu "çift açan" sayılır.
+      if (!alreadyOpened) update[`openedWithPairs.${user.uid}`] = true;
+
       // Çift ile açma: çekilen taşın değerinin 20 katı ceza.
       const st = data.sideTake;
       let penalizedName = null; let penaltyAmount = 0;
@@ -770,14 +838,16 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
       }
 
-      outcome = { success: true, penalizedName, penaltyAmount };
+      outcome = { success: true, alreadyOpened, count: validGroupIds.length, penalizedName, penaltyAmount };
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 çift açma hatası:', err); outcome = null; });
 
-    if (outcome?.reason === 'already-opened') showToast('Zaten elini açtın.', 'red');
-    else if (outcome?.reason === 'invalid') showToast('Geçersiz Çift Seçimi! Tam olarak 5 çift gerekli.', 'red');
+    if (outcome?.reason === 'no-pairs-on-table') showToast('Elindeki çiftleri ancak masada çift açan bir oyuncu varsa işleyebilirsin.', 'red');
+    else if (outcome?.reason === 'invalid') showToast('Geçersiz Çift Seçimi! Açılış için tam olarak 5 çift gerekli.', 'red');
+    else if (outcome?.reason === 'invalid-pair') showToast('Geçersiz çift! Her per tam 2 taş ve aynı renk+sayı olmalı.', 'red');
     else if (outcome?.success === true) {
-      showToast(outcome.penalizedName ? `5 çift başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : '5 çift başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
+      const base = outcome.alreadyOpened ? `${outcome.count} çift masaya sürüldü!` : '5 çift başarıyla açıldı!';
+      showToast(outcome.penalizedName ? `${base} ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : base, outcome.penalizedName ? 'amber' : 'emerald');
     }
     return outcome;
   };
@@ -796,7 +866,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (data.setupPhase || data.turn !== actingUid || !data.hasDrawnThisTurn) return;
 
       const alreadyOpened = !!data.hasOpened?.[actingUid];
-      if (isPairs && alreadyOpened) { outcome = { success: false, reason: 'already-opened' }; return; }
+      // Botlar da insanla AYNI çift kurallarına tabidir (5. madde).
+      if (isPairs && !canPlayerLayPairs(actingUid, data.hasOpened, data.openedWithPairs)) { outcome = { success: false }; return; }
+      if (!isPairs && !canPlayerLayMelds(actingUid, data.openedWithPairs)) { outcome = { success: false }; return; }
 
       const actorRackNow = [...(data.racks?.[actingUid] || [])];
       const okeyNow = data.okey || null;
@@ -811,7 +883,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           total += result.value;
         }
       }
-      if (isPairs && melds.length !== 5) { outcome = { success: false }; return; }
+      if (isPairs && !alreadyOpened && melds.length !== 5) { outcome = { success: false }; return; }
       if (!isPairs && !alreadyOpened && total < OPEN_THRESHOLD) { outcome = { success: false }; return; }
 
       const openedNow = [];
@@ -823,11 +895,16 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         });
       }
       const existingOpened = data.openedHands?.[actingUid] || [];
+      const nextOpenedWithPairs = { ...(data.openedWithPairs || {}) };
       const update = {
         [`racks.${actingUid}`]: actorRackNow,
         [`openedHands.${actingUid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${actingUid}`]: true,
       };
+      if (isPairs && !alreadyOpened) {
+        nextOpenedWithPairs[actingUid] = true;
+        update[`openedWithPairs.${actingUid}`] = true;
+      }
       const st = data.sideTake;
       let penalizedName = null; let penaltyAmount = 0;
       const nextScores = { ...(data.scores || {}) };
@@ -849,6 +926,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           racks: { ...(data.racks || {}), [actingUid]: actorRackNow },
           openedHands: { ...(data.openedHands || {}), [actingUid]: [...existingOpened, ...openedNow] },
           hasOpened: { ...(data.hasOpened || {}), [actingUid]: true },
+          openedWithPairs: nextOpenedWithPairs,
           scores: nextScores,
           sideTake: penalizedName ? null : (data.sideTake ?? null),
         },
@@ -955,10 +1033,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const roundPlayers = seatOrderedPlayers(data.players || [], data.rules, data.teams);
       const { racks, drawPile, indicator } = dealTiles(roundPlayers);
       const okey = computeOkeyInfo(indicator);
-      const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {};
-      roundPlayers.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; });
+      const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {}; const openedWithPairs = {};
+      roundPlayers.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; openedWithPairs[uid] = false; });
       t.update(roomRef, {
-        players: roundPlayers, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened,
+        players: roundPlayers, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened, openedWithPairs,
         setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
         turn: roundPlayers[0] || null, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
@@ -966,13 +1044,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => console.error('Okey101 yeni tur hatası:', err));
   };
 
+
   const toastColors = { red: 'bg-red-500/95 border-red-400', amber: 'bg-amber-500/95 border-amber-400', emerald: 'bg-emerald-500/95 border-emerald-400' };
   const canTackNow = isPlayer && mustDiscard && myHasOpened;
 
+  // 5. madde kuralları — arayüz butonlarının açık/kapalı olmasını belirler.
+  const iOpenedWithPairs = !!roomData.openedWithPairs?.[user.uid];
+  const pairsExistOnTable = anyPairsOnTable(roomData.openedWithPairs);
+  const myCanLayPairs = canPlayerLayPairs(user.uid, roomData.hasOpened, roomData.openedWithPairs);
+  const myCanLayMelds = canPlayerLayMelds(user.uid, roomData.openedWithPairs);
+  const pairsButtonLabel = myHasOpened ? 'Çift İşle' : 'Çift Aç';
+
+  const hasAnyOpenedHand = Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0);
+
   return (
-    <div className="w-full max-w-4xl flex flex-col items-center gap-3 relative">
+    <div className={`w-full flex flex-col items-center gap-2 sm:gap-3 relative ${isFullscreenView ? 'max-w-[1500px]' : 'max-w-4xl'}`}>
       {toast && (
-        <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-[5000] text-white px-6 py-3 rounded-xl shadow-2xl font-bold border text-center max-w-sm ${toastColors[toast.tone] || toastColors.red}`}>
+        <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[5000] text-white px-4 py-2.5 sm:px-6 sm:py-3 rounded-xl shadow-2xl font-bold border text-center text-xs sm:text-sm w-[92%] max-w-sm ${toastColors[toast.tone] || toastColors.red}`}>
           {toast.msg}
         </div>
       )}
@@ -984,6 +1072,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           scores={roomData.scores}
           rules={roomData.rules}
           teams={roomData.teams}
+          openedWithPairs={roomData.openedWithPairs}
           isHost={isHost}
           onStartNewRound={handleStartNewRound}
         />
@@ -997,30 +1086,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         rightSeat={rightSeat}
         hostUid={roomData.host}
         turnUid={roomData.turn}
-        takeableUid={mustDraw && !roomData.forcedPileDraw ? prevUid : null}
-        onTakeDiscard={() => handleDrawDiscard()}
         okeyInfo={okeyInfo}
+        myName={roomData.playerNames?.[user.uid] || 'Sen'}
       >
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex items-center gap-2">
           <div
-            onPointerDown={mustDraw ? handlePileDrawPointerDown : undefined}
-            onPointerMove={mustDraw ? handlePileDrawPointerMove : undefined}
-            onPointerUp={mustDraw ? handlePileDrawPointerUp : undefined}
-            onPointerCancel={mustDraw ? handlePileDrawPointerUp : undefined}
-            title={mustDraw ? 'Desteden çek (tıkla ya da sürükle)' : undefined}
-            className={`flex items-center gap-2 bg-slate-900/70 border rounded-lg px-4 py-2 transition-colors touch-none select-none ${mustDraw ? 'cursor-pointer border-amber-400 ring-2 ring-amber-400/50 animate-pulse' : 'border-slate-700 opacity-80'}`}
+            {...pileDrag.handlers}
+            title={mustDraw ? 'Desteden çek (tıkla ya da ıstakaya sürükle)' : undefined}
+            className={`flex items-center gap-1.5 sm:gap-2 bg-slate-900/70 border rounded-lg px-2 py-1.5 sm:px-4 sm:py-2 transition-colors touch-none select-none ${mustDraw ? 'cursor-pointer border-amber-400 ring-2 ring-amber-400/50 animate-pulse' : 'border-slate-700 opacity-80'}`}
           >
-            <span className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase tracking-widest">
-              <span className="sm:hidden">Deste</span>
-              <span className="hidden sm:inline">Çekilecek Taşlar</span>
-            </span>
+            <span className="text-[9px] sm:text-xs text-slate-400 font-bold uppercase tracking-widest">Deste</span>
             <TileBack size="small" />
-            <span className="text-sm font-mono font-bold text-slate-200">{roomData.drawPile?.length ?? 0}</span>
+            <span className="text-xs sm:text-sm font-mono font-bold text-slate-200">{roomData.drawPile?.length ?? 0}</span>
           </div>
 
           {roomData.indicator && (
-            <div className="flex items-center gap-2 bg-slate-900/70 border border-fuchsia-500/40 rounded-lg px-3 py-1.5">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gösterge</span>
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-900/70 border border-fuchsia-500/40 rounded-lg px-2 py-1.5 sm:px-3">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gösterge</span>
               <Tile tile={roomData.indicator} size="small" okeyInfo={okeyInfo} />
             </div>
           )}
@@ -1029,18 +1111,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
       <style>{`
         @keyframes okey101TileFlip {
-          0% { transform: rotateY(85deg) scaleX(0.75); opacity: 0.4; }
+          0% { transform: rotateY(85deg) scaleX(0.72); opacity: 0.35; }
           100% { transform: rotateY(0deg) scaleX(1); opacity: 1; }
         }
-        .okey101-tile-reveal { animation: okey101TileFlip 200ms ease-out; }
+        .okey101-tile-reveal { animation: okey101TileFlip 180ms ease-out; }
       `}</style>
 
-      {pileGhostPos && (
-        // Konum (left/top) HİÇBİR geçişe (transition) tabi değil — fareyle
-        // birebir/gecikmesiz hareket etsin diye. Büyüme animasyonu SADECE iç
-        // kutudaki scale'e uygulanır, dış konteynerin konumunu etkilemez.
-        <div className="fixed z-[4000] pointer-events-none" style={{ left: pileGhostPos.x - 22, top: pileGhostPos.y - 30 }}>
-          <div className="transition-transform duration-150 ease-out" style={{ transform: pileGhostGrown ? 'scale(1)' : 'scale(0.55)' }}>
+      {/* Sürükleme hayaleti: destede kapalı (?) yüz, soldan gelen taşta gerçek
+          yüz gösterilir. Konum hiçbir geçişe tabi değildir (birebir hareket);
+          sadece ilk anda hafifçe büyür. */}
+      {pileDrag.pos && (
+        <div className="fixed z-[4000] pointer-events-none" style={{ left: pileDrag.pos.x - 22, top: pileDrag.pos.y - 30 }}>
+          <div className="transition-transform duration-150 ease-out" style={{ transform: pileDrag.grown ? 'scale(1)' : 'scale(0.55)' }}>
             <div className="w-9 h-12 sm:w-11 sm:h-16 rounded-md bg-gradient-to-b from-amber-50 to-amber-100 border border-slate-400 shadow-xl flex items-center justify-center">
               <span className="text-slate-400 font-black text-lg">?</span>
             </div>
@@ -1048,72 +1130,94 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         </div>
       )}
 
-      {pileReveal && (
-        <div className="fixed z-[4000] pointer-events-none" style={{ left: pileReveal.x - 20, top: pileReveal.y - 28, perspective: '300px' }}>
-          <div className="okey101-tile-reveal" key={pileReveal.key}>
-            <Tile tile={pileReveal.tile} okeyInfo={okeyInfo} isOkey={isOkeyTile(pileReveal.tile, okeyInfo)} />
+      {incomingDrag.pos && incomingTile && (
+        <div className="fixed z-[4000] pointer-events-none" style={{ left: incomingDrag.pos.x - 22, top: incomingDrag.pos.y - 30 }}>
+          <div className="transition-transform duration-150 ease-out" style={{ transform: incomingDrag.grown ? 'scale(1)' : 'scale(0.55)' }}>
+            <Tile tile={incomingTile} okeyInfo={okeyInfo} isOkey={isOkeyTile(incomingTile, okeyInfo)} />
           </div>
         </div>
       )}
 
       {!setupPhase && (
-        <div className={`flex items-center justify-center gap-2 text-center font-bold text-sm sm:text-base px-4 py-2 rounded-lg ${isMyTurn ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400'}`}>
+        <div className={`flex items-center justify-center gap-2 text-center font-bold text-xs sm:text-base px-3 py-1.5 rounded-lg ${isMyTurn ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400'}`}>
           <span>{isMyTurn ? (mustDraw ? 'Sıra Sende! Önce bir taş çek.' : 'Şimdi ıstakandan bir taş at.') : `${turnPlayerName} oynuyor...`}</span>
           {turnCountdown !== null && (
-            <span className={`font-mono text-xs px-2 py-0.5 rounded-full border ${turnCountdown <= 10 ? 'text-red-300 border-red-500/50 bg-red-500/10' : 'text-slate-400 border-slate-600 bg-slate-900/50'}`}>{turnCountdown}s</span>
+            <span className={`font-mono text-[10px] sm:text-xs px-2 py-0.5 rounded-full border ${turnCountdown <= 10 ? 'text-red-300 border-red-500/50 bg-red-500/10' : 'text-slate-400 border-slate-600 bg-slate-900/50'}`}>{turnCountdown}s</span>
           )}
         </div>
       )}
 
       {mySideTakePending && (
-        <div className="w-full max-w-md flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/50 rounded-xl px-4 py-3">
-          <span className="text-xs sm:text-sm font-bold text-amber-300">Yandan taş aldın! Şimdi elini açmalısın (Seri/Çift Aç) ya da taşı geri koymalısın.</span>
+        <div className="w-full max-w-md flex items-center justify-between gap-2 bg-amber-500/10 border border-amber-500/50 rounded-xl px-3 py-2">
+          <span className="text-[11px] sm:text-sm font-bold text-amber-300">Yandan taş aldın! Şimdi elini açmalısın (Seri/Çift Aç) ya da taşı geri koymalısın.</span>
           <button
             type="button"
             onClick={() => handleCancelSideTake()}
-            className="shrink-0 text-xs font-bold bg-slate-900/70 hover:bg-slate-700 text-slate-200 border border-slate-600 px-3 py-1.5 rounded-lg transition-colors"
+            className="shrink-0 text-[11px] font-bold bg-slate-900/70 hover:bg-slate-700 text-slate-200 border border-slate-600 px-2.5 py-1.5 rounded-lg transition-colors"
           >
             Taşı Geri Koy
           </button>
         </div>
       )}
 
-      {Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0) && (
-        <div className="w-full bg-slate-900/60 border border-slate-700 rounded-xl p-3">
-          <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Açılan Eller</div>
+      {hasAnyOpenedHand && (
+        <div className="w-full bg-slate-900/60 border border-slate-700 rounded-xl p-2 sm:p-3">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">Açılan Eller</span>
+            {canTackNow && <span className="text-[9px] sm:text-[10px] text-amber-300/90 font-bold">Taşı kesik çizgili boşluğa sürükle</span>}
+          </div>
           <div className="flex flex-col gap-2">
             {players.map((p) => {
               const openedGroups = roomData.openedHands?.[p.uid] || [];
               if (openedGroups.length === 0) return null;
               return (
-                <div key={p.uid} className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] text-slate-500 font-bold shrink-0">{p.name}:</span>
+                <div key={p.uid} className="flex items-start gap-2 flex-wrap">
+                  <span className="text-[10px] sm:text-[11px] text-slate-500 font-bold shrink-0 mt-2">
+                    {p.name}
+                    {roomData.openedWithPairs?.[p.uid] && <span className="ml-1 text-fuchsia-400">(çift)</span>}:
+                  </span>
                   {openedGroups.map((g, gi) => {
-                    const tackable = canTackNow && g.type !== 'cift';
+                    // İşleme (tacking) yerleri: SADECE gerçekten taş kabul eden
+                    // uçlarda, bir TAŞ BOYUNDA kesik çizgili boşluk olarak
+                    // gösterilir. Çiftlerde (cift) hiç gösterilmez; seri 1'de
+                    // başlıyorsa solda, 13'te bitiyorsa sağda gösterilmez.
+                    const ends = canTackNow ? getGroupOpenEnds(g.tiles, g.type, okeyInfo) : { left: false, right: false };
                     return (
-                      <div key={gi} className="flex items-center gap-0.5">
-                        {tackable && (
-                          <div data-tack-uid={p.uid} data-tack-index={gi} data-tack-side="left" className="w-2.5 h-9 rounded transition-colors" />
+                      <div key={gi} className="flex items-center gap-1">
+                        {ends.left && (
+                          <div
+                            data-tack-uid={p.uid}
+                            data-tack-index={gi}
+                            data-tack-side="left"
+                            title="Buraya taş sürükleyerek işle"
+                            className="w-6 h-8 sm:w-7 sm:h-9 shrink-0 rounded-md border-2 border-dashed border-amber-400/70 bg-amber-400/5 transition-colors"
+                          />
                         )}
-                        <div className="flex items-center gap-0.5 bg-black/20 rounded-md p-1 ring-1 ring-emerald-500/40">
-                          <span className="text-[9px] text-emerald-300 font-bold px-0.5 shrink-0">{OPENED_TYPE_LABELS[g.type] || ''}</span>
+                        <div className={`flex items-center gap-0.5 bg-black/20 rounded-md p-1 ring-1 ${g.type === 'cift' ? 'ring-fuchsia-500/40' : 'ring-emerald-500/40'}`}>
                           {g.tiles.map((tl) => {
                             const tileIsOkey = isOkeyTile(tl, okeyInfo);
-                            // Okey işleği: gruptaki bir Okey/Sahte Okey taşının ÜZERİNE, o
-                            // taşın temsil ettiği gerçek taş sürüklenip bırakılırsa Okey
+                            // Okey işleği: gruptaki bir Okey taşının ÜZERİNE, o taşın
+                            // temsil ettiği gerçek taş sürüklenip bırakılırsa Okey
                             // işleyen oyuncunun ıstakasına geçer (bkz. handleTackTile).
-                            const replaceProps = (tackable && tileIsOkey)
+                            const canReplace = canTackNow && tileIsOkey && g.type !== 'cift';
+                            const replaceProps = canReplace
                               ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-replace-tile-id': tl.id }
                               : {};
                             return (
-                              <div key={tl.id} title={tackable && tileIsOkey ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
-                                <Tile tile={tl} size="small" okeyInfo={okeyInfo} isOkey={tileIsOkey} className={tackable && tileIsOkey ? 'animate-pulse cursor-pointer' : ''} />
+                              <div key={tl.id} title={canReplace ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
+                                <Tile tile={tl} size="small" okeyInfo={okeyInfo} isOkey={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
                               </div>
                             );
                           })}
                         </div>
-                        {tackable && (
-                          <div data-tack-uid={p.uid} data-tack-index={gi} data-tack-side="right" className="w-2.5 h-9 rounded transition-colors" />
+                        {ends.right && (
+                          <div
+                            data-tack-uid={p.uid}
+                            data-tack-index={gi}
+                            data-tack-side="right"
+                            title="Buraya taş sürükleyerek işle"
+                            className="w-6 h-8 sm:w-7 sm:h-9 shrink-0 rounded-md border-2 border-dashed border-amber-400/70 bg-amber-400/5 transition-colors"
+                          />
                         )}
                       </div>
                     );
@@ -1125,7 +1229,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         </div>
       )}
 
-      <div className="w-full bg-gradient-to-b from-emerald-900/40 to-emerald-950/60 border border-emerald-800/50 rounded-2xl p-3 sm:p-4 pt-16 sm:pt-20">
+      <div className="w-full bg-gradient-to-b from-emerald-900/40 to-emerald-950/60 border border-emerald-800/50 rounded-2xl p-2 sm:p-4">
         {isPlayer ? (
           <PlayerRack
             rack={myRack}
@@ -1136,10 +1240,14 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             canAct={mustDiscard}
             canDiscard={mustDiscard && !mySideTakePending}
             lastDiscardTile={myTopDiscard}
-            incomingDiscard={leftSeat?.topDiscard || null}
-            canTakeIncoming={mustDraw && !roomData.forcedPileDraw && !!leftSeat?.topDiscard}
-            onTakeIncoming={() => handleDrawDiscard()}
-            tileSize={isFullscreenView ? 'large' : 'normal'}
+            incomingDiscard={incomingTile}
+            canTakeIncoming={canTakeIncomingNow}
+            incomingDragHandlers={incomingDrag.handlers}
+            canOpenPairsRule={myCanLayPairs}
+            canOpenMeldsRule={myCanLayMelds}
+            pairsButtonLabel={pairsButtonLabel}
+            pendingDraw={pendingDraw}
+            flipTileId={drawFlipId}
             hasOpenedAlready={myHasOpened}
             onDiscardTile={handleDiscardTile}
             onOpenSeries={handleOpenSeries}
@@ -1151,6 +1259,14 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           <div className="text-center text-slate-400 text-sm py-6">Bu odada oyuncu değilsin, ıstaka görüntülenemiyor.</div>
         )}
       </div>
+
+      {myHasOpened && (iOpenedWithPairs || pairsExistOnTable) && (
+        <div className="text-[10px] sm:text-[11px] text-slate-500 text-center px-2">
+          {iOpenedWithPairs
+            ? 'Çift açtın: per (seri/set) açamazsın, sadece kalan çiftlerini sürebilir ve tek tek taş işleyebilirsin. Tur sonunda elinde kalan taşların 2 KATI ceza yazılır.'
+            : 'Masada çift açan bir oyuncu var: elindeki çiftleri de masaya sürebilirsin.'}
+        </div>
+      )}
 
       <button onClick={leaveRoom} className="text-xs text-red-400 hover:text-red-300 border border-red-500/40 hover:bg-red-500/10 px-4 py-2 rounded-lg font-medium transition-colors">Odadan Çık</button>
     </div>

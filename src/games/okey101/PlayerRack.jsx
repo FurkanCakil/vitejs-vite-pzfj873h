@@ -1,16 +1,51 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, Layers, Rows3 } from 'lucide-react';
-import Tile from './Tile.jsx';
+import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
 import { validateGroup, isProperlyOrderedGroup } from './gameLogic.js';
 
 const DRAG_THRESHOLD_PX = 6;
-const TACK_HOVER_STYLE = { backgroundColor: 'rgba(251,191,36,0.55)' };
+const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
 
-const SLOT_SIZE = {
-  normal: 'w-8 h-11 sm:w-11 sm:h-16',
-  large: 'w-11 h-16 sm:w-14 sm:h-20',
-};
+// Istaka, 15 sütunu HER ZAMAN kullanılabilir genişliğe sığdırır: taş genişliği
+// konteynerden ölçülerek hesaplanır (bkz. useRackMetrics). Böylece ne telefonda
+// (dikey/yatay) ne de tam ekranda alta yatay kaydırma çubuğu çıkar.
+const GAP_RATIO = 0.13;      // taş genişliğine oranla slotlar arası boşluk
+const ROW_PADDING_PX = 6;    // satır kutusunun kendi iç boşluğu (tek yan)
+const MIN_TILE_W = 13;       // çok dar telefonlarda bile okunur alt sınır
+const MAX_TILE_W = 60;       // çok geniş ekranlarda absürt büyümeyi engeller
+
+function useRackMetrics() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setWidth(el.clientWidth);
+    update();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+    };
+  }, []);
+
+  const metrics = useMemo(() => {
+    // usable = N*w + (N-1)*(w*GAP_RATIO)  ->  w = usable / (N + (N-1)*GAP_RATIO)
+    // (satırın 1px kenarlığı + yuvarlama payı için 4px emniyet düşülür)
+    const usable = Math.max(0, width - ROW_PADDING_PX * 2 - 4);
+    const raw = usable / (RACK_ROW_LENGTH + (RACK_ROW_LENGTH - 1) * GAP_RATIO);
+    const tileW = Math.max(MIN_TILE_W, Math.min(MAX_TILE_W, Math.floor(raw) || MIN_TILE_W));
+    return { tileW, tileH: Math.round(tileW * TILE_ASPECT), gap: Math.max(2, Math.floor(tileW * GAP_RATIO)) };
+  }, [width]);
+
+  return { ref, ready: width > 0, ...metrics };
+}
 
 // Oyuncunun kendi ıstakası: taş seçimi (per onaylamak / seri-çift açmak için),
 // SABİT SLOTLU sürükle-bırak (bir taş boş bir slota bırakılırsa SADECE o taş
@@ -22,13 +57,14 @@ const SLOT_SIZE = {
 export default function PlayerRack({
   rack, groups, isOwner, onUpdateRack, okeyInfo,
   canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
-  incomingDiscard = null, canTakeIncoming = false, onTakeIncoming,
-  tileSize = 'normal',
+  incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
+  canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
+  pendingDraw = null, flipTileId = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
 }) {
   const safeRack = useMemo(() => normalizeRack(rack), [rack]);
   const safeGroups = groups || {};
-  const slotClass = SLOT_SIZE[tileSize] || SLOT_SIZE.normal;
+  const { ref: rackWrapRef, ready, tileW, tileH, gap } = useRackMetrics();
 
   const [selected, setSelected] = useState(() => new Set());
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -41,6 +77,23 @@ export default function PlayerRack({
   useEffect(() => { setOptimisticDiscardId(null); }, [rack]);
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
+
+  // Çekilen taş, sunucu cevabı beklenmeden bırakıldığı slotta gösterilir
+  // (bkz. Okey101Game#performDraw). Gerçek veri gelince prop kendiliğinden
+  // düşer ve aşağıdaki birleştirme etkisiz kalır.
+  // Taş gerçek ıstakada (hangi slotta olursa olsun) göründüğü an iyimser
+  // kopya devre dışı kalır — aksi halde sunucu taşı farklı bir slota yazarsa
+  // bir kare boyunca çift görünürdü.
+  const pendingVisible = !!pendingDraw
+    && !safeRack[pendingDraw.index]
+    && !safeRack.some((t) => t && t.id === pendingDraw.tile.id);
+  const displayRack = useMemo(() => {
+    if (!pendingVisible) return safeRack;
+    const next = [...safeRack];
+    next[pendingDraw.index] = pendingDraw.tile;
+    return next;
+  }, [safeRack, pendingDraw, pendingVisible]);
+  const pendingTileId = pendingVisible ? pendingDraw.tile.id : null;
 
   const groupOf = useMemo(() => {
     const map = {};
@@ -63,8 +116,11 @@ export default function PlayerRack({
     && selectedIds.every((id) => groupOf[id])
     && selectedGroupIds.every((gid) => (safeGroups[gid] || []).every((id) => selected.has(id)));
   const canRemoveGroup = allSelectedAreCompleteGroups && selectedGroupIds.length === 1;
-  const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct;
-  const canOpenPairs = allSelectedAreCompleteGroups && selectedGroupIds.length === 5 && canAct && !hasOpenedAlready;
+  const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule;
+  // İlk açılışta TAM 5 çift şart; zaten açmış (ve kural gereği çift sürebilen)
+  // bir oyuncu için 1+ çift yeterlidir (bkz. gameLogic#canPlayerLayPairs).
+  const pairCountOk = hasOpenedAlready ? selectedGroupIds.length >= 1 : selectedGroupIds.length === 5;
+  const canOpenPairs = allSelectedAreCompleteGroups && pairCountOk && canAct && canOpenPairsRule;
 
   const commit = (newRack, newGroups) => {
     setSelected(new Set());
@@ -139,6 +195,7 @@ export default function PlayerRack({
   // ---- Pointer tabanlı sürükle-bırak (mouse + dokunmatik ortak) ----
   const handlePointerDown = (e, index, tile) => {
     if (!isOwner || !tile) return;
+    if (tile.id === pendingTileId) return; // sunucu onayı beklenen taş henüz taşınamaz
     // Tarayıcının kendi metin-seçimi + HTML5 sürüklemesi devreye girerse imleç
     // "yasak" (kırmızı çarpı) olur ve seçili DOM parçaları hayalet resim olarak
     // birlikte sürüklenir; bunu baştan engelliyoruz.
@@ -170,7 +227,7 @@ export default function PlayerRack({
     const discardEl = el?.closest('[data-discard-zone]');
     const tackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
 
-    if (tackEl !== tackHoverElRef.current) { clearTackHover(); if (tackEl) { tackEl.style.backgroundColor = TACK_HOVER_STYLE.backgroundColor; tackHoverElRef.current = tackEl; } }
+    if (tackEl !== tackHoverElRef.current) { clearTackHover(); if (tackEl) { tackEl.style.backgroundColor = TACK_HOVER_COLOR; tackHoverElRef.current = tackEl; } }
 
     if (tackEl) { setHoverIndex(null); setHoverDiscard(false); }
     else if (slotEl) { setHoverIndex(Number(slotEl.dataset.slotIndex)); setHoverDiscard(false); }
@@ -233,18 +290,24 @@ export default function PlayerRack({
 
   const renderRow = (rowIndex) => {
     const start = rowIndex * RACK_ROW_LENGTH;
-    const slots = safeRack.slice(start, start + RACK_ROW_LENGTH);
+    const slots = displayRack.slice(start, start + RACK_ROW_LENGTH);
     return (
-      <div key={rowIndex} className="flex gap-1 sm:gap-1.5 justify-center bg-emerald-950/40 rounded-lg p-1.5 sm:p-2 border border-emerald-900/60">
+      <div
+        key={rowIndex}
+        style={{ gap: `${gap}px`, padding: `${ROW_PADDING_PX}px` }}
+        className="flex justify-center bg-emerald-950/40 rounded-lg border border-emerald-900/60"
+      >
         {slots.map((tile, i) => {
           const index = start + i;
           const isHover = hoverIndex === index && dragRef.current?.moved;
           const hidden = tile && tile.id === optimisticDiscardId;
+          const isPending = tile && tile.id === pendingTileId;
           return (
             <div
               key={index}
               data-slot-index={index}
-              className={`${slotClass} rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
+              style={{ width: `${tileW}px`, height: `${tileH}px` }}
+              className={`rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
               onPointerMove={handlePointerMove}
               onPointerUp={finishDrag}
               onPointerCancel={finishDrag}
@@ -252,13 +315,14 @@ export default function PlayerRack({
               {tile && !hidden && (
                 <Tile
                   tile={tile}
-                  size={tileSize === 'large' ? 'large' : 'normal'}
+                  width={tileW}
                   okeyInfo={okeyInfo}
                   selected={selected.has(tile.id)}
                   grouped={!!groupOf[tile.id]}
                   isOkey={isOkeyTile(tile, okeyInfo)}
                   dragging={dragRef.current?.moved && dragRef.current?.tileIds.includes(tile.id)}
-                  onPointerDown={(e) => handlePointerDown(e, index, tile)}
+                  className={flipTileId === tile.id ? 'okey101-tile-reveal' : ''}
+                  onPointerDown={isPending ? undefined : (e) => handlePointerDown(e, index, tile)}
                 />
               )}
             </div>
@@ -268,21 +332,28 @@ export default function PlayerRack({
     );
   };
 
+  // SOL/AT bölmeleri artık ıstakanın ÜSTÜNDE ayrı bir satırda (üst üste binmeden)
+  // durur — taş seçilince hafifçe yukarı kalktığı için eskiden bu bölmelerle
+  // çakışıyordu. Bir taş boyundan biraz büyük tutulur ki hedef alan rahat olsun.
+  const sideSlotW = Math.round(tileW * 1.25);
+  const sideSlotH = Math.round(sideSlotW * TILE_ASPECT);
+  const sideTileW = Math.round(tileW * 1.05);
+
   return (
     <div
-      className="w-full flex flex-col items-center gap-3 select-none"
+      className="w-full flex flex-col items-center gap-2 select-none"
       onDragStart={(e) => e.preventDefault()}
     >
       {isOwner && (
-        <div className="w-full max-w-3xl min-h-9 flex items-center justify-between gap-2 flex-wrap">
+        <div className="w-full min-h-8 flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">
             {canAttemptConfirm && (
-              <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-3 py-1.5 rounded-lg transition-colors">
+              <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-2.5 py-1.5 rounded-lg transition-colors">
                 <Check className="w-3.5 h-3.5" /> Per Onayla
               </button>
             )}
             {canRemoveGroup && (
-              <button type="button" onClick={removeGroup} className="flex items-center gap-1.5 text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/50 px-3 py-1.5 rounded-lg transition-colors">
+              <button type="button" onClick={removeGroup} className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/50 px-2.5 py-1.5 rounded-lg transition-colors">
                 <X className="w-3.5 h-3.5" /> Onayı Kaldır
               </button>
             )}
@@ -294,8 +365,8 @@ export default function PlayerRack({
                 type="button"
                 onClick={openSeries}
                 disabled={!canOpenSeries}
-                title={!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : undefined}
-                className="flex items-center gap-1.5 text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={!canOpenMeldsRule ? 'Çift açtığın için per (seri/set) açamazsın' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : undefined)}
+                className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Rows3 className="w-3.5 h-3.5" /> Seri Aç
               </button>
@@ -303,52 +374,63 @@ export default function PlayerRack({
                 type="button"
                 onClick={openPairs}
                 disabled={!canOpenPairs}
-                title={hasOpenedAlready ? 'Zaten elini açtın' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : 'Tam 5 çift seçmelisin')}
-                className="flex items-center gap-1.5 text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={!canOpenPairsRule ? 'Masada çift açan biri olmadan çift işleyemezsin' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : (hasOpenedAlready ? 'Seçili çiftleri masaya sür' : 'Tam 5 çift seçmelisin'))}
+                className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Layers className="w-3.5 h-3.5" /> Çift Aç
+                <Layers className="w-3.5 h-3.5" /> {pairsButtonLabel}
               </button>
             </div>
           )}
         </div>
       )}
 
-      <div className="w-full max-w-3xl relative">
-        <div className="flex flex-col gap-1.5 sm:gap-2 overflow-x-auto pb-1">
-          {renderRow(0)}
-          {renderRow(1)}
-        </div>
-
-        {/* SOL ÜST: solumdaki oyuncunun bana attığı taş (sıram gelince buradan çekebilirim) */}
-        {isOwner && (
-          <div
-            onClick={canTakeIncoming ? onTakeIncoming : undefined}
-            title={canTakeIncoming ? 'Solundaki oyuncunun attığı taşı çek' : 'Solundaki oyuncunun son attığı taş'}
-            className={`absolute -top-14 -left-2 sm:-top-16 sm:-left-4 ${slotClass} rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
-              ${canTakeIncoming ? 'border-amber-400 bg-amber-400/10 animate-pulse cursor-pointer' : 'border-slate-600/70 bg-slate-900/40'}`}
-          >
-            {incomingDiscard
-              ? <Tile tile={incomingDiscard} size={tileSize === 'large' ? 'large' : 'normal'} okeyInfo={okeyInfo} dimmed={!canTakeIncoming} />
-              : <span className="text-[8px] font-bold text-slate-500 text-center leading-tight px-0.5">SOL</span>}
+      {/* SOL: solumdaki oyuncunun bana attığı taş (buradan çekerim) — SAĞ: sağımdaki
+          oyuncuya atacağım taş (buraya sürüklerim). Istakanın üstünde, taşlarla
+          çakışmayacak kadar uzakta duran ayrı bir şerit. */}
+      {isOwner && ready && (
+        <div className="w-full flex items-end justify-between gap-2">
+          <div className="flex flex-col items-center gap-1">
+            <div
+              {...(canTakeIncoming && incomingDragHandlers ? incomingDragHandlers : {})}
+              title={canTakeIncoming ? 'Solundaki oyuncunun attığı taşı çek (tıkla ya da ıstakaya sürükle)' : 'Solundaki oyuncunun son attığı taş'}
+              style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
+              className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
+                ${canTakeIncoming ? 'border-amber-400 bg-amber-400/10 animate-pulse cursor-grab active:cursor-grabbing' : 'border-slate-600/70 bg-slate-900/40'}`}
+            >
+              {incomingDiscard
+                ? <Tile tile={incomingDiscard} width={sideTileW} okeyInfo={okeyInfo} isOkey={isOkeyTile(incomingDiscard, okeyInfo)} dimmed={!canTakeIncoming} />
+                : <span className="text-[8px] font-bold text-slate-500 text-center leading-tight px-0.5">BOŞ</span>}
+            </div>
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500">Soldan Çek</span>
           </div>
-        )}
 
-        {/* SAĞ ÜST: sağımdaki oyuncuya atacağım taş (buraya sürükle) */}
-        {isOwner && (
-          <div
-            data-discard-zone={canDiscard ? 'true' : undefined}
-            onPointerMove={canDiscard ? handlePointerMove : undefined}
-            onPointerUp={canDiscard ? finishDrag : undefined}
-            onPointerCancel={canDiscard ? finishDrag : undefined}
-            title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
-            className={`absolute -top-14 -right-2 sm:-top-16 sm:-right-4 ${slotClass} rounded-md border-2 border-dashed flex items-center justify-center transition-colors z-20
-              ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
-          >
-            {lastDiscardTile
-              ? <Tile tile={lastDiscardTile} size={tileSize === 'large' ? 'large' : 'normal'} okeyInfo={okeyInfo} dimmed={!canDiscard} />
-              : canDiscard
-                ? <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
-                : null}
+          <div className="flex flex-col items-center gap-1">
+            <div
+              data-discard-zone={canDiscard ? 'true' : undefined}
+              onPointerMove={canDiscard ? handlePointerMove : undefined}
+              onPointerUp={canDiscard ? finishDrag : undefined}
+              onPointerCancel={canDiscard ? finishDrag : undefined}
+              title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
+              style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
+              className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
+                ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
+            >
+              {lastDiscardTile
+                ? <Tile tile={lastDiscardTile} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canDiscard} />
+                : canDiscard
+                  ? <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
+                  : null}
+            </div>
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500">Sağa At</span>
+          </div>
+        </div>
+      )}
+
+      <div ref={rackWrapRef} className="w-full">
+        {ready && (
+          <div className="flex flex-col" style={{ gap: `${Math.max(4, Math.round(gap * 1.4))}px` }}>
+            {renderRow(0)}
+            {renderRow(1)}
           </div>
         )}
       </div>
@@ -358,11 +440,11 @@ export default function PlayerRack({
       {ghost && (
         <div
           className="fixed z-[4000] pointer-events-none opacity-80"
-          style={{ left: ghost.x, top: ghost.y, transform: `translate(calc(-50% - ${ghost.grabOffset * 2.6}rem), -50%)` }}
+          style={{ left: ghost.x, top: ghost.y, transform: `translate(calc(-50% - ${ghost.grabOffset * (tileW + gap)}px), -50%)` }}
         >
-          <div className="flex items-center gap-1">
+          <div className="flex items-center" style={{ gap: `${gap}px` }}>
             {ghost.tiles.map((tl) => (
-              <Tile key={tl.id} tile={tl} okeyInfo={okeyInfo} size={tileSize === 'large' ? 'large' : 'normal'} isOkey={isOkeyTile(tl, okeyInfo)} />
+              <Tile key={tl.id} tile={tl} okeyInfo={okeyInfo} width={tileW} isOkey={isOkeyTile(tl, okeyInfo)} />
             ))}
           </div>
         </div>

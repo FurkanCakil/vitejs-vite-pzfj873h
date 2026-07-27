@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize } from 'lucide-react';
-import { signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
@@ -31,11 +31,21 @@ import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS 
 import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
 import { isBotUid as isOkeyBotUid } from './games/okey101/botPlayers.js';
 
+// Bazı telefon tarayıcılarında (çerez/site verisi tamamen engelliyken ya da
+// depolama kotası dolduğunda) localStorage'a ERİŞMEK BİLE istisna fırlatır.
+// Korumasız bir `localStorage.getItem` çağrısı tüm uygulamayı boş ekrana
+// düşürdüğü için tüm erişimler bu güvenli sarmalayıcıdan geçirilir.
+const safeStorage = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* yok say */ } },
+  remove(key) { try { localStorage.removeItem(key); } catch { /* yok say */ } },
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const isOnline = useOnlineStatus(); // Custom Hook'umuzu kullanıyoruz
-  const [nickname, setNickname] = useState(localStorage.getItem('nickname') || '');
+  const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
@@ -54,8 +64,36 @@ export default function App() {
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
+  // localStorage'dan geri yüklenen (yani kullanıcının bu oturumda bilerek
+  // girmediği) oda kodu. Bkz. aşağıdaki onSnapshot içindeki "bayat oda" koruması.
+  const restoredRoomRef = useRef(null);
   const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
   roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown, isBotGame };
+
+  // Yakalanmamış hataları sessizce yutmak yerine ekranda göster. Telefonda
+  // (özellikle normal sekmede) çıkan hataların ne olduğunu görebilmek için
+  // gerekli; aksi halde kullanıcı sadece boş/bozuk bir ekran görüyor.
+  useEffect(() => {
+    const describe = (value) => {
+      if (!value) return '';
+      if (typeof value === 'string') return value;
+      return value.message || value.toString?.() || '';
+    };
+    const onError = (e) => {
+      const msg = describe(e?.error) || describe(e?.message);
+      if (msg) setErrorMsg(`Beklenmeyen hata: ${msg}`);
+    };
+    const onRejection = (e) => {
+      const msg = describe(e?.reason);
+      if (msg) setErrorMsg(`Beklenmeyen hata: ${msg}`);
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => { setIsFullscreen(!!document.fullscreenElement); };
@@ -83,25 +121,47 @@ export default function App() {
     // signInAnonymously'nin TEKRAR çağrılıp farklı bir anonim hesap açmasını (ve dolayısıyla
     // sonradan "host"/"players" gibi Firestore alanlarına yazılan uid ile gerçek user.uid'nin
     // birbirini tutmamasını) engelliyoruz.
+    const signIn = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+      else await signInAnonymously(auth);
+    };
     const initAuth = async () => {
       if (authInitiatedRef.current) return;
       authInitiatedRef.current = true;
-      try { if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); else await signInAnonymously(auth); }
+      try { await signIn(); }
       catch (err) {
-        authInitiatedRef.current = false;
-        setErrorMsg("Bağlantı hatası oluştu.");
-        setLoadingAuth(false); // Bu satırı ekliyoruz
+        // Telefon tarayıcılarında (özellikle NORMAL sekmede; gizli sekmede zaten
+        // bellek-içi depolama kullanıldığı için görülmez) Firebase Auth'un kalıcı
+        // depolaması (IndexedDB/localStorage) yer baskısı ya da bozuk bir kayıt
+        // yüzünden açılamayabilir ve giriş komple başarısız olur. Bu durumda
+        // bellek-içi kalıcılığa düşüp tekrar deniyoruz: oturum sekme kapanınca
+        // kaybolur ama oyun çalışır.
+        console.error('Kalıcı oturum açılamadı, bellek-içi moda geçiliyor:', err);
+        try {
+          await setPersistence(auth, inMemoryPersistence);
+          await signIn();
+        } catch (fallbackErr) {
+          authInitiatedRef.current = false;
+          setErrorMsg(`Bağlantı hatası oluştu: ${fallbackErr?.message || fallbackErr}`);
+          setLoadingAuth(false);
+        }
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => { setUser(currentUser); setLoadingAuth(false); const savedCode = localStorage.getItem('activeRoom'); if (savedCode && currentUser) setRoomCode(savedCode); });
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoadingAuth(false);
+      let savedCode = null;
+      savedCode = safeStorage.get('activeRoom');
+      if (savedCode && currentUser) { restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
+    });
     return () => unsubscribe();
   }, []);
 
 
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
-    setDisconnectCountdown(null); setSpectatePrompt(null); localStorage.removeItem('activeRoom');
+    setDisconnectCountdown(null); setSpectatePrompt(null); safeStorage.remove('activeRoom');
     setIsBotGame(false);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
@@ -135,8 +195,19 @@ export default function App() {
           } 
         } 
         else {
+          // BAYAT ODA KORUMASI: localStorage'da kalmış eski bir oda kodu yüzünden
+          // (gizli sekmede localStorage boş olduğu için bu hiç yaşanmaz) oyuncu,
+          // artık üyesi olmadığı yabancı bir masaya otomatik sokuluyordu. Geri
+          // yüklenen bir odaya ancak gerçekten oyuncusu/seyircisiysek gireriz.
+          const isParticipant = data.players?.includes(user.uid) || data.spectators?.includes(user.uid);
+          if (restoredRoomRef.current === roomCode && !isParticipant) {
+            restoredRoomRef.current = null;
+            leaveRoomLocal();
+            return;
+          }
+          restoredRoomRef.current = null;
           if (data.status === 'waiting' && data.gameId !== 'okey101' && data.players?.length === 2 && data.host === user.uid) { updateDoc(roomRef, { status: 'playing' }).catch(()=>{}); }
-          setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); localStorage.setItem('activeRoom', roomCode);
+          setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); safeStorage.set('activeRoom', roomCode);
         }
       } else { leaveRoomLocal(); }
     });
@@ -233,6 +304,12 @@ export default function App() {
       };
     }
 
+    // Bot oyunu tamamen YEREL çalışır (Firestore odası yoktur). Tarayıcıda
+    // kalmış eski bir oda kodu, bot masası açılırken devreye girip oyunu
+    // ezmesin diye burada kesin olarak temizlenir.
+    restoredRoomRef.current = null;
+    safeStorage.remove('activeRoom');
+
     setBotDifficulty(difficulty);
     setIsBotGame(true);
     setRoomData(initialState);
@@ -289,7 +366,7 @@ export default function App() {
          // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
          // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
          setRoomData(initialState); setCurrentView('room');
-         setRoomCode(newCode); localStorage.setItem('activeRoom', newCode); setDisconnectCountdown(null);
+         setRoomCode(newCode); safeStorage.set('activeRoom', newCode); setDisconnectCountdown(null);
        } catch (err) {
          if (err.message !== "exists") { setErrorMsg("Oda kurulamadı."); break; }
        }
@@ -373,13 +450,13 @@ export default function App() {
       // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
       // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
       if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
-      setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
+      setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
       
     } catch (err) { 
       if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
       else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
       else if (err.message === "full") setSpectatePrompt(cleanCode);
-      else if (err.message === "already-spectator") { setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); setJoinCodeInput(''); }
+      else if (err.message === "already-spectator") { setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); setJoinCodeInput(''); }
       else setErrorMsg("Odaya katılırken bir hata oluştu.");
     }
   };
@@ -396,7 +473,7 @@ export default function App() {
         const newSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
         transaction.update(roomRef, { spectators: newSpectators });
       });
-      setRoomCode(cleanCode); localStorage.setItem('activeRoom', cleanCode); 
+      setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); 
       setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
     } catch (err) { setErrorMsg("Seyirci olarak bağlanılamadı."); }
   };
@@ -473,8 +550,15 @@ export default function App() {
 
   if (loadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin w-8 h-8" /></div>;
 
+  // 101 Okey ıstakası 15 sütunluk iki sıradan oluşuyor ve telefonda her piksel
+  // kritik; bu yüzden bu oyunda dış/iç boşluklar dar ekranda belirgin şekilde
+  // kısılır (sm ve üstünde eski görünüm korunur).
+  const isOkeyTable = roomData?.gameId === 'okey101' && currentView === 'room';
+  const pagePadding = isOkeyTable ? 'p-1.5 sm:p-4 md:p-8' : 'p-4 md:p-8';
+  const cardPadding = isOkeyTable ? 'p-1.5 sm:p-4 md:p-8' : 'p-4 md:p-8';
+
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-8 relative">
+    <div className={`min-h-screen bg-slate-900 text-slate-100 font-sans relative ${pagePadding}`}>
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-center py-2 font-bold z-[100000] flex justify-center items-center gap-2 shadow-md">
           <WifiOff className="w-5 h-5" /> İnternet bağlantınız koptu. Yeniden bağlanılıyor...
@@ -502,7 +586,7 @@ export default function App() {
       )}
 
       {!isFullscreen && (
-        <header className="max-w-5xl mx-auto flex items-center justify-between mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
+        <header className="max-w-5xl mx-auto flex items-center justify-between mb-4 md:mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
           <div className="flex items-center gap-3">
             <Gamepad2 className="w-8 h-8 text-indigo-400" />
             <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Masa Oyunları Portalı</h1>
@@ -519,7 +603,9 @@ export default function App() {
             <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} />
           )}
 
-          <div className={isFullscreen ? "fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center p-2 sm:p-4" : "w-full bg-slate-800 rounded-2xl p-4 md:p-8 shadow-2xl border border-slate-700 flex flex-col items-center relative transition-all duration-300"}>
+          <div className={isFullscreen
+            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center justify-center ${isOkeyTable ? 'p-1 sm:p-3' : 'p-2 sm:p-4'}`
+            : `w-full bg-slate-800 rounded-2xl ${cardPadding} shadow-2xl border border-slate-700 flex flex-col items-center relative transition-all duration-300`}>
             {isFullscreen && (
                <>
                  <div className="fixed top-3 left-3 sm:top-6 sm:left-6 z-[6000] flex items-center gap-2 bg-slate-800/80 px-4 py-2 rounded-full border border-slate-600 shadow-lg backdrop-blur-md">

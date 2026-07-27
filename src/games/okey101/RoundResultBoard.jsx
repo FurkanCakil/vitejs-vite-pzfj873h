@@ -4,7 +4,7 @@ import { Trophy, Crown, Bot as BotIcon, User, Layers } from 'lucide-react';
 // El (round) bittiğinde gösterilen tur sonucu / puan tablosu. Host'ta "Yeni
 // Tura Başla" butonu bulunur. Eşli (2v2) modda takım üyeleri aynı satırda
 // gruplanıp ortak puanları gösterilir.
-export default function RoundResultBoard({ players, roundResult, scores, rules, teams, isHost, onStartNewRound }) {
+export default function RoundResultBoard({ players, roundResult, scores, rules, teams, openedWithPairs, isHost, onStartNewRound }) {
   if (!roundResult) return null;
   const { winnerUid, wonByOkeyDiscard, foldMultiplier, perPlayer } = roundResult;
   const winnerName = players.find((p) => p.uid === winnerUid)?.name || '???';
@@ -23,6 +23,10 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
             {p.isBot ? <BotIcon className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
           </div>
           <span className="text-sm font-bold text-slate-100 truncate">{p.name}</span>
+          {/* Çift ile açan oyuncu, elinde kalan taşların 2 KATI ceza yer. */}
+          {openedWithPairs?.[uid] && !isWinner && (
+            <span className="shrink-0 text-[9px] font-black text-fuchsia-300 bg-fuchsia-500/15 border border-fuchsia-500/40 px-1.5 py-0.5 rounded-full">ÇİFT ×2</span>
+          )}
           {isWinner && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
         </div>
         <div className="flex items-center gap-3 text-xs shrink-0">
