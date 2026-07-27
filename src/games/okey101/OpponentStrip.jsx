@@ -88,11 +88,18 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
           onların ALTINDA durur — 3 sütunlu kare düzen dar ekrana sığmıyor ve
           koltuklar desteyle üst üste biniyordu. sm ve üstünde gerçek kare masa. */}
       <div className={`w-full flex items-center ${compact ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-1' : 'flex-col gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center'}`}>
+        {/* NOT: Koltuk sarmalayıcılarında `justify-self-start/end` KULLANILMAZ.
+            O, grid hücresini içeriğe göre boyutlandırıp (stretch yerine) hücre
+            genişliğinden TAŞMASINA izin veriyordu — uzun oyuncu isimleri +
+            geniş bir orta blok (Deste + Gösterge + barajlar) olduğunda isim
+            kartları ortadaki bloğun ÜSTÜNE biniyordu. Bunun yerine hücre
+            gerilir (stretch) ve içerik `flex justify-*` ile hizalanır; böylece
+            `min-w-0` gerçekten devreye girip isimler kısalır (truncate). */}
         <div className={`w-full flex justify-between items-start gap-2 ${compact ? 'contents' : 'sm:contents'}`}>
-          <div className={`min-w-0 ${compact ? 'col-start-1 row-start-1 justify-self-start' : 'sm:col-start-1 sm:row-start-1 sm:justify-self-start'}`}>
+          <div className={`min-w-0 ${compact ? 'col-start-1 row-start-1 flex justify-start' : 'sm:col-start-1 sm:row-start-1 sm:flex sm:justify-start'}`}>
             {leftSeat && <Seat {...seatProps(leftSeat)} />}
           </div>
-          <div className={`min-w-0 ${compact ? 'col-start-3 row-start-1 justify-self-end' : 'sm:col-start-3 sm:row-start-1 sm:justify-self-end'}`}>
+          <div className={`min-w-0 ${compact ? 'col-start-3 row-start-1 flex justify-end' : 'sm:col-start-3 sm:row-start-1 sm:flex sm:justify-end'}`}>
             {rightSeat && <Seat {...seatProps(rightSeat)} />}
           </div>
         </div>

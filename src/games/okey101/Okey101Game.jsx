@@ -783,7 +783,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!data.turnDeadline || Date.now() < data.turnDeadline) return;
 
       const rack = (data.racks?.[actingUid] || []).filter(Boolean);
-      if (rack.length === 0) {
+      // Istaka boşsa oyuncu aslında elini bitirmiştir (kazanan odur);
+      // deste bittiyse el kazanansız (berabere) kapanır. Her iki durumda da
+      // tur İLERLETİLMEZ, el burada sonlanır.
+      const pileEmpty = (data.drawPile || []).length === 0;
+      if (rack.length === 0 || pileEmpty) {
         const { newScores, roundResult } = computeRoundEnd({
           players: data.players || [],
           scores: data.scores || {},
@@ -795,7 +799,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: data.okey || null,
           foldMultiplier: data.foldMultiplier || 1,
-        }, actingUid, false);
+        }, rack.length === 0 ? actingUid : null, false);
         t.update(roomRef, {
           turn: null, turnDeadline: null, hasDrawnThisTurn: false, sideTake: null, forcedPileDraw: false,
           roundEnded: true, roundResult, scores: newScores,
@@ -920,6 +924,50 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (carelessDiscard) {
         update[`scores.${actingUid}`] = (data.scores?.[actingUid] || 0) - PENALTY_POINTS;
       }
+
+      // Kapalı deste bittiyse el, ATAN oyuncunun turu tamamlandığı anda
+      // OTOMATİK biter — tur sıradaki oyuncuya GEÇMEZ.
+      //
+      // Eskiden el yalnızca `handleDrawPile` içinde, sıradaki oyuncu
+      // (çekemeyeceği) BOŞ desteden çekmeye kalkıştığında bitiyordu. Yani
+      // deste 0'a düştükten sonra araya en az bir "ölü tur" giriyor, oyun
+      // orada bekliyordu (üstelik o oyuncu yandan taş alırsa oyun boş desteyle
+      // sürüp gidebiliyordu). Artık deste biter bitmez, o turu oynayan oyuncu
+      // hamlesini tamamladığında el kapanır.
+      if ((data.drawPile || []).length === 0) {
+        const scoresBeforeEnd = { ...(data.scores || {}) };
+        if (carelessDiscard) scoresBeforeEnd[actingUid] = (data.scores?.[actingUid] || 0) - PENALTY_POINTS;
+        const { newScores, roundResult } = computeRoundEnd({
+          players: data.players || [],
+          scores: scoresBeforeEnd,
+          roundStartScores: data.roundStartScores || {},
+          hasOpened: data.hasOpened || {},
+          openedWithPairs: data.openedWithPairs || {},
+          racks: { ...(data.racks || {}), [actingUid]: rack },
+          rules: data.rules || {},
+          teams: data.teams || null,
+          okeyInfo: okeyNow,
+          foldMultiplier: data.foldMultiplier || 1,
+        }, null, false);
+
+        outcome = { success: true, carelessDiscard, discardedOkey, discardedTackable, roundEnded: true };
+        t.update(roomRef, {
+          [`racks.${actingUid}`]: rack,
+          [`groups.${actingUid}`]: actorGroupsNext,
+          [`discardPiles.${actingUid}`]: discardPile,
+          turn: null,
+          turnDeadline: null,
+          hasDrawnThisTurn: false,
+          sideTake: null,
+          forcedPileDraw: false,
+          tackHint: null,
+          roundEnded: true,
+          roundResult,
+          scores: newScores,
+        });
+        return;
+      }
+
       outcome = { success: true, carelessDiscard, discardedOkey, discardedTackable };
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 atma hatası:', err); outcome = null; });
@@ -1574,20 +1622,25 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             </div>
           )}
 
-          {/* 1. madde: Katlamalı mod aktifken kurulan barajlar — herkese
-              görünür. SERİ barajı puan üzerinden, ÇİFT barajı (5. madde) çift
-              sayısı üzerinden ayrı ayrı işler. */}
-          {roomData.foldBarrier && (
-            <div className={`flex items-center bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
-              <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Baraj</span>
-              <span className={`font-mono font-bold text-fuchsia-200 ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
-            </div>
-          )}
-
-          {roomData.foldPairsBarrier && (
-            <div className={`flex items-center bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
-              <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Çift Barajı</span>
-              <span className={`font-mono font-bold text-fuchsia-200 ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{roomData.foldPairsBarrier.count} çift</span>
+          {/* Katlamalı mod barajları — herkese görünür. SERİ barajı puan,
+              ÇİFT barajı (5. madde) çift sayısı üzerinden ayrı ayrı işler.
+              İKİSİ ALT ALTA (tek bir dikey sütunda) durur: yan yana
+              dizildiklerinde orta blok genişleyip Desteyi soldaki oyuncunun,
+              kendisini de sağdaki oyuncunun ismiyle çakıştırıyordu. */}
+          {(roomData.foldBarrier || roomData.foldPairsBarrier) && (
+            <div className="flex flex-col items-stretch gap-1">
+              {roomData.foldBarrier && (
+                <div className={`flex items-center justify-between bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
+                  <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Baraj</span>
+                  <span className={`font-mono font-bold text-fuchsia-200 whitespace-nowrap ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
+                </div>
+              )}
+              {roomData.foldPairsBarrier && (
+                <div className={`flex items-center justify-between bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
+                  <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Çift</span>
+                  <span className={`font-mono font-bold text-fuchsia-200 whitespace-nowrap ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{roomData.foldPairsBarrier.count} çift</span>
+                </div>
+              )}
             </div>
           )}
 
