@@ -35,13 +35,25 @@ const pxStyles = (width) => ({
   symbol: { fontSize: `${Math.max(6, width * 0.34)}px` },
 });
 
+// Taş arkasının deseni: tek bir baklava dilimi. Taşın ARKA yüzü artık ÖN
+// yüzüyle AYNI (kehribar) renk ailesindedir — sadece deste/ters çevrilmiş
+// taşları "boş" gösteren bu desenle ayırt edilir; mavi/indigo bir "kart
+// sırtı" görünümü YOKTUR.
+function BackPattern({ px }) {
+  const size = Math.max(6, Math.round((px || SIZE_PX.normal) * 0.4));
+  return <div style={{ width: size, height: size }} className="rotate-45 rounded-[2px] border-2 border-amber-300 bg-amber-200/60" />;
+}
+
 // Taşın arka (kapalı) yüzü. Hem çekme destesinde hem de oyuncunun uzun basarak
-// TERS ÇEVİRDİĞİ taşlarda (bkz. PlayerRack uzun basma) kullanılır.
+// TERS ÇEVİRDİĞİ taşlarda (bkz. PlayerRack uzun basma) kullanılır. Ön yüzle
+// birebir aynı kehribar zemin/çerçeve kullanılır (bkz. BackPattern).
 export const TileBack = ({ size = 'small', width = null, className = '' }) => (
   <div
     style={width ? { width: `${width}px`, height: `${Math.round(width * TILE_ASPECT)}px` } : undefined}
-    className={`${width ? '' : SIZE_CLASS[size]} rounded-md bg-gradient-to-br from-indigo-700 to-indigo-900 border border-indigo-950 shadow-md shrink-0 ${className}`}
-  />
+    className={`${width ? '' : SIZE_CLASS[size]} rounded-md bg-gradient-to-b from-amber-50 to-amber-100 border border-slate-400 shadow-md shrink-0 flex items-center justify-center ${className}`}
+  >
+    <BackPattern px={width || SIZE_PX[size] || SIZE_PX.normal} />
+  </div>
 );
 
 // Sahte Okey'in yüz deseni: iç içe geçmiş halkalar. Gerçek okey setlerindeki
@@ -82,16 +94,17 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
       style={px ? { ...px.box, ...style } : style}
       draggable={false}
       onDragStart={(e) => e.preventDefault()}
-      className={`relative select-none touch-none [-webkit-user-drag:none] ${px ? '' : SIZE_CLASS[size]} rounded-md border flex flex-col items-center justify-center shadow-md transition-transform
-        ${faceDown ? 'bg-gradient-to-br from-indigo-700 to-indigo-900 border-indigo-950' : 'bg-gradient-to-b from-amber-50 to-amber-100'}
-        ${selected ? 'ring-2 ring-yellow-400 -translate-y-2 border-yellow-400' : (faceDown ? '' : 'border-slate-400')}
+      className={`relative select-none touch-none [-webkit-user-drag:none] ${px ? '' : SIZE_CLASS[size]} rounded-md border bg-gradient-to-b from-amber-50 to-amber-100 flex flex-col items-center justify-center shadow-md transition-transform
+        ${selected ? 'ring-2 ring-yellow-400 -translate-y-2 border-yellow-400' : 'border-slate-400'}
         ${grouped ? 'ring-2 ring-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]' : ''}
         ${dragging ? 'opacity-30' : ''}
         ${dimmed ? 'opacity-60' : ''}
         ${className}`}
       {...handlers}
     >
-      {faceDown ? null : tile.isJoker ? (
+      {faceDown ? (
+        <BackPattern px={facePx} />
+      ) : tile.isJoker ? (
         <FakeOkeyFace px={facePx} />
       ) : (
         <div className="flex flex-col items-center justify-center gap-0.5">

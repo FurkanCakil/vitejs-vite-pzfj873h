@@ -1365,9 +1365,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
                             const replaceProps = canReplace
                               ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-replace-tile-id': tl.id }
                               : {};
+                            // Masaya (herhangi bir oyuncunun perine) açılan/işlenen
+                            // Okey, gerçek Okey masasındaki gelenekte olduğu gibi
+                            // TERS çevrilmiş gösterilir — kaç numarayı temsil ettiği
+                            // gizli kalır, sadece "burada bir Okey var" görünür.
                             return (
                               <div key={tl.id} title={canReplace ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
-                                <Tile tile={tl} size="small" okeyInfo={okeyInfo} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
+                                <Tile tile={tl} size="small" okeyInfo={okeyInfo} faceDown={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
                               </div>
                             );
                           })}

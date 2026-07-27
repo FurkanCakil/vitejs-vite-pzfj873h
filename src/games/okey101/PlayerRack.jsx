@@ -10,10 +10,10 @@ const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
 
 // 3. madde: Okey artık hiçbir çerçeve/rozetle belli edilmediği için oyuncu onu
 // kendisi fark etmek zorunda. Fark ettiği taşı unutmamak adına (gerçek hayatta
-// okeyi ters çevirip masaya koymak gibi) bir taşa 2sn basılı tutarak taşı TERS
-// ÇEVİREBİLİR; 2sn daha basılı tutunca taş normale döner. Tamamen yerel/kişisel
+// okeyi ters çevirip masaya koymak gibi) bir taşa 1sn basılı tutarak taşı TERS
+// ÇEVİREBİLİR; 1sn daha basılı tutunca taş normale döner. Tamamen yerel/kişisel
 // bir işarettir, sunucuya yazılmaz ve kimse göremez.
-const LONG_PRESS_MS = 2000;
+const LONG_PRESS_MS = 1000;
 
 // Istaka, 15 sütunu HER ZAMAN kullanılabilir genişliğe sığdırır: taş genişliği
 // konteynerden ölçülerek hesaplanır (bkz. useRackMetrics). Böylece ne telefonda
@@ -137,6 +137,19 @@ export default function PlayerRack({
 
   const baseRack = optimisticRack || safeRack;
 
+  // KRİTİK: `baseRack` bir React state DEĞİŞKENİDİR — `setOptimisticRack`
+  // çağrısı bir sonraki render'a kadar (React state güncellemeleri asenkron
+  // olduğu için) YANSIMAZ. Telefonda (özellikle dar dikey 3 satırlı düzende,
+  // taşlar küçük olduğu için çok daha sık sürükleme yapılıyor) oyuncu bir
+  // taşı bırakır bırakmaz HEMEN bir sonrakini sürüklemeye başlarsa, ikinci
+  // sürüklemenin `handlePointerDown`'ı henüz BAYAT olan `baseRack` state'ini
+  // görüyor (ilk sürüklemenin sonucunu yansıtmıyor) — bu da taşların rastgele
+  // yer değiştirmiş/geri sıçramış gibi görünmesine yol açıyordu. `baseRackRef`
+  // her sürüklemenin BAŞINDA ve applyRack'te SENKRON güncellenir, böylece her
+  // yeni sürükleme render beklemeden her zaman en güncel yerleşimi görür.
+  const baseRackRef = useRef(baseRack);
+  useEffect(() => { baseRackRef.current = baseRack; }, [baseRack]);
+
   // Sunucu aynı yerleşime ulaştıysa iyimser kopya kendiliğinden düşer.
   useEffect(() => {
     if (!optimisticRack) return;
@@ -146,6 +159,7 @@ export default function PlayerRack({
 
   // Taşları yeni düzene taşırken sunucuya yaz + ekranda hemen göster.
   const applyRack = (newRack, newGroups) => {
+    baseRackRef.current = newRack; // bir sonraki sürükleme render'ı BEKLEMEDEN bunu görsün
     setOptimisticRack(newRack);
     if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
     // Emniyet: sunucu beklenenden farklı bir yerleşim yazarsa iyimser kopya
@@ -294,14 +308,21 @@ export default function PlayerRack({
     e.preventDefault();
     window.getSelection?.()?.removeAllRanges?.();
 
+    // `index` (render closure'undan gelen prop) BAYAT olabilir — bkz. baseRackRef
+    // yorumu yukarıda. Taşın GERÇEK/GÜNCEL slotu her zaman ref'ten yeniden
+    // bulunur; render henüz yetişmediyse bile bu doğru sonucu verir.
+    const rackNow = baseRackRef.current;
+    const freshIndex = rackNow.findIndex((t) => t && t.id === tile.id);
+    const fromIndex = freshIndex !== -1 ? freshIndex : index;
+
     const gid = groupOf[tile.id];
     const tileIds = gid ? (safeGroups[gid] || [tile.id]) : [tile.id];
     // Grup içinde TUTULAN taşın kaçıncı sırada olduğu: bırakırken blok, imlecin
     // altındaki slot bu taşa denk gelecek şekilde konumlanır. Böylece per'i
     // ortasından tutup boş alanın ortasına bırakmak da doğru çalışır.
     const grabOffset = Math.max(0, tileIds.indexOf(tile.id));
-    const tiles = tileIds.map((id) => baseRack.find((t) => t && t.id === id)).filter(Boolean);
-    dragRef.current = { fromIndex: index, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
+    const tiles = tileIds.map((id) => rackNow.find((t) => t && t.id === id)).filter(Boolean);
+    dragRef.current = { fromIndex, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
     e.currentTarget.setPointerCapture?.(e.pointerId);
 
     // 2sn basılı tutma -> taşı ters çevir / düzelt (bkz. LONG_PRESS_MS).
@@ -378,22 +399,26 @@ export default function PlayerRack({
 
     if (dropIndex === null) return;
 
+    // Yine BAYAT `baseRack` closure'u yerine ref'teki en güncel yerleşim
+    // kullanılır (bkz. handlePointerDown'daki aynı gerekçe).
+    const rackNow = baseRackRef.current;
+
     if (d.tileIds.length > 1) {
       // Blok, TUTULAN taş imlecin altındaki slota gelecek şekilde hizalanır.
       const start = Math.max(0, Math.min(dropIndex - d.grabOffset, RACK_SLOTS - d.tileIds.length));
-      const newRack = moveGroupBlockToSlot(baseRack, d.tileIds, start);
-      if (newRack !== baseRack) applyRack(newRack, safeGroups);
+      const newRack = moveGroupBlockToSlot(rackNow, d.tileIds, start);
+      if (newRack !== rackNow) applyRack(newRack, safeGroups);
       return;
     }
 
     if (dropIndex === d.fromIndex) return;
     // Hedef, taşınmayan BAŞKA bir grubun taşıysa reddet (grup bölünmesin).
-    const targetTile = baseRack[dropIndex];
+    const targetTile = rackNow[dropIndex];
     if (targetTile && groupOf[targetTile.id]) return;
 
     // Sabit slot fiziği: sadece hedef slot etkilenir, diğer taşlar ASLA kaymaz
     // (boşsa taş oraya gider, doluysa yer değiştirir).
-    applyRack(moveTileToSlot(baseRack, d.fromIndex, dropIndex), safeGroups);
+    applyRack(moveTileToSlot(rackNow, d.fromIndex, dropIndex), safeGroups);
   };
 
   const renderRow = (rowIndex) => {
