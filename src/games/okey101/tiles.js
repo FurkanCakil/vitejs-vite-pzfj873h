@@ -64,14 +64,22 @@ export function shuffle(array) {
   return a;
 }
 
-// İlk oyuncuya (players[0]) 22, diğer 3'üne 21 taş dağıtır; kalanlar çekme destesidir.
-// Ayrıca kalan destenin en altından (jokerse bir üstünden) Gösterge taşını belirler.
-export function dealTiles(playerUids) {
+// `starterUid`'e (verilmezse playerUids[0]'a) 22, diğerlerine 21 taş dağıtır;
+// kalanlar çekme destesidir. Ayrıca kalan destenin en altından (jokerse bir
+// üstünden) Gösterge taşını belirler.
+//
+// NOT: `starterUid` DİZİ SIRASINDAN (oturma düzeninden) AYRI bir kavramdır —
+// oturma düzeni (playerUids sırası, dolayısıyla sol/sağ komşuluklar) bir oda
+// için SABİT kalırken, HANGİ oyuncunun 22 taşla başlayacağı turdan tura
+// değişir (bkz. Okey101Game: ilk el rastgele, sonrakiler saat yönünün
+// tersine döner) — bu yüzden dizi sırasını bozmadan sadece kimin 22 taş
+// alacağını parametreyle belirtiyoruz.
+export function dealTiles(playerUids, starterUid = playerUids[0]) {
   const shuffled = shuffle(createTileSet());
   let cursor = 0;
   const racks = {};
-  playerUids.forEach((uid, idx) => {
-    const count = idx === 0 ? 22 : 21;
+  playerUids.forEach((uid) => {
+    const count = uid === starterUid ? 22 : 21;
     const rack = Array(RACK_SLOTS).fill(null);
     for (let i = 0; i < count; i++) rack[i] = shuffled[cursor++];
     racks[uid] = rack;

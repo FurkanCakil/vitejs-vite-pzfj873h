@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, X, Layers, Rows3 } from 'lucide-react';
+import { Check, X, Layers, Rows3, RefreshCw } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
 import { validateGroup, isProperlyOrderedGroup } from './gameLogic.js';
@@ -105,6 +105,7 @@ export default function PlayerRack({
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
   pendingDraw = null, flipTileId = null, compact = false,
+  flippedTileIds = null, onToggleFlippedTile = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
 }) {
   const safeRack = useMemo(() => normalizeRack(rack), [rack]);
@@ -138,13 +139,40 @@ export default function PlayerRack({
     el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(calc(-50% - ${grabOffset * (tileW + gap)}px), -50%)`;
   };
   // Uzun basılarak ters çevrilmiş taşların id'leri (sadece bu tarayıcıda).
-  const [flippedIds, setFlippedIds] = useState(() => new Set());
+  // 6. madde: bu state artık PlayerRack'in KENDİSİNDE değil, Okey101Game'de
+  // tutulur ve prop olarak verilir — PlayerRack alt-tab sonrası kısa bir
+  // unmount/remount yaşayabildiği için (bkz. Okey101Game#flippedTileIds
+  // yorumu), state burada olsaydı her seferinde sıfırlanırdı. Prop
+  // verilmezse (beklenmeyen bir kullanım) yerel bir yedek state'e düşer.
+  const [localFlippedIds, setLocalFlippedIds] = useState(() => new Set());
+  const flippedIds = flippedTileIds ?? localFlippedIds;
+  const toggleFlipped = onToggleFlippedTile ?? ((tileId) => setLocalFlippedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(tileId)) next.delete(tileId); else next.add(tileId);
+    return next;
+  }));
   const longPressTimerRef = useRef(null);
   // Atma anında Firestore turu tamamlanana kadar taşı ıstakadan İYİMSER
-  // (optimistic) olarak gizler — algılanan gecikmeyi azaltır. `rack` propu
-  // gerçek veriyle güncellenince (taş gerçekten gitmiş olur) otomatik temizlenir.
+  // (optimistic) olarak gizler — algılanan gecikmeyi azaltır.
+  //
+  // ÖNEMLİ: eskiden bu, `rack` PROP REFERANSI her değiştiğinde temizleniyordu
+  // (`useEffect(() => setOptimisticDiscardId(null), [rack])`). Ama Firestore
+  // `onSnapshot`, belge içindeki İLGİSİZ bir alan değişse bile (ör. botun
+  // sırası, rakibin hamlesi, geri sayım) `data()` çağrısında TÜM iç içe
+  // nesneleri (dolayısıyla `racks[user.uid]` dizisini) YENİDEN oluşturur —
+  // yani `rack` referansı, taş HÂLÂ ıstakada dururken bile sık sık değişir.
+  // Bu yüzden atılan taş bir anlığına geri (ıstakaya) görünüyor, sonra asıl
+  // onay gelince tekrar kayboluyordu (görünür bir titreme/gecikme) — bazen de
+  // (yavaş/asılı bir transaction'da) taş hiç kaybolmadan ıstakada kalıyordu.
+  // Artık İÇERİĞE bakılır: taş GERÇEKTEN ıstakadan gitmişse temizlenir.
   const [optimisticDiscardId, setOptimisticDiscardId] = useState(null);
-  useEffect(() => { setOptimisticDiscardId(null); }, [rack]);
+  const optimisticDiscardTimerRef = useRef(null);
+  useEffect(() => () => { if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current); }, []);
+  useEffect(() => {
+    if (!optimisticDiscardId) return;
+    const stillThere = safeRack.some((t) => t && t.id === optimisticDiscardId);
+    if (!stillThere) setOptimisticDiscardId(null);
+  }, [safeRack, optimisticDiscardId]);
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
 
@@ -194,16 +222,12 @@ export default function PlayerRack({
   };
   useEffect(() => clearLongPress, []);
 
-  // Istakadan çıkan (atılan/işlenen/açılan) taşların ters-çevrilme işareti
-  // birikmesin diye temizlenir.
-  useEffect(() => {
-    setFlippedIds((prev) => {
-      if (prev.size === 0) return prev;
-      const alive = new Set(safeRack.filter(Boolean).map((t) => t.id));
-      const next = new Set([...prev].filter((id) => alive.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [safeRack]);
+  // NOT: Istakadan çıkan (atılan/işlenen/açılan) bir taşın ters-çevrilme
+  // işareti artık burada TEK TEK temizlenmiyor — bu state Okey101Game'e
+  // taşındığı için (bkz. flippedTileIds prop yorumu) orada EL (round)
+  // sınırında topluca sıfırlanıyor. Aradaki (aynı el içinde) birkaç
+  // "kullanılmış" id'nin Set'te kalması zararsızdır (görsel bir etkisi yoktur,
+  // asla büyük bir listeye dönüşmez).
 
   // Çekilen taş, sunucu cevabı beklenmeden bırakıldığı slotta gösterilir
   // (bkz. Okey101Game#performDraw). Gerçek veri gelince prop kendiliğinden
@@ -243,6 +267,13 @@ export default function PlayerRack({
     && selectedIds.every((id) => groupOf[id])
     && selectedGroupIds.every((gid) => (safeGroups[gid] || []).every((id) => selected.has(id)));
   const canRemoveGroup = allSelectedAreCompleteGroups && selectedGroupIds.length === 1;
+  // "Peri Güncelle" (2. madde): TAM BİR mevcut per (tümüyle seçili) + ona
+  // bitişik getirilmiş TEK bir grupsuz taş seçiliyse, peri bozup baştan
+  // seçmek yerine doğrudan büyütülmüş per olarak güncellenebilir.
+  const ungroupedSelectedIds = useMemo(() => selectedIds.filter((id) => !groupOf[id]), [selectedIds, groupOf]);
+  const canAttemptUpdateGroup = selectedGroupIds.length === 1
+    && ungroupedSelectedIds.length === 1
+    && selectedIds.length === (safeGroups[selectedGroupIds[0]] || []).length + 1;
   const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule;
   // İlk açılışta TAM 5 çift şart; zaten açmış (ve kural gereği çift sürebilen)
   // bir oyuncu için 1+ çift yeterlidir (bkz. gameLogic#canPlayerLayPairs).
@@ -303,6 +334,29 @@ export default function PlayerRack({
     commit(baseRack, nextGroups);
   };
 
+  // "Peri Güncelle": mevcut peri bozup taşları tek tek yeniden seçmek yerine,
+  // perin YANINA getirilmiş uygun bir taşı doğrudan pere katar. Aynı
+  // confirmGroup'taki katı doğrulama (dizilim + sıra) burada da uygulanır —
+  // tek fark, per'in KENDİSİ zaten var olduğu için "Onayı Kaldır + Per
+  // Onayla" iki adımını tek adıma indirmesi.
+  const updateGroup = () => {
+    if (!canAttemptUpdateGroup) return;
+    if (!isContiguousSelection(selectedIds, baseRack)) { showToast?.('Taş, perin hemen yanına gelmeli!', 'red'); return; }
+    const orderedTiles = baseRack.filter((t) => t && selected.has(t.id));
+    const result = validateGroup(orderedTiles, okeyInfo);
+    if (!result.valid) { showToast?.('Bu taşla per güncellenemez — geçersiz dizilim!', 'red'); return; }
+    if (!isProperlyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
+      showToast?.('Perinizi düzgün diziniz!', 'red');
+      return;
+    }
+    const oldGid = selectedGroupIds[0];
+    const newGid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const nextGroups = { ...safeGroups };
+    delete nextGroups[oldGid];
+    nextGroups[newGid] = orderedTiles.map((t) => t.id);
+    commit(baseRack, nextGroups);
+  };
+
   const openSeries = async () => {
     if (!canOpenSeries || !onOpenSeries) return;
     setSelected(new Set());
@@ -355,11 +409,7 @@ export default function PlayerRack({
         const d = dragRef.current;
         if (!d || d.moved || d.tile.id !== tile.id) return;
         d.longPressed = true;
-        setFlippedIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(tile.id)) next.delete(tile.id); else next.add(tile.id);
-          return next;
-        });
+        toggleFlipped(tile.id);
       }, LONG_PRESS_MS);
     }
   };
@@ -426,7 +476,20 @@ export default function PlayerRack({
 
     if (droppedOnDiscard) {
       // Bir per'e ait olsa bile atarken sadece TEK taş atılır (grup bölünür).
-      if (canDiscard && onDiscardTile) { setOptimisticDiscardId(d.tile.id); onDiscardTile(d.tile); }
+      if (canDiscard && onDiscardTile) {
+        const tileId = d.tile.id;
+        setOptimisticDiscardId(tileId);
+        // Emniyet supabı: atma işlemi (ağ hatası/geçersiz durum yüzünden)
+        // başarısız olur ya da hiç sonuçlanmazsa taş sonsuza dek görünmez
+        // kalmasın — birkaç saniye içinde kendiliğinden geri gelir.
+        if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current);
+        optimisticDiscardTimerRef.current = setTimeout(() => {
+          setOptimisticDiscardId((cur) => (cur === tileId ? null : cur));
+        }, 4000);
+        Promise.resolve(onDiscardTile(d.tile))
+          .then((result) => { if (!result) setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)); })
+          .catch(() => setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)));
+      }
       return;
     }
 
@@ -577,6 +640,11 @@ export default function PlayerRack({
             {canRemoveGroup && (
               <button type="button" onClick={removeGroup} className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-500/50 px-2.5 py-1 rounded-lg transition-colors">
                 <X className="w-3.5 h-3.5" /> Onayı Kaldır
+              </button>
+            )}
+            {canAttemptUpdateGroup && (
+              <button type="button" onClick={updateGroup} title="Seçili taşı mevcut perin yanına ekleyerek büyüt" className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/50 px-2.5 py-1 rounded-lg transition-colors">
+                <RefreshCw className="w-3.5 h-3.5" /> Peri Güncelle
               </button>
             )}
           </div>

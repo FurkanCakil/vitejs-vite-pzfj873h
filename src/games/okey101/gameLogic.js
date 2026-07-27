@@ -336,6 +336,24 @@ export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
   return false;
 }
 
+// isTileTackable ile AYNI taramayı yapar ama sadece true/false yerine TAM
+// OLARAK HANGİ per(ler)e (hangi oyuncunun, kaçıncı grubu, hangi ucu) taşın
+// oturduğunu döndürür. "İşlek taş attın!" cezası uygulandığında oyuncuya
+// (ve masadaki herkese) taşın NEREYE oturduğunu 2-3sn yanıp söndürerek
+// göstermek için kullanılır (bkz. Okey101Game#tackHint).
+export function findTackableSpotsForTile(tile, openedHandsAllPlayers, okeyInfo) {
+  const spots = [];
+  if (!tile || isOkeyTile(tile, okeyInfo)) return spots;
+  Object.entries(openedHandsAllPlayers || {}).forEach(([uid, groups]) => {
+    (groups || []).forEach((g, groupIndex) => {
+      if (!g || g.type === 'cift') return;
+      if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'left' });
+      if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'right' });
+    });
+  });
+  return spots;
+}
+
 // ============================================================
 // 5. FAZ: Tur sonu puanlama
 // ============================================================
