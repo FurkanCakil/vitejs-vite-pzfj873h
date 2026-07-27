@@ -19,7 +19,7 @@ import {
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
 import {
-  randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
+  randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, shouldTakeDiscardToOpen, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from './botAI.js';
 
 const TURN_DURATION_MS = 30000;
@@ -254,7 +254,24 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           const prevUidForBot = getPrevTurnUid(data.players || [], turnUid);
           const discardPile = prevUidForBot ? (data.discardPiles?.[prevUidForBot] || []) : [];
           const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
-          const canTakeSide = !data.forcedPileDraw && topDiscard && shouldTakeDiscard(rack, topDiscard, data.okey || null);
+          // 2. madde: elini HENÜZ açmamış bir bot, yerden taş almadan ÖNCE bu
+          // taşla GERÇEKTEN açıp açamayacağını hesaplar — açamayacaksa hiç
+          // almaz, doğrudan (kapalı) desteden çeker. Eskiden "işine yarar
+          // gibi görünen" (shouldTakeDiscard) her taşı alıp, açamayınca geri
+          // koyuyordu; bu görsel olarak "alıp hemen bırakma" tuhaflığına yol
+          // açıyordu. Elini ZATEN açmış bir bot için obligasyon riski
+          // olmadığından eski (genel değerlilik) sezgisi kullanılmaya devam eder.
+          let canTakeSide = false;
+          if (!data.forcedPileDraw && topDiscard) {
+            if (data.hasOpened?.[turnUid]) {
+              canTakeSide = shouldTakeDiscard(rack, topDiscard, data.okey || null);
+            } else {
+              const barrierForBot = data.rules?.foldingEnabled ? (data.foldBarrier || null) : null;
+              const exemptBot = !barrierForBot || isExemptFromFoldBarrier(turnUid, barrierForBot, data.rules, data.teams);
+              const requiredTotalForBot = (barrierForBot && !exemptBot) ? barrierForBot.total + 1 : OPEN_THRESHOLD;
+              canTakeSide = shouldTakeDiscardToOpen(rack, topDiscard, data.okey || null, requiredTotalForBot);
+            }
+          }
           const drawResult = canTakeSide ? await handleDrawDiscard(turnUid) : await handleDrawPile(turnUid);
           if (isStale()) return;
           if (!apply(drawResult)) return;
@@ -984,10 +1001,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
       };
-      // İlk kez per ile açan, katlamalı mod aktifken ve BARAJ HENÜZ YOKKEN
-      // (yani bu oyuncu barajı kuran ilk kişiyse) tur boyunca geçerli barajı
-      // kurar. Sonraki turlarda (aynı elde) bu değişmez.
-      if (!alreadyOpened && foldingActive && !barrier) {
+      // Katlamalı mod: baraj SABİT DEĞİLDİR — ilk açan barajı kurar, sonra
+      // biri onu DAHA BÜYÜK bir toplamla geçerse (ör. Ali 39 ile açmışken
+      // birisi 44 ile açarsa) baraj o andan itibaren YENİ (en yüksek) sayı
+      // olur. Bu yüzden hem "baraj hiç yoksa" hem "mevcut barajı geçtiysem"
+      // durumunda baraj güncellenir.
+      if (!alreadyOpened && foldingActive && (!barrier || total > barrier.total)) {
         update.foldBarrier = { total, uid: user.uid };
       }
       // Yandan taş alıp bu açılışla elini açan oyuncu varsa (ve az önce o taşı
@@ -1180,9 +1199,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         nextOpenedWithPairs[actingUid] = true;
         update[`openedWithPairs.${actingUid}`] = true;
       }
-      // bkz. handleOpenSeries — botun kurduğu baraj da AYNI şekilde kalıcıdır.
+      // bkz. handleOpenSeries — bot da barajı DAHA BÜYÜK bir toplamla geçerse
+      // barajı kendi sayısına yükseltir (baraj sabit değildir).
       let nextFoldBarrier = data.foldBarrier || null;
-      if (foldingActiveBot && !alreadyOpened && !barrierBot) {
+      if (foldingActiveBot && !alreadyOpened && (!barrierBot || total > barrierBot.total)) {
         nextFoldBarrier = { total, uid: actingUid };
         update.foldBarrier = nextFoldBarrier;
       }

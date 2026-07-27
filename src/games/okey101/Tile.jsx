@@ -1,7 +1,12 @@
 import React from 'react';
 import { COLOR_SYMBOLS, effectiveTile } from './tiles.js';
 
-const COLOR_TEXT_CLASS = { black: 'text-slate-900', red: 'text-red-600', blue: 'text-blue-600', yellow: 'text-amber-600' };
+// 4. madde: eski sarı (amber-600, #d97706) kırmızı (red-600, #dc2626) ile aynı
+// sıcak/turuncumsu aile içinde kaldığı için uzaktan/küçük boyutta birbirine
+// karışabiliyordu. yellow-500 (#eab308) belirgin şekilde SARI bir tondur
+// (kırmızıdan çok daha uzak bir renk tekerleği açısı), hem daha AÇIK hem de
+// taşın kendi kehribar (amber-50/100) zemininden hâlâ net ayırt edilebilir.
+const COLOR_TEXT_CLASS = { black: 'text-slate-900', red: 'text-red-600', blue: 'text-blue-600', yellow: 'text-yellow-500' };
 
 const SIZE_CLASS = {
   normal: 'w-8 h-11 sm:w-11 sm:h-16',
@@ -74,6 +79,23 @@ function FakeOkeyFace({ px }) {
   );
 }
 
+// 4. madde: normal taşlarda ana simgenin (rakam) ALTINDA hep küçük bir ikinci
+// işaret (renk sembolü) bulunur; Sahte Okey'de halkaların altı BOŞ kalınca
+// düzen bozuk/eksik görünüyordu. Bu üç küçük nokta, o alt-orta boşluğu
+// normal taşlarla AYNI ritimde doldurur ama renk/sayı SÖYLEMEZ (kimliği
+// belli etmez) — sadece "burası kasıtlı olarak farklı bir taş" izlenimini
+// tamamlar.
+function FakeOkeyMark({ px }) {
+  const dot = Math.max(2, Math.round(px * 0.05));
+  return (
+    <div className="flex items-center justify-center" style={{ gap: `${dot}px` }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} style={{ width: dot, height: dot, backgroundColor: '#1e293b' }} className="rounded-full opacity-70" />
+      ))}
+    </div>
+  );
+}
+
 // Tek bir Okey taşının görsel temsili. Erişilebilirlik için sayının altında
 // rengine karşılık gelen bir sembol de gösterilir (sadece renge güvenilmez).
 //
@@ -105,7 +127,10 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
       {faceDown ? (
         <BackPattern px={facePx} />
       ) : tile.isJoker ? (
-        <FakeOkeyFace px={facePx} />
+        <div className="flex flex-col items-center justify-center gap-0.5">
+          <FakeOkeyFace px={facePx} />
+          <FakeOkeyMark px={facePx} />
+        </div>
       ) : (
         <div className="flex flex-col items-center justify-center gap-0.5">
           <span style={px?.number} className={`${px ? '' : NUMBER_TEXT_CLASS[size]} font-black leading-none flex items-center justify-center ${colorClass}`}>{shown.number}</span>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Crown, Bot as BotIcon, User } from 'lucide-react';
-import Tile from './Tile.jsx';
+import Tile, { TILE_ASPECT } from './Tile.jsx';
 
 // Diğer oyuncuların ıstakadaki taşları/taş SAYISI GÖSTERİLMEZ (hile önleme +
 // istenmeyen bilgi kirliliği) — sadece isim ve skor gösterilir. Attıkları taş
@@ -55,7 +55,14 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
     compact,
   } : null;
 
-  const hasFloat = !!(topSeat?.topDiscard || rightSeat?.topDiscard);
+  // 2. madde: bu şerit eskiden SADECE bir atış varken (hasFloat) render
+  // ediliyordu — ilk bot taşını attığı an bu satır aniden BELİRİP altındaki
+  // her şeyi (tur bilgisi, açılan eller, ıstaka) aşağı itiyor, bu da "ekran
+  // hafif kayıyor" diye hissedilen ani sıçramanın kaynağıydı. Artık şerit
+  // HER ZAMAN render edilir (yüksekliği baştan ayrılır); içindeki taş(lar)
+  // sadece varsa gösterilir — layout hiçbir zaman zıplamaz.
+  const floatWidth = compact ? 22 : 30;
+  const floatHeight = Math.round(floatWidth * TILE_ASPECT);
 
   return (
     <div className={`w-full flex flex-col items-center ${compact ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
@@ -67,16 +74,14 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
       {/* Atılan taşlar: sol yarının ortası = ÜSTTEKİ'nin SOLDAKİ'ne attığı taş,
           sağ yarının ortası = SAĞDAKİ'nin ÜSTTEKİ'ne attığı taş. Kimin kime
           attığı masa geometrisinden zaten belli olduğu için isim yazılmaz. */}
-      {hasFloat && (
-        <div className="w-full max-w-md sm:max-w-2xl flex items-start">
-          <div className="flex-1 flex justify-center">
-            {topSeat?.topDiscard && leftSeat && <DiscardFloat tile={topSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
-          </div>
-          <div className="flex-1 flex justify-center">
-            {rightSeat?.topDiscard && topSeat && <DiscardFloat tile={rightSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
-          </div>
+      <div className="w-full max-w-md sm:max-w-2xl flex items-start" style={{ minHeight: `${floatHeight}px` }}>
+        <div className="flex-1 flex justify-center">
+          {topSeat?.topDiscard && leftSeat && <DiscardFloat tile={topSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
         </div>
-      )}
+        <div className="flex-1 flex justify-center">
+          {rightSeat?.topDiscard && topSeat && <DiscardFloat tile={rightSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
+        </div>
+      </div>
 
       {/* Sol / Orta (deste + gösterge) / Sağ.
           Telefonda (dar ekran) sol+sağ koltuklar yan yana bir satırda, orta alan

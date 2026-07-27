@@ -5,7 +5,7 @@
 // fonksiyonların döndürdüğü kararları uygular.
 
 import { COLORS, isOkeyTile, effectiveTile } from './tiles.js';
-import { validateGroup, canTackTile, isTileTackable } from './gameLogic.js';
+import { validateGroup, canTackTile, isTileTackable, OPEN_THRESHOLD } from './gameLogic.js';
 
 // Taşın kurallara göre geçerli yüz değeri. Sahte Okey artık joker DEĞİL; o elin
 // Okey'inin renk/sayısına sahip normal bir taş gibi davranır (bkz. tiles.js).
@@ -150,6 +150,35 @@ export function shouldTakeDiscard(handTiles, discardTile, okeyInfo) {
   if (usedInMeld && valueWith > valueWithout) return true;
 
   return (eff(discardTile, okeyInfo).number || 0) >= 12; // yüksek değerli tekil taş — ileride işe yarayabilir
+}
+
+// Henüz elini AÇMAMIŞ bir bot için: yerden taş almak SADECE bu taşı alınca
+// GERÇEKTEN açabilecekse (5 tam çift kurulabiliyorsa YA DA per toplamı
+// `requiredTotal`ı geçiyorsa VE alınan taş o per'de/çiftte KULLANILIYORSA)
+// mantıklıdır. Açılmadan önce yerden taş almanın (bu oyunda) tek bedeli,
+// o taşı KULLANAMAZSA elini AÇANA kadar geri koyup desteden çekmeye
+// ZORLANMASIdır — yani "iyi görünen ama açmaya yetmeyen" bir taş için bunu
+// göze almak gereksiz bir gecikme/görsel tuhaflıktan başka bir şey
+// kazandırmaz. Bu yüzden `shouldTakeDiscard`'ın (açılmış bot/genel arzu
+// heuristiği) aksine burada SADECE "bu taşla gerçekten açabilir miyim?"
+// sorusu sorulur. `requiredTotal`, katlamalı mod barajı aktifse (ve bot
+// ondan muaf değilse) normal 101'den YÜKSEK olabilir (bkz. Okey101Game).
+export function shouldTakeDiscardToOpen(handTiles, discardTile, okeyInfo, requiredTotal = OPEN_THRESHOLD) {
+  if (!discardTile) return false;
+  const withTile = [...handTiles, discardTile];
+
+  // Çift açma barajdan ETKİLENMEZ (sadece Seri Aç etkilenir) — bu yüzden
+  // `requiredTotal` normal eşiğin üstündeyse (baraj aktifse) çift yolu
+  // denenmez, sadece per (seri/set) yolu değerlendirilir.
+  if (requiredTotal <= OPEN_THRESHOLD) {
+    const pairs = pickBotPairs(withTile, okeyInfo);
+    if (pairs.length === 5 && pairs.some((p) => p.tiles.some((t) => t.id === discardTile.id))) return true;
+  }
+
+  const melds = pickBotMelds(withTile, okeyInfo);
+  const total = melds.reduce((s, m) => s + m.value, 0);
+  const usedInMeld = melds.some((m) => m.tiles.some((t) => t.id === discardTile.id));
+  return usedInMeld && total >= requiredTotal;
 }
 
 // Masadaki (kendi veya rakip) açık perlere işlenebilecek (tacking) tüm fırsatları tarar.

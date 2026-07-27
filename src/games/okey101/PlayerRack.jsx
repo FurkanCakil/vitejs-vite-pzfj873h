@@ -109,7 +109,7 @@ export default function PlayerRack({
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
 }) {
   const safeRack = useMemo(() => normalizeRack(rack), [rack]);
-  const safeGroups = groups || {};
+  const safeGroups = groups || {}; // SUNUCU-onaylı groups — sadece iyimser kopyanın "yakalandığını" tespit etmek için kullanılır.
   const { height: viewportHeight, width: viewportWidth } = useViewport();
   const cols = rackColumns(compact, viewportWidth);
   const rows = Math.ceil(RACK_SLOTS / cols);
@@ -207,6 +207,39 @@ export default function PlayerRack({
     if (same) setOptimisticRack(null);
   }, [safeRack, optimisticRack]);
 
+  // KÖK NEDEN (3. madde — "per ışınlanıyor" + "Per Onayla'da gecikme"):
+  // `rack`'ın aksine `groups` (perler) hiç iyimser katmana sahip değildi —
+  // "Per Onayla"ya basınca grup SADECE sunucu round-trip'i tamamlanınca
+  // (groupOf/allSelectedAreCompleteGroups üzerinden) "grup" olarak
+  // TANINIYORDU. Bu, HEM buton tıklandığında görsel tepkinin gecikmeli
+  // hissetmesine HEM DE — daha kötüsü — kullanıcı onayladıktan HEMEN sonra
+  // (server round-trip bitmeden) o per'i SÜRÜKLEMEYE çalışırsa `groupOf`
+  // grubu henüz tanımadığı için sürüklemenin per'in TÜMÜ yerine SADECE
+  // dokunulan tek taşı taşımasına (yani per'in "parçalanmasına/ışınlanmasına")
+  // yol açıyordu. `optimisticGroups`, `optimisticRack` ile BİREBİR aynı
+  // desende, aynı sorunu aynı şekilde çözer.
+  const [optimisticGroups, setOptimisticGroups] = useState(null);
+  const optimisticGroupsTimerRef = useRef(null);
+  useEffect(() => () => { if (optimisticGroupsTimerRef.current) clearTimeout(optimisticGroupsTimerRef.current); }, []);
+
+  const baseGroups = optimisticGroups || safeGroups;
+  const baseGroupsRef = useRef(baseGroups);
+  useEffect(() => { baseGroupsRef.current = baseGroups; }, [baseGroups]);
+
+  // Sunucu aynı gruplara ulaştıysa iyimser kopya kendiliğinden düşer.
+  // NOT: `groups` (ham prop) bağımlılık olarak kullanılır, `safeGroups`
+  // (`groups || {}`) DEĞİL — ikincisi her render'da yeni bir referans
+  // sayılabildiği için (lint bunu doğru tespit ediyor) gereksiz tetiklenirdi.
+  useEffect(() => {
+    if (!optimisticGroups) return;
+    const serverGroups = groups || {};
+    const serverKeys = Object.keys(serverGroups);
+    const optKeys = Object.keys(optimisticGroups);
+    const same = serverKeys.length === optKeys.length
+      && optKeys.every((gid) => (serverGroups[gid] || []).join(',') === (optimisticGroups[gid] || []).join(','));
+    if (same) setOptimisticGroups(null);
+  }, [groups, optimisticGroups]);
+
   // PERFORMANS/DOĞRULUK: `handleUpdateRack` (Okey101Game.jsx) her çağrıldığında
   // sunucudan OKUYUP birleştirip (mergeRackLayout) YAZAN bir transaction'dır.
   // Eskiden HER taş/per hareketinde (applyRack her çağrıldığında) YENİ bir
@@ -242,8 +275,13 @@ export default function PlayerRack({
     return writeChainRef.current;
   };
 
-  // Taşları yeni düzene taşırken EKRANDA hemen göster, sunucuya yazımı debounce et.
-  const applyRack = (newRack, newGroups) => {
+  // Taşları/perleri yeni düzene taşırken EKRANDA (rack VE groups) hemen
+  // göster, sunucuya yazımı debounce et. `immediate` true ise (buton
+  // tıklamaları — Per Onayla/Onayı Kaldır/Peri Güncelle gibi seyrek/kasıtlı
+  // aksiyonlar) debounce beklenmez, hemen (ve varsa önceki yazımların
+  // sırasını koruyarak) gönderilir; SÜRÜKLEME kaynaklı yeniden konumlamalar
+  // (sık olabilir) her zaman debounce'lu kalır.
+  const applyRack = (newRack, newGroups, { immediate = false } = {}) => {
     baseRackRef.current = newRack; // bir sonraki sürükleme render'ı BEKLEMEDEN bunu görsün
     setOptimisticRack(newRack);
     if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
@@ -251,7 +289,13 @@ export default function PlayerRack({
     // sonsuza dek asılı kalmasın (gerçek veri her hâlükârda kazanır).
     optimisticTimerRef.current = setTimeout(() => setOptimisticRack(null), 2500);
 
+    baseGroupsRef.current = newGroups;
+    setOptimisticGroups(newGroups);
+    if (optimisticGroupsTimerRef.current) clearTimeout(optimisticGroupsTimerRef.current);
+    optimisticGroupsTimerRef.current = setTimeout(() => setOptimisticGroups(null), 2500);
+
     pendingWriteRef.current = { rack: newRack, groups: newGroups };
+    if (immediate) { flushRackWrite(); return; }
     if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
     writeDebounceRef.current = setTimeout(flushRackWrite, 300);
   };
@@ -287,9 +331,9 @@ export default function PlayerRack({
 
   const groupOf = useMemo(() => {
     const map = {};
-    Object.entries(safeGroups).forEach(([gid, tileIds]) => tileIds.forEach((tid) => { map[tid] = gid; }));
+    Object.entries(baseGroups).forEach(([gid, tileIds]) => tileIds.forEach((tid) => { map[tid] = gid; }));
     return map;
-  }, [safeGroups]);
+  }, [baseGroups]);
 
   const selectedIds = useMemo(() => [...selected], [selected]);
   const allUngrouped = selectedIds.length > 0 && selectedIds.every((id) => !groupOf[id]);
@@ -304,7 +348,7 @@ export default function PlayerRack({
   }, [selectedIds, groupOf]);
   const allSelectedAreCompleteGroups = selectedIds.length > 0
     && selectedIds.every((id) => groupOf[id])
-    && selectedGroupIds.every((gid) => (safeGroups[gid] || []).every((id) => selected.has(id)));
+    && selectedGroupIds.every((gid) => (baseGroups[gid] || []).every((id) => selected.has(id)));
   const canRemoveGroup = allSelectedAreCompleteGroups && selectedGroupIds.length === 1;
   // "Peri Güncelle" (2. madde): TAM BİR mevcut per (tümüyle seçili) + ona
   // bitişik getirilmiş TEK bir grupsuz taş seçiliyse, peri bozup baştan
@@ -312,16 +356,18 @@ export default function PlayerRack({
   const ungroupedSelectedIds = useMemo(() => selectedIds.filter((id) => !groupOf[id]), [selectedIds, groupOf]);
   const canAttemptUpdateGroup = selectedGroupIds.length === 1
     && ungroupedSelectedIds.length === 1
-    && selectedIds.length === (safeGroups[selectedGroupIds[0]] || []).length + 1;
+    && selectedIds.length === (baseGroups[selectedGroupIds[0]] || []).length + 1;
   const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule;
   // İlk açılışta TAM 5 çift şart; zaten açmış (ve kural gereği çift sürebilen)
   // bir oyuncu için 1+ çift yeterlidir (bkz. gameLogic#canPlayerLayPairs).
   const pairCountOk = hasOpenedAlready ? selectedGroupIds.length >= 1 : selectedGroupIds.length === 5;
   const canOpenPairs = allSelectedAreCompleteGroups && pairCountOk && canAct && canOpenPairsRule;
 
-  const commit = (newRack, newGroups) => {
+  // `immediate`: Per Onayla/Onayı Kaldır/Peri Güncelle gibi SEYREK, KASITLI
+  // buton tıklamaları debounce'u atlayıp hemen yazar (bkz. applyRack).
+  const commit = (newRack, newGroups, { immediate = false } = {}) => {
     setSelected(new Set());
-    applyRack(newRack, newGroups ?? safeGroups);
+    applyRack(newRack, newGroups ?? baseGroups, { immediate });
   };
 
   // Gruplu bir taşa tıklamak artık o grubu seçimden EKLER/ÇIKARIR (diğer seçili
@@ -330,7 +376,7 @@ export default function PlayerRack({
     if (!isOwner) return;
     const gid = groupOf[tile.id];
     if (gid) {
-      const groupTileIds = safeGroups[gid] || [];
+      const groupTileIds = baseGroups[gid] || [];
       const fullyIncluded = groupTileIds.length > 0 && groupTileIds.every((id) => selected.has(id));
       setSelected((prev) => {
         const next = new Set(prev);
@@ -363,14 +409,14 @@ export default function PlayerRack({
     }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const ordered = baseRack.filter((t) => t && selected.has(t.id)).map((t) => t.id);
-    commit(baseRack, { ...safeGroups, [gid]: ordered });
+    commit(baseRack, { ...baseGroups, [gid]: ordered }, { immediate: true });
   };
 
   const removeGroup = () => {
     const gid = groupOf[selectedIds[0]];
-    const nextGroups = { ...safeGroups };
+    const nextGroups = { ...baseGroups };
     delete nextGroups[gid];
-    commit(baseRack, nextGroups);
+    commit(baseRack, nextGroups, { immediate: true });
   };
 
   // "Peri Güncelle": mevcut peri bozup taşları tek tek yeniden seçmek yerine,
@@ -390,10 +436,10 @@ export default function PlayerRack({
     }
     const oldGid = selectedGroupIds[0];
     const newGid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-    const nextGroups = { ...safeGroups };
+    const nextGroups = { ...baseGroups };
     delete nextGroups[oldGid];
     nextGroups[newGid] = orderedTiles.map((t) => t.id);
-    commit(baseRack, nextGroups);
+    commit(baseRack, nextGroups, { immediate: true });
   };
 
   // NOT: `onOpenSeries`/`onOpenPairs`, sunucudaki (debounce'lanmış olabilecek)
@@ -444,8 +490,11 @@ export default function PlayerRack({
     const freshIndex = rackNow.findIndex((t) => t && t.id === tile.id);
     const fromIndex = freshIndex !== -1 ? freshIndex : index;
 
-    const gid = groupOf[tile.id];
-    const tileIds = gid ? (safeGroups[gid] || [tile.id]) : [tile.id];
+    // `groupOf` (useMemo) render'a bağlıdır ve art arda hızlı sürüklemelerde
+    // (bkz. baseRackRef yorumu) BAYAT olabilir; grup burada doğrudan
+    // `baseGroupsRef`'ten (senkron güncellenen) taranarak bulunur.
+    const gid = Object.keys(baseGroupsRef.current).find((g) => baseGroupsRef.current[g].includes(tile.id)) || null;
+    const tileIds = gid ? (baseGroupsRef.current[gid] || [tile.id]) : [tile.id];
     // Grup içinde TUTULAN taşın kaçıncı sırada olduğu: bırakırken blok, imlecin
     // altındaki slot bu taşa denk gelecek şekilde konumlanır. Böylece per'i
     // ortasından tutup boş alanın ortasına bırakmak da doğru çalışır.
@@ -575,18 +624,18 @@ export default function PlayerRack({
       // Blok, TUTULAN taş imlecin altındaki slota gelecek şekilde hizalanır.
       const start = Math.max(0, Math.min(dropIndex - d.grabOffset, RACK_SLOTS - d.tileIds.length));
       const newRack = moveGroupBlockToSlot(rackNow, d.tileIds, start);
-      if (newRack !== rackNow) applyRack(newRack, safeGroups);
+      if (newRack !== rackNow) applyRack(newRack, baseGroupsRef.current);
       return;
     }
 
     if (dropIndex === d.fromIndex) return;
     // Hedef, taşınmayan BAŞKA bir grubun taşıysa reddet (grup bölünmesin).
     const targetTile = rackNow[dropIndex];
-    if (targetTile && groupOf[targetTile.id]) return;
+    if (targetTile && Object.keys(baseGroupsRef.current).some((g) => baseGroupsRef.current[g].includes(targetTile.id))) return;
 
     // Sabit slot fiziği: sadece hedef slot etkilenir, diğer taşlar ASLA kaymaz
     // (boşsa taş oraya gider, doluysa yer değiştirir).
-    applyRack(moveTileToSlot(rackNow, d.fromIndex, dropIndex), safeGroups);
+    applyRack(moveTileToSlot(rackNow, d.fromIndex, dropIndex), baseGroupsRef.current);
   };
 
   const renderRow = (rowIndex) => {

@@ -38,19 +38,22 @@ export function getPrevTurnUid(players, currentUid) {
 // Katlamalı mod: per (seri/set) barajı
 // ============================================================
 // "Katlamalı" kuralı açıksa, elini per (Seri Aç) ile İLK açan oyuncunun
-// toplam per değeri o TUR boyunca geçerli bir "baraj" oluşturur — bu baraj
-// sabit kalır (turdaki her yeni per açılışında değişmez), sadece kimin
-// muaf olduğu değişebilir. Ondan sonra per ile açmaya çalışan (ve muaf
-// olmayan) her oyuncu bu barajı KESİN OLARAK GEÇMEK (>) zorundadır; aksi
-// halde normal 101 barajını geçememiş gibi -101 ceza yer.
+// toplam per değeri o TUR için bir "baraj" oluşturur. Bu baraj SABİT
+// DEĞİLDİR: daha sonra biri bu barajı DAHA BÜYÜK bir toplamla geçerse
+// (ör. Ali 39 ile açıp barajı kurmuşken sonra biri 44 ile açarsa), yeni
+// baraj o ANDAN İTİBAREN o en yüksek sayı olur (bkz. Okey101Game —
+// `foldBarrier` her başarılı per açılışında `total > barrier.total` ise
+// güncellenir). Per ile açmaya çalışan (ve muaf olmayan) her oyuncu GÜNCEL
+// barajı KESİN OLARAK GEÇMEK (>) zorundadır; aksi halde normal 101 barajını
+// geçememiş gibi -101 ceza yer.
 
-// Baraj gösterimi: "123 ve 41" (tam bölünüyorsa) ya da "124 ve 41 yan 1"
+// Baraj gösterimi: "123 (41)" (3'e tam bölünüyorsa) ya da "124 (41 yan 1)"
 // (bölümden kalan varsa). 3'e bölme, oyuncuların gerçek Okey masalarında
 // puanı "lira/kat" birimine çevirmesine karşılık gelir.
 export function formatFoldBarrier(total) {
   const div = Math.floor(total / 3);
   const rem = total % 3;
-  return rem === 0 ? `${total} ve ${div}` : `${total} ve ${div} yan ${rem}`;
+  return rem === 0 ? `${total} (${div})` : `${total} (${div} yan ${rem})`;
 }
 
 // Bu oyuncu, `barrier`i KURAN oyuncunun (barrier.uid) barajından MUAF mı?
