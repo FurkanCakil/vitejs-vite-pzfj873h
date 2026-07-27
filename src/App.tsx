@@ -34,6 +34,7 @@ import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_L
 import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
 import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
 import { isBotUid as isOkeyBotUid } from './games/okey101/botPlayers.js';
+import { BOT_UID as CONNECT4_BOT_UID, DIFFICULTY_LABELS as CONNECT4_DIFFICULTY_LABELS } from './games/connect4/bot.js';
 
 // Bazı telefon tarayıcılarında (çerez/site verisi tamamen engelliyken ya da
 // depolama kotası dolduğunda) localStorage'a ERİŞMEK BİLE istisna fırlatır.
@@ -269,7 +270,7 @@ export default function App() {
   }, []);
 
   const startBotGame = (gameId, difficulty) => {
-    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla')) return;
+    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla' && gameId !== 'connect4')) return;
     let initialState;
 
     if (gameId === 'tavla') {
@@ -310,6 +311,14 @@ export default function App() {
         positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null,
         drawOffer: null, takebackOffer: null, winner: null, drawReason: null, winReason: null,
         turn: whiteUid, startingPlayer: whiteUid, rematchRequestedBy: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    } else if (gameId === 'connect4') {
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, CONNECT4_BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [CONNECT4_BOT_UID]: `Bot (${CONNECT4_DIFFICULTY_LABELS[difficulty] || difficulty})` },
+        scores: { [user.uid]: 0, [CONNECT4_BOT_UID]: 0 }, status: 'playing', board: createInitialConnect4Board(),
+        turn: user.uid, startingPlayer: user.uid, winner: null, winningLine: null, lastMove: null, rematchRequestedBy: null,
         abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
       };
     } else {

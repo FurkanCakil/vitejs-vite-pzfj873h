@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Eye, Crown, Users, Loader2, Check, X, Bot } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
@@ -6,16 +6,14 @@ import {
   CONNECT4_COLS, CONNECT4_ROWS, createInitialConnect4Board,
   findDropRow, isColumnFull, isConnect4BoardFull, checkConnect4Winner,
 } from './logic.js';
+import { BOT_UID, getBotColumn, DIFFICULTY_LABELS } from './bot.js';
 
 // Kullanıcı isteği: klasik sarı/kırmızı yerine KIRMIZI ve MAVİ oyuncu.
 const DISC_CLASS = { red: 'bg-gradient-to-br from-red-400 to-red-600 border-red-300', blue: 'bg-gradient-to-br from-blue-400 to-blue-600 border-blue-300' };
 const TEXT_CLASS = { red: 'text-red-400', blue: 'text-blue-400' };
 
-// FAZ 1: Sadece UI, yerçekimi fiziği ve kazanma algoritması. Bot yapay
-// zekası (AI) BİLEREK burada YOK — `isBot` prop'u sadece diğer oyunlarla
-// AYNI çağrı imzasını (App.tsx#render) korumak için kabul edilir; App.tsx
-// henüz Connect 4'ü bot listesine eklemediği için bu her zaman false gelir.
-export default function Connect4Game({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, setLocalRoomData }) {
+// FAZ 2: Minimax + Alpha-Beta budamalı bot yapay zekası (bkz. bot.js).
+export default function Connect4Game({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
   const isPlayer1 = roomData.players[0] === user.uid;
@@ -75,8 +73,52 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
     finally { setIsSubmitting(false); }
   };
 
+  // 4. MADDE (İnsansı Gecikme): sıra bota geldiğinde taşı ANINDA atmaz — 1 ile
+  // 2.5 saniye arası rastgele bir "düşünüyor" bekleyişinden sonra Minimax +
+  // Alpha-Beta ile bulduğu en iyi sütuna oynar. Mevcut turn/transaction
+  // state'lerine dokunmadan, tıpkı bir insan oyuncunun `handleColumnClick`'i
+  // gibi aynı board/turn/winner/score güncellemesini üretir.
+  useEffect(() => {
+    if (!isBot || isSpectator || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    const botColor = p1Uid === BOT_UID ? 'red' : 'blue';
+    const humanColor = botColor === 'red' ? 'blue' : 'red';
+    const timer = setTimeout(() => {
+      const col = getBotColumn(board, botDifficulty, botColor, humanColor);
+      if (col === null || col === undefined) return;
+      const row = findDropRow(board, col);
+      if (row === null) return;
+      playSound('move');
+      const newBoard = [...board];
+      newBoard[row * CONNECT4_COLS + col] = botColor;
+      const winInfo = checkConnect4Winner(newBoard, row, col);
+      const isDraw = !winInfo && isConnect4BoardFull(newBoard);
+      const update = {
+        board: newBoard,
+        lastMove: { row, col },
+        turn: (winInfo || isDraw) ? null : user.uid,
+        winner: winInfo ? winInfo.winner : (isDraw ? 'Draw' : null),
+        winningLine: winInfo?.line || null,
+      };
+      if (winInfo) {
+        playSound('win');
+        const winnerUid = winInfo.winner === 'red' ? p1Uid : p2Uid;
+        update.scores = { ...roomData.scores, [winnerUid]: (roomData.scores?.[winnerUid] || 0) + 1 };
+      }
+      updateRoom(update);
+    }, 1000 + Math.random() * 1500);
+    return () => clearTimeout(timer);
+  }, [isBot, roomData.turn, roomData.winner, roomData.status]);
+
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (isBot) {
+      const nextStarter = roomData.startingPlayer === user.uid ? BOT_UID : user.uid;
+      await updateRoom({
+        board: createInitialConnect4Board(), turn: nextStarter, startingPlayer: nextStarter,
+        winner: null, winningLine: null, lastMove: null, rematchRequestedBy: null,
+      });
+      return;
+    }
     await updateRoom({ rematchRequestedBy: user.uid });
   };
   const acceptRematch = async () => {
@@ -89,6 +131,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
 
@@ -125,7 +168,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
       <div className="w-full flex flex-col items-center z-10">
         <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-blue-500/20 shadow-lg">
           {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
-          {isBot && !isSpectator && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI</div>}
+          {isBot && !isSpectator && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
           <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor} drop-shadow-md`}>{statusMsg}</div>
           <div className="flex justify-between items-start w-full px-2">
             <div className={`text-center flex flex-col items-center ${TEXT_CLASS.red} flex-1 min-w-0 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-red-400/50' : ''}`}>

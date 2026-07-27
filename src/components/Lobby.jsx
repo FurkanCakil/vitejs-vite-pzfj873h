@@ -10,7 +10,7 @@ const GAMES = [
   { id: 'connect4', name: 'Bağlan 4', available: true, icon: '🔴🔵' },
 ];
 
-const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla'];
+const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4'];
 
 const DIFFICULTIES = [
   { id: 'easy', label: 'Kolay' },
