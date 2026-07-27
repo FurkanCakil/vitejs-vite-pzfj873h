@@ -23,10 +23,12 @@ import TavlaGame from './games/backgammon/TavlaGame.jsx';
 import ChessGame from './games/chess/ChessGame.jsx';
 import CheckersGame from './games/checkers/CheckersGame.jsx';
 import Okey101Game from './games/okey101/Okey101Game.jsx';
+import Connect4Game from './games/connect4/Connect4Game.jsx';
 
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
 import { createInitialCheckersBoard } from './games/checkers/logic.js';
+import { createInitialConnect4Board } from './games/connect4/logic.js';
 import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
 import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
@@ -346,7 +348,7 @@ export default function App() {
        
        const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
-         scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : null,
+         scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
          turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
        };
        
@@ -659,6 +661,7 @@ export default function App() {
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
               </div>
             )}
