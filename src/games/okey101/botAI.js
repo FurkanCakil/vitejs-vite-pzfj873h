@@ -249,10 +249,23 @@ export function pickDiscardTile(handTiles, okeyInfo, openedHandsAllPlayers = nul
 // sayılı olanı seçer. pickDiscardTile'ın aksine (o, bot stratejisi gereği
 // eşitlikte en büyüğü tercih eder), burada amaç oyuncuya en az zararı veren/en
 // masum atışı otomatik yapmaktır.
-export function pickSmallestSafeDiscard(handTiles, okeyInfo, openedHandsAllPlayers = null) {
+export function pickSmallestSafeDiscard(handTiles, okeyInfo, openedHandsAllPlayers = null, ownGroups = null) {
   if (handTiles.length === 0) return null;
-  const nonOkey = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
-  let candidates = nonOkey.length > 0 ? nonOkey : handTiles;
+
+  // 1. madde: Oyuncunun "Per Onayla" ile ONAYLADIĞI perlerdeki taşlar süre
+  // aşımında ASLA atılmamalı — oyuncu o taşları bilerek bir per için ayırmış
+  // durumda ve süresi dolduğu için o peri bozmak en can sıkıcı sonuçtu.
+  // Sadece onaylı perlere ait OLMAYAN taşlar aday olur; hiç serbest taş
+  // kalmamışsa (tüm el perlere ayrılmışsa) mecburen tüm taşlara düşülür.
+  let candidates = handTiles;
+  if (ownGroups) {
+    const reserved = new Set(Object.values(ownGroups).flat());
+    const free = handTiles.filter((t) => !reserved.has(t.id));
+    if (free.length > 0) candidates = free;
+  }
+
+  const nonOkey = candidates.filter((t) => !isOkeyTile(t, okeyInfo));
+  if (nonOkey.length > 0) candidates = nonOkey;
   candidates = excludeTackable(candidates, openedHandsAllPlayers, okeyInfo);
   const unconnected = candidates.filter((t) => tileConnectionScore(t, handTiles, okeyInfo) === 0);
   const pool = unconnected.length > 0 ? unconnected : candidates;

@@ -9,12 +9,12 @@ import RoundResultBoard from './RoundResultBoard.jsx';
 import Tile, { TileBack } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
-import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups } from './tiles.js';
+import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
-  validatePairs, canTackTile, findTackableSpotsForTile, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
-  formatFoldBarrier, isExemptFromFoldBarrier,
+  validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
+  formatFoldBarrier, isExemptFromFoldBarrier, requiredPairsToOpen,
   anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds,
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
@@ -23,6 +23,15 @@ import {
 } from './botAI.js';
 
 const TURN_DURATION_MS = 30000;
+// 4. madde: Elini AÇAN oyuncuya, açtığı andan itibaren ek süre verilir —
+// hem masaya çıkan perlere taş işlemesi (tacking) hem de elinde kalanları
+// gözden geçirip hangisini atacağına karar vermesi için. Açma anı zaten
+// turun en yoğun/en çok düşünülen anı; normal 30sn buna yetmiyordu.
+const OPEN_EXTRA_TIME_MS = 15000;
+
+// Elini açan oyuncunun turuna eklenecek yeni son tarih: kalan süresi
+// 15sn'den azsa 15sn'ye tamamlanır, fazlaysa dokunulmaz (süresini kısaltmaz).
+const extendedDeadlineAfterOpen = (currentDeadline) => Math.max(currentDeadline || 0, Date.now() + OPEN_EXTRA_TIME_MS);
 // Bir bot turu bu süreyi aşarsa (ağ/transaction asılması) yeni bir deneme
 // kilidi devralabilir. Normal bir tur artık ~3-6sn sürüyor.
 const BOT_TURN_STUCK_MS = 15000;
@@ -182,7 +191,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
       turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
-      centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null,
+      centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
     }).catch((err) => console.error('Okey101 taş dağıtım hatası:', err));
   }, [roomData.status, roomData.racks, isHost]);
 
@@ -428,7 +437,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         }
         if (stillMine() && data.hasDrawnThisTurn) {
           const rack = (data.racks?.[turnUid] || []).filter(Boolean);
-          const tile = pickSmallestSafeDiscard(rack, data.okey || null, data.openedHands || {});
+          // Oyuncunun onayladığı perlerdeki taşlar korunur (bkz. 1. madde).
+          const tile = pickSmallestSafeDiscard(rack, data.okey || null, data.openedHands || {}, data.groups?.[turnUid] || null);
           if (tile) await handleDiscardTile(tile, turnUid);
         }
 
@@ -1000,6 +1010,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`groups.${user.uid}`]: myGroupsNow,
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
+        // 4. madde: elini açana taşlarını işlemesi/düşünmesi için ek süre.
+        turnDeadline: extendedDeadlineAfterOpen(data.turnDeadline),
       };
       // Katlamalı mod: baraj SABİT DEĞİLDİR — ilk açan barajı kurar, sonra
       // biri onu DAHA BÜYÜK bir toplamla geçerse (ör. Ali 39 ile açmışken
@@ -1062,9 +1074,26 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const validGroupIds = selectedGroupIds.filter((gid) => myGroupsNow[gid]);
 
       const okeyNow = data.okey || null;
-      // İlk açılışta TAM 5 çift şart; sonraki turlarda 1+ çift yeterlidir.
-      const { valid } = validatePairs(myGroupsNow, tilesById, validGroupIds, okeyNow, !alreadyOpened);
-      if (!valid) { outcome = { success: false, reason: alreadyOpened ? 'invalid-pair' : 'invalid' }; return; }
+
+      // 5. madde: Katlamalı modda ÇİFT açılışına da katlama uygulanır — ilk
+      // çift açan 5 çiftle açtıysa sonrakinin en az 6 çift açması gerekir.
+      // (Zaten açmış bir oyuncunun kalan çiftlerini sürmesi barajdan etkilenmez.)
+      const pairsBarrier = data.rules?.foldingEnabled ? (data.foldPairsBarrier || null) : null;
+      const exemptFromPairsBarrier = isExemptFromFoldBarrier(user.uid, pairsBarrier, data.rules, data.teams);
+      const minPairs = alreadyOpened ? 1 : requiredPairsToOpen(pairsBarrier, exemptFromPairsBarrier);
+
+      // 2. madde: SADECE ilk kez ÇİFT ile açarken Gösterge taşı joker sayılır
+      // (eşi masada Gösterge olarak durduğu için asla gelemez). Zaten açmış
+      // bir oyuncunun çift sürmesinde ya da seri/set açılışında GEÇERSİZDİR.
+      const pairIndicator = alreadyOpened ? null : (data.indicator || null);
+
+      const { valid } = validatePairs(myGroupsNow, tilesById, validGroupIds, okeyNow, minPairs, pairIndicator);
+      if (!valid) {
+        outcome = alreadyOpened
+          ? { success: false, reason: 'invalid-pair' }
+          : { success: false, reason: 'invalid', minPairs };
+        return;
+      }
 
       // bkz. handleOpenSeries'teki aynı kural: yandan alınan taş bu açılışta
       // kullanılmak ZORUNDADIR, aksi halde açılış tümüyle reddedilir.
@@ -1092,9 +1121,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`groups.${user.uid}`]: myGroupsNow,
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
+        // 4. madde: elini açana taşlarını işlemesi/düşünmesi için ek süre.
+        turnDeadline: extendedDeadlineAfterOpen(data.turnDeadline),
       };
       // Sadece İLK açılışını çiftle yapan oyuncu "çift açan" sayılır.
       if (!alreadyOpened) update[`openedWithPairs.${user.uid}`] = true;
+      // 5. madde: çift barajı — seri barajıyla aynı mantık, sadece birim
+      // "çift sayısı". Baraj yoksa kurulur, varsa ancak DAHA FAZLA çiftle
+      // açan onu yükseltir.
+      if (!alreadyOpened && data.rules?.foldingEnabled
+        && (!pairsBarrier || validGroupIds.length > pairsBarrier.count)) {
+        update.foldPairsBarrier = { count: validGroupIds.length, uid: user.uid };
+      }
 
       // Çift ile açma: çekilen taşın değerinin 20 katı ceza.
       let penalizedName = null; let penaltyAmount = 0;
@@ -1110,7 +1148,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => { console.error('Okey101 çift açma hatası:', err); outcome = null; });
 
     if (outcome?.reason === 'no-pairs-on-table') showToast('Elindeki çiftleri ancak masada çift açan bir oyuncu varsa işleyebilirsin.', 'red');
-    else if (outcome?.reason === 'invalid') showToast('Geçersiz Çift Seçimi! Açılış için tam olarak 5 çift gerekli.', 'red');
+    else if (outcome?.reason === 'invalid') showToast(`Geçersiz Çift Seçimi! Açılış için en az ${outcome.minPairs ?? 5} geçerli çift gerekli.`, 'red');
     else if (outcome?.reason === 'invalid-pair') showToast('Geçersiz çift! Her per tam 2 taş ve aynı renk+sayı olmalı.', 'red');
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
     else if (outcome?.success === true) {
@@ -1141,17 +1179,26 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const actorRackNow = [...(data.racks?.[actingUid] || [])];
       const okeyNow = data.okey || null;
 
+      // 2. madde: bot da ilk kez çiftle açarken Gösterge taşını joker
+      // sayabilir; sonraki çift sürmelerinde sayamaz.
+      const botPairIndicator = (isPairs && !alreadyOpened) ? (data.indicator || null) : null;
+
       let total = 0;
       for (const m of melds) {
         if (isPairs) {
           if (m.tiles.length !== 2) { outcome = { success: false }; return; }
+          if (!isValidPairTiles(m.tiles[0], m.tiles[1], okeyNow, botPairIndicator)) { outcome = { success: false }; return; }
         } else {
           const result = validateGroup(m.tiles, okeyNow);
           if (!result.valid) { outcome = { success: false }; return; }
           total += result.value;
         }
       }
-      if (isPairs && !alreadyOpened && melds.length !== 5) { outcome = { success: false }; return; }
+      // 5. madde: bot da çift barajına tabidir.
+      const botPairsBarrier = data.rules?.foldingEnabled ? (data.foldPairsBarrier || null) : null;
+      const botExemptPairs = isExemptFromFoldBarrier(actingUid, botPairsBarrier, data.rules, data.teams);
+      const botMinPairs = requiredPairsToOpen(botPairsBarrier, botExemptPairs);
+      if (isPairs && !alreadyOpened && melds.length < botMinPairs) { outcome = { success: false }; return; }
       if (!isPairs && !alreadyOpened && total < OPEN_THRESHOLD) { outcome = { success: false }; return; }
 
       // bkz. handleOpenSeries'teki katlamalı mod barajı — bot da AYNI kurala
@@ -1194,6 +1241,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`racks.${actingUid}`]: actorRackNow,
         [`openedHands.${actingUid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${actingUid}`]: true,
+        // 4. madde: bot da açtıktan sonra aynı ek süreyi alır (insanla eşit
+        // koşullar; süre aşımı kurtarma mekanizması da buna göre kayar).
+        turnDeadline: extendedDeadlineAfterOpen(data.turnDeadline),
       };
       if (isPairs && !alreadyOpened) {
         nextOpenedWithPairs[actingUid] = true;
@@ -1205,6 +1255,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (foldingActiveBot && !alreadyOpened && (!barrierBot || total > barrierBot.total)) {
         nextFoldBarrier = { total, uid: actingUid };
         update.foldBarrier = nextFoldBarrier;
+      }
+      // 5. madde: çift barajı (bkz. handleOpenPairs'teki aynı mantık).
+      let nextFoldPairsBarrier = data.foldPairsBarrier || null;
+      if (isPairs && !alreadyOpened && data.rules?.foldingEnabled
+        && (!botPairsBarrier || melds.length > botPairsBarrier.count)) {
+        nextFoldPairsBarrier = { count: melds.length, uid: actingUid };
+        update.foldPairsBarrier = nextFoldPairsBarrier;
       }
       const st = data.sideTake;
       let penalizedName = null; let penaltyAmount = 0;
@@ -1231,6 +1288,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           scores: nextScores,
           sideTake: penalizedName ? null : (data.sideTake ?? null),
           foldBarrier: nextFoldBarrier,
+          foldPairsBarrier: nextFoldPairsBarrier,
         },
       };
       t.update(roomRef, update);
@@ -1395,7 +1453,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
         turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
-        centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null,
+        centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
       });
     }).catch((err) => console.error('Okey101 yeni tur hatası:', err));
   };
@@ -1500,19 +1558,36 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             <span className={`font-mono font-bold text-slate-200 ${isCompact ? 'text-xs' : 'text-sm sm:text-lg'}`}>{roomData.drawPile?.length ?? 0}</span>
           </div>
 
+          {/* 6. madde: Göstergenin HANGİ taş olduğu, taşın hemen ALTINDA
+              okunaklı ama öne çıkmayan bir boyutta yazılır (ör. "Sarı 7") —
+              böylece Okey'in ne olduğunu hesaplamak için taşa gözle bakmak
+              zorunda kalınmaz. */}
           {roomData.indicator && (
-            <div className={`flex items-center bg-slate-900/70 border border-slate-700 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
-              <span className={`text-slate-400 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Gösterge</span>
-              <Tile tile={roomData.indicator} size="small" okeyInfo={okeyInfo} />
+            <div className={`flex flex-col items-center bg-slate-900/70 border border-slate-700 rounded-lg pointer-events-none ${isCompact ? 'gap-0.5 px-1.5 py-1' : 'gap-1 px-2 py-1.5 sm:px-3'}`}>
+              <div className={`flex items-center ${isCompact ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
+                <span className={`text-slate-400 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Gösterge</span>
+                <Tile tile={roomData.indicator} size="small" okeyInfo={okeyInfo} />
+              </div>
+              <span className={`font-bold text-slate-300 leading-none whitespace-nowrap ${isCompact ? 'text-[9px]' : 'text-[10px] sm:text-xs'}`}>
+                {COLOR_LABELS[roomData.indicator.color] || ''} {roomData.indicator.number}
+              </span>
             </div>
           )}
 
-          {/* 1. madde: Katlamalı mod aktifken kurulan baraj — herkese görünür,
-              per (Seri Aç) açmak isteyen muaf-olmayan herkesin GEÇMESİ gerekir. */}
+          {/* 1. madde: Katlamalı mod aktifken kurulan barajlar — herkese
+              görünür. SERİ barajı puan üzerinden, ÇİFT barajı (5. madde) çift
+              sayısı üzerinden ayrı ayrı işler. */}
           {roomData.foldBarrier && (
             <div className={`flex items-center bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
               <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Baraj</span>
               <span className={`font-mono font-bold text-fuchsia-200 ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
+            </div>
+          )}
+
+          {roomData.foldPairsBarrier && (
+            <div className={`flex items-center bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
+              <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Çift Barajı</span>
+              <span className={`font-mono font-bold text-fuchsia-200 ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{roomData.foldPairsBarrier.count} çift</span>
             </div>
           )}
 
@@ -1711,6 +1786,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             canDiscard={mustDiscard && !mySideTakePending}
             flippedTileIds={flippedTileIds}
             onToggleFlippedTile={toggleFlippedTile}
+            indicator={myHasOpened ? null : (roomData.indicator || null)}
             lastDiscardTile={myTopDiscard}
             incomingDiscard={incomingTile}
             canTakeIncoming={canTakeIncomingNow}

@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Check, X, Layers, Rows3, RefreshCw } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup, isProperlyOrderedGroup } from './gameLogic.js';
+import { validateGroup, isProperlyOrderedGroup, isValidPairTiles } from './gameLogic.js';
 import useViewport from '../../hooks/useViewport.js';
 
 const DRAG_THRESHOLD_PX = 6;
@@ -105,7 +105,7 @@ export default function PlayerRack({
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
   pendingDraw = null, flipTileId = null, compact = false,
-  flippedTileIds = null, onToggleFlippedTile = null,
+  flippedTileIds = null, onToggleFlippedTile = null, indicator = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
 }) {
   const safeRack = useMemo(() => normalizeRack(rack), [rack]);
@@ -182,8 +182,6 @@ export default function PlayerRack({
   // sunucu gidiş-dönüşü demek; sürükle-bırak'ın anlık hissettirmesi için taşın
   // yeni yeri ekranda HEMEN gösterilir, sunucu onayı gelince iyimser kopya düşer.
   const [optimisticRack, setOptimisticRack] = useState(null);
-  const optimisticTimerRef = useRef(null);
-  useEffect(() => () => { if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current); }, []);
 
   const baseRack = optimisticRack || safeRack;
 
@@ -219,8 +217,6 @@ export default function PlayerRack({
   // yol açıyordu. `optimisticGroups`, `optimisticRack` ile BİREBİR aynı
   // desende, aynı sorunu aynı şekilde çözer.
   const [optimisticGroups, setOptimisticGroups] = useState(null);
-  const optimisticGroupsTimerRef = useRef(null);
-  useEffect(() => () => { if (optimisticGroupsTimerRef.current) clearTimeout(optimisticGroupsTimerRef.current); }, []);
 
   const baseGroups = optimisticGroups || safeGroups;
   const baseGroupsRef = useRef(baseGroups);
@@ -261,16 +257,33 @@ export default function PlayerRack({
   const pendingWriteRef = useRef(null); // { rack, groups } — henüz gönderilmemiş en son istenen durum
   const writeChainRef = useRef(Promise.resolve());
   const writeDebounceRef = useRef(null);
-  useEffect(() => () => { if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current); }, []);
+  const inFlightRef = useRef(0);          // sunucuda ŞU AN işlenen yazım sayısı
+  const settleTimerRef = useRef(null);
+  const [writeSettleTick, setWriteSettleTick] = useState(0);
+  useEffect(() => () => {
+    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+  }, []);
+
+  // Yazım hattı tamamen boş mu? (bekleyen debounce YOK, gönderilmemiş
+  // değişiklik YOK, uçuşta transaction YOK)
+  const isWriteIdle = () => !writeDebounceRef.current && !pendingWriteRef.current && inFlightRef.current === 0;
 
   const flushRackWrite = () => {
     if (writeDebounceRef.current) { clearTimeout(writeDebounceRef.current); writeDebounceRef.current = null; }
     const pending = pendingWriteRef.current;
     if (pending) {
       pendingWriteRef.current = null;
+      inFlightRef.current += 1;
       writeChainRef.current = writeChainRef.current
         .then(() => onUpdateRack(pending.rack, pending.groups))
-        .catch((err) => console.error('Okey101 ıstaka senkron hatası:', err));
+        .catch((err) => console.error('Okey101 ıstaka senkron hatası:', err))
+        .finally(() => {
+          inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+          // Hat tamamen boşaldıysa "artık sunucu otoritedir" sinyalini ver
+          // (bkz. aşağıdaki iyimser-katman bırakma efekti).
+          if (isWriteIdle()) setWriteSettleTick((n) => n + 1);
+        });
     }
     return writeChainRef.current;
   };
@@ -284,21 +297,43 @@ export default function PlayerRack({
   const applyRack = (newRack, newGroups, { immediate = false } = {}) => {
     baseRackRef.current = newRack; // bir sonraki sürükleme render'ı BEKLEMEDEN bunu görsün
     setOptimisticRack(newRack);
-    if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
-    // Emniyet: sunucu beklenenden farklı bir yerleşim yazarsa iyimser kopya
-    // sonsuza dek asılı kalmasın (gerçek veri her hâlükârda kazanır).
-    optimisticTimerRef.current = setTimeout(() => setOptimisticRack(null), 2500);
-
     baseGroupsRef.current = newGroups;
     setOptimisticGroups(newGroups);
-    if (optimisticGroupsTimerRef.current) clearTimeout(optimisticGroupsTimerRef.current);
-    optimisticGroupsTimerRef.current = setTimeout(() => setOptimisticGroups(null), 2500);
+    // Yeni bir hareket geldi: bekleyen "iyimser katmanı bırak" planı iptal.
+    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
 
     pendingWriteRef.current = { rack: newRack, groups: newGroups };
     if (immediate) { flushRackWrite(); return; }
     if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
     writeDebounceRef.current = setTimeout(flushRackWrite, 300);
   };
+
+  // 7. madde — "taş bir anlığına eski yerine ışınlanıp geri geliyor" ARTIĞI:
+  // Iyimser katman eskiden SABİT 2500ms'lik kör bir zamanlayıcıyla
+  // bırakılıyordu. Yavaş/çakışan bir yazım 2500ms'yi aşarsa, zamanlayıcı
+  // yazım DAHA UÇUŞTAYKEN tetikleniyor, ekran o an sunucudaki ESKİ yerleşime
+  // düşüyor (taş geri ışınlanıyor), yazım gelince tekrar yeni yerine
+  // sıçrıyordu — kullanıcının tarif ettiği çift sıçrama TAM OLARAK buydu.
+  //
+  // Artık iyimser katman SADECE yazım hattı tamamen boşaldıktan (`isWriteIdle`)
+  // KISA bir süre sonra bırakılır. Normal durumda zaten sunucu bizim
+  // yerleşimimize ulaştığı an yukarıdaki eşitlik kontrolleri katmanı sessizce
+  // düşürür (hiçbir görsel değişiklik olmaz); bu zamanlayıcı yalnızca sunucu
+  // GERÇEKTEN farklı bir şey yazdıysa (ör. araya giren bir çekme) devreye
+  // girer — ve o zaman da düzeltme DOĞRUdur, üstelik yazım bittikten sonra
+  // yalnızca BİR KEZ olur.
+  useEffect(() => {
+    if (!optimisticRack && !optimisticGroups) return;
+    if (!isWriteIdle()) return;
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      if (!isWriteIdle()) return; // bu arada yeni bir hareket geldiyse dokunma
+      setOptimisticRack(null);
+      setOptimisticGroups(null);
+    }, 500);
+    return () => { if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; } };
+  }, [optimisticRack, optimisticGroups, writeSettleTick]);
 
   const clearLongPress = () => {
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
@@ -392,14 +427,24 @@ export default function PlayerRack({
     }
   };
 
-  // "Per Onayla": 1) seçili taşlar ıstakada yan yana mı? 2) (3+ taş seçiliyse)
-  // seçim gerçekten geçerli bir per (set/seri) mi VE seri ise doğru sırada mı?
-  // Sağlanmıyorsa toast ile net bir hata gösterilir ve hiçbir şey gruplanmaz.
-  // Tam 2 taşlık seçimler ("Çift Aç" ön-hazırlığı) per doğrulamasından muaftır.
+  // "Per Onayla": 1) seçili taşlar ıstakada yan yana mı? 2) seçim gerçekten
+  // geçerli mi — 3+ taşta geçerli bir per (set/seri) VE seri ise doğru sırada,
+  // TAM 2 taşta ise geçerli bir ÇİFT. Sağlanmıyorsa toast ile net bir hata
+  // gösterilir ve hiçbir şey gruplanmaz.
+  //
+  // 1. madde: 2 taşlık seçimler eskiden HİÇ doğrulanmıyordu — "sarı 7 + sarı 8"
+  // gibi çift OLMAYAN ikililer de per olarak onaylanabiliyordu. Artık aynı
+  // renk+sayı (ya da joker) şartı aranıyor. Jokerler için bkz. isPairWildcard:
+  // gerçek Okey, Sahte Okey ve (2. madde) Gösterge taşı çift kurabilir.
   const confirmGroup = () => {
     if (!contiguous) { showToast?.('Taşlar yan yana olmalı!', 'red'); return; }
-    if (selectedIds.length >= 3) {
-      const orderedTiles = baseRack.filter((t) => t && selected.has(t.id));
+    const orderedTiles = baseRack.filter((t) => t && selected.has(t.id));
+    if (selectedIds.length === 2) {
+      if (!isValidPairTiles(orderedTiles[0], orderedTiles[1], okeyInfo, indicator)) {
+        showToast?.('Bu iki sayı per oluşturmaz! Çift için aynı renk ve aynı sayı gerekir.', 'red');
+        return;
+      }
+    } else if (selectedIds.length >= 3) {
       const result = validateGroup(orderedTiles, okeyInfo);
       if (!result.valid) { showToast?.('Geçersiz Per Dizilimi!', 'red'); return; }
       if (!isProperlyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
@@ -408,7 +453,7 @@ export default function PlayerRack({
       }
     }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-    const ordered = baseRack.filter((t) => t && selected.has(t.id)).map((t) => t.id);
+    const ordered = orderedTiles.map((t) => t.id);
     commit(baseRack, { ...baseGroups, [gid]: ordered }, { immediate: true });
   };
 

@@ -56,6 +56,17 @@ export function formatFoldBarrier(total) {
   return rem === 0 ? `${total} (${div})` : `${total} (${div} yan ${rem})`;
 }
 
+// 5. madde: Katlama SADECE seri/set açılışına değil, ÇİFT açılışına da
+// uygulanır — ama para/puan yerine ÇİFT SAYISI üzerinden. İlk çift açan 5
+// çiftle açtıysa, ondan sonra çiftle açacak (ve muaf olmayan) herkesin EN AZ
+// 6 çift açması gerekir. Normalde (baraj yokken) ilk açılış için 5 çift şarttır.
+export const PAIRS_OPEN_MIN = 5;
+
+export function requiredPairsToOpen(pairsBarrier, exempt) {
+  if (!pairsBarrier || exempt) return PAIRS_OPEN_MIN;
+  return Math.max(PAIRS_OPEN_MIN, pairsBarrier.count + 1);
+}
+
 // Bu oyuncu, `barrier`i KURAN oyuncunun (barrier.uid) barajından MUAF mı?
 // - Henüz baraj yoksa (bu oyuncu barajı KURACAK ilk kişi) -> muaf (geçecek bir şey yok).
 // - "Eşe katlama" AÇIKSA kimse muaf değildir (takım arkadaşı da geçmek zorunda).
@@ -108,20 +119,18 @@ function seriWindows(normals, jokerCount) {
     const sorted = [...numbers].sort((a, b) => a - b);
     const min = sorted[0]; const max = sorted[sorted.length - 1];
     if (max - min + 1 > total) return;
-    // start >= 1: "0-1-2" gibi var olmayan bir seriye izin verilmez (eskiden
-    // Okey+1+2 böyle okunup 6 yerine 3 puan sayılıyordu).
-    // start <= 13: 14+ ile başlayan pencere zaten 1+ ile başlayanın aynısıdır.
+    // 3. madde: 101 Okey'de seriler 13'te BİTER — 13'ten sonra 1 gelemez.
+    // Bu yüzden pencere tamamen 1..13 aralığında kalmak ZORUNDADIR:
+    //   start >= 1  ("0-1-2" gibi var olmayan bir seri olamaz)
+    //   end   <= 13 ("12-13-1" / "13-1-2" gibi sarmalı seriler olamaz)
     for (let start = Math.max(1, max - total + 1); start <= Math.min(13, min); start++) {
       const end = start + total - 1;
+      if (end > 13) continue;
       if (sorted.every((n) => n >= start && n <= end)) out.push({ color, start, end });
     }
   };
 
   collect(rawNumbers);
-  // 13'ten sonra 1 gelebilir: küçük sayıları (1-3) +13 kaydırıp 13 ile aynı pencereye sığıyor mu dene.
-  if (rawNumbers.includes(13) || rawNumbers.some((n) => n <= 3)) {
-    collect(rawNumbers.map((n) => (n <= 3 ? n + 13 : n)));
-  }
 
   const seen = new Set();
   return out.filter((w) => {
@@ -164,9 +173,10 @@ function pickSeriWindow(tiles, okeyInfo) {
 }
 
 // Bir per'in (taş dizisinin) geçerli bir SET (farklı renk, aynı sayı) ya da
-// SERİ (aynı renk, ardışık sayı, 13->1 sarma dahil) olup olmadığını katı
-// şekilde doğrular ve geçerliyse Okey ikamesi dahil gerçek puan değerini
-// hesaplar. Sadece sayı toplamı YETERLİ DEĞİLDİR — dizilim de doğru olmalı.
+// SERİ (aynı renk, ardışık sayı; 3. madde: seri 13'te BİTER, 13'ten sonra 1
+// GELEMEZ) olup olmadığını katı şekilde doğrular ve geçerliyse Okey ikamesi
+// dahil gerçek puan değerini hesaplar. Sadece sayı toplamı YETERLİ DEĞİLDİR —
+// dizilim de doğru olmalı.
 export function validateGroup(tiles, okeyInfo) {
   if (!tiles || tiles.length < 3) return { valid: false };
   const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
@@ -237,33 +247,59 @@ export function computeSelectedGroupsValue(results) {
   return results.reduce((sum, r) => sum + (r.valid ? r.value : 0), 0);
 }
 
-// Çift açma / çift işleme: seçili her per TAM 2 taş olmalı ve (gerçek Okey
-// herhangi bir taşın eşi sayılabilir) aynı renk+sayı çifti oluşturmalı.
+// ============================================================
+// ÇİFT (pair) kuralları
+// ============================================================
+// Bir taş, ÇİFT oluştururken "her taşın eşi olabilen" bir joker mi?
+//   - Gerçek Okey: her zaman (klasik kural).
+//   - Sahte Okey: 2'li per yapmak için kullanılabilir (2. madde).
+//   - GÖSTERGE ile aynı renk+sayıdaki taş: destede o taşın İKİ kopyası vardır
+//     ve biri masada Gösterge olarak duruyordur — yani elindeki kopyanın eşi
+//     ASLA gelemez. Bu yüzden (sadece ÇİFT ile AÇARKEN, bkz. `indicator`
+//     parametresinin nerede verildiği) o taş istenen herhangi bir taşa
+//     bağlanabilir. Seri/set açarken ya da işlerken bu geçerli DEĞİLDİR.
+export function isPairWildcard(tile, okeyInfo, indicator = null) {
+  if (!tile) return false;
+  if (isOkeyTile(tile, okeyInfo)) return true;
+  if (tile.isJoker) return true; // Sahte Okey
+  if (indicator && tile.color === indicator.color && tile.number === indicator.number) return true;
+  return false;
+}
+
+// İki taş geçerli bir ÇİFT oluşturuyor mu? (Jokerler için bkz. isPairWildcard.)
+export function isValidPairTiles(a, b, okeyInfo, indicator = null) {
+  if (!a || !b) return false;
+  if (isPairWildcard(a, okeyInfo, indicator) || isPairWildcard(b, okeyInfo, indicator)) return true;
+  const ea = effectiveTile(a, okeyInfo); const eb = effectiveTile(b, okeyInfo);
+  return ea.color === eb.color && ea.number === eb.number;
+}
+
+// Çift açma / çift işleme: seçili her per TAM 2 taş olmalı ve geçerli bir
+// çift oluşturmalı (bkz. isValidPairTiles).
 //
-// `requireFive` true ise (İLK açılış) TAM 5 çift gerekir. false ise (zaten
-// açmış bir oyuncunun elindeki çiftleri masaya sürmesi — bkz. PAIR_* kuralları)
-// en az 1 çift yeterlidir.
-export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo, requireFive = true) {
-  if (requireFive ? selectedGroupIds.length !== 5 : selectedGroupIds.length < 1) return { valid: false };
+// `minPairs`: bu açılış için gereken EN AZ çift sayısı. İlk açılışta normalde
+// 5'tir; katlamalı modda masadaki çift barajı varsa (bkz. 5. madde) barajın
+// bir fazlasıdır. Zaten açmış bir oyuncunun kalan çiftlerini sürmesinde 1'dir.
+//
+// `indicator`: SADECE ilk kez ÇİFT ile açarken verilir — Gösterge taşının
+// joker sayılmasını sağlar (2. madde). Diğer tüm durumlarda null geçilmelidir.
+export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo, minPairs = 5, indicator = null) {
+  if (selectedGroupIds.length < minPairs) return { valid: false };
   for (const gid of selectedGroupIds) {
     const tileIds = groupsMap[gid] || [];
     if (tileIds.length !== 2) return { valid: false };
     const tiles = tileIds.map((id) => tilesById[id]).filter(Boolean);
     if (tiles.length !== 2) return { valid: false };
-    const [a, b] = tiles;
-    if (isOkeyTile(a, okeyInfo) || isOkeyTile(b, okeyInfo)) continue; // joker (gerçek Okey) her taşın eşi olabilir
-    const ea = effectiveTile(a, okeyInfo); const eb = effectiveTile(b, okeyInfo);
-    if (!(ea.color === eb.color && ea.number === eb.number)) return { valid: false };
+    if (!isValidPairTiles(tiles[0], tiles[1], okeyInfo, indicator)) return { valid: false };
   }
   return { valid: true };
 }
 
 // Masadaki açık bir per/seriye (cift HARİÇ) tek bir taş eklemenin (işleme/tacking)
 // diziyi bozup bozmadığını kontrol eder. Geçerliyse yeni taş dizisini döndürür.
-// İŞLEME sırasında bir seri 13 -> 1 sınırını AŞAMAZ: 13'te biten bir serinin
-// sağına, 1'de başlayan bir serinin soluna taş eklenemez. (Zaten 12-13-1 gibi
-// sarmalı olarak AÇILMIŞ bir per geçerliliğini korur — burada kısıtlanan sadece
-// masadaki bir seriyi bu sınırın ötesine UZATMAKTIR.)
+// İŞLEME sırasında da seri 13 -> 1 sınırını AŞAMAZ: 13'te biten bir serinin
+// sağına, 1'de başlayan bir serinin soluna taş eklenemez (bkz. 3. madde —
+// sarmalı seriler `seriWindows` seviyesinde de tamamen yasak).
 export function canTackTile(groupTiles, groupType, newTile, side, okeyInfo) {
   if (groupType === 'cift' || !groupTiles || groupTiles.length === 0 || !newTile) return { valid: false };
 
