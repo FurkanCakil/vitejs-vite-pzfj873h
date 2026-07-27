@@ -101,7 +101,7 @@ function useRackMetrics({ compact, viewportHeight, cols, rows }) {
 // Sadece sahibi (isOwner) etkileşime girebilir.
 export default function PlayerRack({
   rack, groups, isOwner, onUpdateRack, okeyInfo,
-  canAct = false, canDiscard = false, isFinishingDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
+  canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
   pendingDraw = null, flipTileId = null, compact = false,
@@ -175,6 +175,7 @@ export default function PlayerRack({
   }, [safeRack, optimisticDiscardId]);
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
+  const centerFinishHoverElRef = useRef(null);
 
   // Istaka düzenlemesi artık sunucuda transaction ile birleştirilerek yazılıyor
   // (taş kaybını önlemek için — bkz. tiles.js#mergeRackLayout). Bu fazladan bir
@@ -206,7 +207,42 @@ export default function PlayerRack({
     if (same) setOptimisticRack(null);
   }, [safeRack, optimisticRack]);
 
-  // Taşları yeni düzene taşırken sunucuya yaz + ekranda hemen göster.
+  // PERFORMANS/DOĞRULUK: `handleUpdateRack` (Okey101Game.jsx) her çağrıldığında
+  // sunucudan OKUYUP birleştirip (mergeRackLayout) YAZAN bir transaction'dır.
+  // Eskiden HER taş/per hareketinde (applyRack her çağrıldığında) YENİ bir
+  // transaction ateşleniyordu. Per düzenlerken/taş taşırken art arda birkaç
+  // hareket yapıldığında (çok sık olur) bu transaction'lar BİRBİRİYLE
+  // ÇAKIŞIYOR, Firestore'un otomatik "en son yazan kazanır" yeniden deneme
+  // mekanizması ise ARADAKİ bir hareketi bazen sunucudaki ESKİ hale göre
+  // birleştirip görsel olarak "per eski yerine ışınlanıyor" gibi bir etki
+  // yaratıyordu (ayrıca donma/takılma hissine de katkıda bulunuyordu — CPU/ağ
+  // art arda birçok transaction'ı aynı anda işliyordu).
+  //
+  // Çözüm: EKRANDAKİ (iyimser) görünüm HER hareket için ANINDA güncellenir
+  // (gecikme YOK), ama sunucuya asıl YAZIM kısa bir süre (300ms) DEBOUNCE
+  // edilip TEK BİR yazım zinciri (writeChainRef) üzerinden SIRAYLA gönderilir
+  // — asla iki transaction aynı anda uçuşmaz. `flushRackWrite`, bir aksiyonun
+  // (ör. "Seri Aç") sunucudaki GÜNCEL `groups`'a ihtiyaç duyduğu anlarda
+  // debounce'u atlayıp hemen (ve varsa önceki yazımların ardından) göndermek
+  // için kullanılır.
+  const pendingWriteRef = useRef(null); // { rack, groups } — henüz gönderilmemiş en son istenen durum
+  const writeChainRef = useRef(Promise.resolve());
+  const writeDebounceRef = useRef(null);
+  useEffect(() => () => { if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current); }, []);
+
+  const flushRackWrite = () => {
+    if (writeDebounceRef.current) { clearTimeout(writeDebounceRef.current); writeDebounceRef.current = null; }
+    const pending = pendingWriteRef.current;
+    if (pending) {
+      pendingWriteRef.current = null;
+      writeChainRef.current = writeChainRef.current
+        .then(() => onUpdateRack(pending.rack, pending.groups))
+        .catch((err) => console.error('Okey101 ıstaka senkron hatası:', err));
+    }
+    return writeChainRef.current;
+  };
+
+  // Taşları yeni düzene taşırken EKRANDA hemen göster, sunucuya yazımı debounce et.
   const applyRack = (newRack, newGroups) => {
     baseRackRef.current = newRack; // bir sonraki sürükleme render'ı BEKLEMEDEN bunu görsün
     setOptimisticRack(newRack);
@@ -214,7 +250,10 @@ export default function PlayerRack({
     // Emniyet: sunucu beklenenden farklı bir yerleşim yazarsa iyimser kopya
     // sonsuza dek asılı kalmasın (gerçek veri her hâlükârda kazanır).
     optimisticTimerRef.current = setTimeout(() => setOptimisticRack(null), 2500);
-    onUpdateRack(newRack, newGroups);
+
+    pendingWriteRef.current = { rack: newRack, groups: newGroups };
+    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
+    writeDebounceRef.current = setTimeout(flushRackWrite, 300);
   };
 
   const clearLongPress = () => {
@@ -357,20 +396,35 @@ export default function PlayerRack({
     commit(baseRack, nextGroups);
   };
 
+  // NOT: `onOpenSeries`/`onOpenPairs`, sunucudaki (debounce'lanmış olabilecek)
+  // `groups` alanını okuyup seçili grup id'lerini ORADA arar. Debounce henüz
+  // gönderilmemiş bir per varsa, açmadan ÖNCE `flushRackWrite` ile hemen (ve
+  // varsa önceki yazımların sırasını koruyarak) sunucuya yazdırılır — aksi
+  // halde sunucu o per'i henüz bilmediği için açma sessizce başarısız olurdu.
   const openSeries = async () => {
     if (!canOpenSeries || !onOpenSeries) return;
     setSelected(new Set());
+    await flushRackWrite();
     await onOpenSeries(selectedGroupIds);
   };
 
   const openPairs = async () => {
     if (!canOpenPairs || !onOpenPairs) return;
     setSelected(new Set());
+    await flushRackWrite();
     await onOpenPairs(selectedGroupIds);
   };
 
   const clearTackHover = () => {
     if (tackHoverElRef.current) { tackHoverElRef.current.style.backgroundColor = ''; tackHoverElRef.current = null; }
+  };
+
+  const clearCenterFinishHover = () => {
+    if (centerFinishHoverElRef.current) {
+      centerFinishHoverElRef.current.style.transform = '';
+      centerFinishHoverElRef.current.style.filter = '';
+      centerFinishHoverElRef.current = null;
+    }
   };
 
   // ---- Pointer tabanlı sürükle-bırak (mouse + dokunmatik ortak) ----
@@ -435,14 +489,41 @@ export default function PlayerRack({
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const slotEl = el?.closest('[data-slot-index]');
     const discardEl = el?.closest('[data-discard-zone]');
+    // 4. madde: elini bitirecek son taş, Okey101Game'in Gösterge yanına
+    // koyduğu (bu bileşenin DIŞINDaki) "Bitir" hedefine de bırakılabilir.
+    // `document.elementFromPoint` sayfadaki HERHANGİ bir elementi bulabildiği
+    // için PlayerRack sınırlarının dışındaki bu hedefi de aynı sürükleme
+    // jestiyle yakalayabiliyoruz.
+    const centerFinishEl = canDiscard ? el?.closest('[data-center-finish-zone]') : null;
     const tackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
 
     if (tackEl !== tackHoverElRef.current) { clearTackHover(); if (tackEl) { tackEl.style.backgroundColor = TACK_HOVER_COLOR; tackHoverElRef.current = tackEl; } }
+    if (centerFinishEl !== centerFinishHoverElRef.current) {
+      clearCenterFinishHover();
+      if (centerFinishEl) { centerFinishEl.style.transform = 'scale(1.15)'; centerFinishEl.style.filter = 'brightness(1.3)'; centerFinishHoverElRef.current = centerFinishEl; }
+    }
 
-    if (tackEl) { setHoverIndex(null); setHoverDiscard(false); }
+    if (tackEl || centerFinishEl) { setHoverIndex(null); setHoverDiscard(false); }
     else if (slotEl) { setHoverIndex(Number(slotEl.dataset.slotIndex)); setHoverDiscard(false); }
     else if (discardEl) { setHoverIndex(null); setHoverDiscard(true); }
     else { setHoverIndex(null); setHoverDiscard(false); }
+  };
+
+  // Bir taşı (son bitiriş taşı ya da normal atış) sunucuya atma isteği
+  // gönderir: önce İYİMSER olarak ıstakadan gizler, sonuç başarısızsa (ya da
+  // hiç sonuçlanmazsa — bkz. emniyet zaman aşımı) geri getirir. Hem alt
+  // "Sağa At" bölmesi hem de Gösterge yanındaki "Bitir" hedefi bunu kullanır.
+  const performDiscardDrop = (tile) => {
+    if (!canDiscard || !onDiscardTile) return;
+    const tileId = tile.id;
+    setOptimisticDiscardId(tileId);
+    if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current);
+    optimisticDiscardTimerRef.current = setTimeout(() => {
+      setOptimisticDiscardId((cur) => (cur === tileId ? null : cur));
+    }, 4000);
+    Promise.resolve(onDiscardTile(tile))
+      .then((result) => { if (!result) setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)); })
+      .catch(() => setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)));
   };
 
   const finishDrag = () => {
@@ -453,7 +534,9 @@ export default function PlayerRack({
     const dropIndex = hoverIndex;
     const droppedOnDiscard = hoverDiscard;
     const tackEl = tackHoverElRef.current;
+    const centerFinishEl = centerFinishHoverElRef.current;
     clearTackHover();
+    clearCenterFinishHover();
     setHoverIndex(null);
     setHoverDiscard(false);
     if (!d) return;
@@ -474,22 +557,11 @@ export default function PlayerRack({
       return;
     }
 
+    if (centerFinishEl) { performDiscardDrop(d.tile); return; }
+
     if (droppedOnDiscard) {
       // Bir per'e ait olsa bile atarken sadece TEK taş atılır (grup bölünür).
-      if (canDiscard && onDiscardTile) {
-        const tileId = d.tile.id;
-        setOptimisticDiscardId(tileId);
-        // Emniyet supabı: atma işlemi (ağ hatası/geçersiz durum yüzünden)
-        // başarısız olur ya da hiç sonuçlanmazsa taş sonsuza dek görünmez
-        // kalmasın — birkaç saniye içinde kendiliğinden geri gelir.
-        if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current);
-        optimisticDiscardTimerRef.current = setTimeout(() => {
-          setOptimisticDiscardId((cur) => (cur === tileId ? null : cur));
-        }, 4000);
-        Promise.resolve(onDiscardTile(d.tile))
-          .then((result) => { if (!result) setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)); })
-          .catch(() => setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)));
-      }
+      performDiscardDrop(d.tile);
       return;
     }
 
@@ -586,12 +658,12 @@ export default function PlayerRack({
     </div>
   );
 
-  // 2. madde: elde tam 1 taş kaldığında (isFinishingDiscard) bu bölme artık
-  // "Sağa At" değil "Ortaya At"tır — o taş kimseye gitmez, oyunu ORTADA
-  // (Göstergenin yanında) bitirir (bkz. Okey101Game#centerDiscard). Aynı
-  // sürükleme jesti korunur, sadece etiket/renk/hedef anlamı değişir.
-  const discardLabel = isFinishingDiscard ? 'Ortaya At (Bitir)' : 'Sağa At';
-  const discardHint = isFinishingDiscard ? 'Elini bitirmek için son taşını buraya sürükle' : 'Turu bitirmek için bir taşı buraya sürükle';
+  // NOT: elde tam 1 taş kalıp eli bitirecek atış söz konusu olduğunda, ASIL
+  // bitiriş hedefi artık göstergenin yanındaki YENİ
+  // "Bitir" bölgesidir (bkz. Okey101Game#data-center-finish-zone). Bu alt
+  // bölme her zaman sade "Sağa At" olarak kalır — buraya bırakılan bitiriş
+  // taşı da (sunucu tarafında) yine doğru şekilde ortaya (centerDiscard)
+  // yazılır, sadece burası artık "önerilen"/öne çıkan hedef DEĞİLDİR.
   const discardSlot = (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -599,22 +671,18 @@ export default function PlayerRack({
         onPointerMove={canDiscard ? handlePointerMove : undefined}
         onPointerUp={canDiscard ? finishDrag : undefined}
         onPointerCancel={canDiscard ? finishDrag : undefined}
-        title={canDiscard ? discardHint : 'Son attığın taş'}
+        title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
         style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
         className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
-          ${canDiscard
-            ? (hoverDiscard
-              ? (isFinishingDiscard ? 'border-emerald-400 bg-emerald-500/30 scale-110' : 'border-red-400 bg-red-500/30 scale-110')
-              : (isFinishingDiscard ? 'border-emerald-400 bg-emerald-400/10 animate-pulse' : 'border-amber-400 bg-amber-400/10 animate-pulse'))
-            : 'border-slate-600/70 bg-slate-900/40'}`}
+          ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
       >
-        {lastDiscardTile && !isFinishingDiscard
+        {lastDiscardTile
           ? <Tile tile={lastDiscardTile} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canDiscard} />
           : canDiscard
-            ? <span className={`text-[8px] font-bold text-center leading-tight px-0.5 ${isFinishingDiscard ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>{isFinishingDiscard ? 'BİTİR' : 'AT'}</span>
+            ? <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
             : null}
       </div>
-      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">{discardLabel}</span>
+      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">Sağa At</span>
     </div>
   );
 

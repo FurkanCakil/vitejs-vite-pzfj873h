@@ -34,6 +34,39 @@ export function getPrevTurnUid(players, currentUid) {
   return players[(idx - 1 + players.length) % players.length];
 }
 
+// ============================================================
+// Katlamalı mod: per (seri/set) barajı
+// ============================================================
+// "Katlamalı" kuralı açıksa, elini per (Seri Aç) ile İLK açan oyuncunun
+// toplam per değeri o TUR boyunca geçerli bir "baraj" oluşturur — bu baraj
+// sabit kalır (turdaki her yeni per açılışında değişmez), sadece kimin
+// muaf olduğu değişebilir. Ondan sonra per ile açmaya çalışan (ve muaf
+// olmayan) her oyuncu bu barajı KESİN OLARAK GEÇMEK (>) zorundadır; aksi
+// halde normal 101 barajını geçememiş gibi -101 ceza yer.
+
+// Baraj gösterimi: "123 ve 41" (tam bölünüyorsa) ya da "124 ve 41 yan 1"
+// (bölümden kalan varsa). 3'e bölme, oyuncuların gerçek Okey masalarında
+// puanı "lira/kat" birimine çevirmesine karşılık gelir.
+export function formatFoldBarrier(total) {
+  const div = Math.floor(total / 3);
+  const rem = total % 3;
+  return rem === 0 ? `${total} ve ${div}` : `${total} ve ${div} yan ${rem}`;
+}
+
+// Bu oyuncu, `barrier`i KURAN oyuncunun (barrier.uid) barajından MUAF mı?
+// - Henüz baraj yoksa (bu oyuncu barajı KURACAK ilk kişi) -> muaf (geçecek bir şey yok).
+// - "Eşe katlama" AÇIKSA kimse muaf değildir (takım arkadaşı da geçmek zorunda).
+// - Tekli (ffa) modda ya da takımlar tanımsızsa muafiyet kavramı yoktur.
+// - Eşli modda "eşe katlama" KAPALIYSA, barajı kuran oyuncunun TAKIM ARKADAŞI muaftır.
+export function isExemptFromFoldBarrier(uid, barrier, rules, teams) {
+  if (!barrier) return true;
+  if (barrier.uid === uid) return true;
+  if (rules?.foldToPartnerEnabled) return false;
+  if (rules?.gameType !== '2v2' || !teams) return false;
+  const teamA = teams.A || []; const teamB = teams.B || [];
+  return (teamA.includes(uid) && teamA.includes(barrier.uid)) || (teamB.includes(uid) && teamB.includes(barrier.uid));
+}
+
 const realNumber = (n) => ((n - 1) % 13) + 1; // 14->1, 15->2... (13 sonrası sarma) için gerçek yüz değeri
 
 function trySetAnalysis(normals, jokerCount) {

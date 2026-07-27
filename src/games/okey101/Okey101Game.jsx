@@ -14,6 +14,7 @@ import { isBotUid } from './botPlayers.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
   validatePairs, canTackTile, findTackableSpotsForTile, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
+  formatFoldBarrier, isExemptFromFoldBarrier,
   anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds,
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
@@ -181,7 +182,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
       turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
-      centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null,
+      centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null,
     }).catch((err) => console.error('Okey101 taş dağıtım hatası:', err));
   }, [roomData.status, roomData.racks, isHost]);
 
@@ -950,6 +951,20 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         return;
       }
 
+      // Katlamalı mod: elini per (seri/set) ile İLK açan kişinin toplamı bu
+      // TUR boyunca bir baraj oluşturur; ondan sonra per ile açmaya çalışan
+      // (ve muaf olmayan) herkes bu barajı KESİN OLARAK GEÇMEK zorundadır,
+      // aksi halde normal 101 barajını geçememiş gibi ceza yer (bkz.
+      // gameLogic#isExemptFromFoldBarrier — Eşli modda "eşe katlama"
+      // kapalıysa barajı kuranın takım arkadaşı muaftır).
+      const foldingActive = !!data.rules?.foldingEnabled;
+      const barrier = data.foldBarrier || null;
+      if (!alreadyOpened && foldingActive && barrier && !isExemptFromFoldBarrier(user.uid, barrier, data.rules, data.teams) && total <= barrier.total) {
+        outcome = { success: false, reason: 'below-fold-barrier', barrierLabel: formatFoldBarrier(barrier.total) };
+        t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) - PENALTY_POINTS });
+        return;
+      }
+
       const newRack = [...myRackNow];
       const openedNow = [];
       for (const r of results) {
@@ -969,6 +984,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
       };
+      // İlk kez per ile açan, katlamalı mod aktifken ve BARAJ HENÜZ YOKKEN
+      // (yani bu oyuncu barajı kuran ilk kişiyse) tur boyunca geçerli barajı
+      // kurar. Sonraki turlarda (aynı elde) bu değişmez.
+      if (!alreadyOpened && foldingActive && !barrier) {
+        update.foldBarrier = { total, uid: user.uid };
+      }
       // Yandan taş alıp bu açılışla elini açan oyuncu varsa (ve az önce o taşı
       // BU açılışta kullandığı doğrulandıysa), ceza ŞİMDİ o taşı atan kişiye
       // yazılır: çekilen taşın değerinin 10 katı (Seri/Set ile açma).
@@ -988,6 +1009,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     else if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
     else if (outcome?.reason === 'below101') showToast('101\'e Ulaşamadınız! Ceza Yediniz.', 'red');
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
+    else if (outcome?.reason === 'below-fold-barrier') showToast(`Katlamalı modda baraj (${outcome.barrierLabel}) geçilmeden per açılamaz! Ceza yedin.`, 'red');
     else if (outcome?.success === true) {
       showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
     }
@@ -1113,6 +1135,19 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (isPairs && !alreadyOpened && melds.length !== 5) { outcome = { success: false }; return; }
       if (!isPairs && !alreadyOpened && total < OPEN_THRESHOLD) { outcome = { success: false }; return; }
 
+      // bkz. handleOpenSeries'teki katlamalı mod barajı — bot da AYNI kurala
+      // tabidir. `pickBotMelds` barajdan habersiz olduğu için (sadece normal
+      // 101'i hedefler) bot GERÇEKTEN bu duruma düşebilir; insan oyuncuyla
+      // AYNI şekilde -101 ceza yer (bot orkestrasyonundaki geri-dönüş bu
+      // turu boş geçmesini sağlar).
+      const foldingActiveBot = !isPairs && !!data.rules?.foldingEnabled;
+      const barrierBot = data.foldBarrier || null;
+      if (foldingActiveBot && !alreadyOpened && barrierBot && !isExemptFromFoldBarrier(actingUid, barrierBot, data.rules, data.teams) && total <= barrierBot.total) {
+        t.update(roomRef, { [`scores.${actingUid}`]: (data.scores?.[actingUid] || 0) - PENALTY_POINTS });
+        outcome = { success: false };
+        return;
+      }
+
       // bkz. handleOpenSeries/handleOpenPairs'teki aynı kural: bot da yandan
       // aldığı taşı BU açılışta kullanmak zorundadır. Kullanmıyorsa açılış
       // reddedilir; bot orkestrasyonundaki mevcut geri-dönüş (taşı geri koy
@@ -1145,6 +1180,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         nextOpenedWithPairs[actingUid] = true;
         update[`openedWithPairs.${actingUid}`] = true;
       }
+      // bkz. handleOpenSeries — botun kurduğu baraj da AYNI şekilde kalıcıdır.
+      let nextFoldBarrier = data.foldBarrier || null;
+      if (foldingActiveBot && !alreadyOpened && !barrierBot) {
+        nextFoldBarrier = { total, uid: actingUid };
+        update.foldBarrier = nextFoldBarrier;
+      }
       const st = data.sideTake;
       let penalizedName = null; let penaltyAmount = 0;
       const nextScores = { ...(data.scores || {}) };
@@ -1169,6 +1210,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           openedWithPairs: nextOpenedWithPairs,
           scores: nextScores,
           sideTake: penalizedName ? null : (data.sideTake ?? null),
+          foldBarrier: nextFoldBarrier,
         },
       };
       t.update(roomRef, update);
@@ -1333,7 +1375,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
         turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
-        centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null,
+        centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null,
       });
     }).catch((err) => console.error('Okey101 yeni tur hatası:', err));
   };
@@ -1378,6 +1420,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           {toast.msg}
         </div>
       )}
+
+      {/* 1. madde: oyun başlamadan seçilen oda kuralları (eşli/tekli,
+          katlamalı/katlamasız, eşe katlama) tüm oyun boyunca ekranın EN
+          SAĞINDA küçük rozetler halinde görünür kalır. */}
+      <div className="absolute top-0 right-0 z-[10] flex flex-col items-end gap-1 pointer-events-none">
+        <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider bg-slate-900/80 border border-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full">
+          {roomData.rules?.gameType === '2v2' ? 'Eşli' : 'Tekli'}
+        </span>
+        <span className={`text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full ${roomData.rules?.foldingEnabled ? 'bg-fuchsia-500/15 border-fuchsia-500/40 text-fuchsia-300' : 'bg-slate-900/80 border-slate-700 text-slate-500'}`}>
+          {roomData.rules?.foldingEnabled ? 'Katlamalı' : 'Katlamasız'}
+        </span>
+        {roomData.rules?.gameType === '2v2' && roomData.rules?.foldingEnabled && (
+          <span className={`text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full ${roomData.rules?.foldToPartnerEnabled ? 'bg-fuchsia-500/15 border-fuchsia-500/40 text-fuchsia-300' : 'bg-slate-900/80 border-slate-700 text-slate-500'}`}>
+            {roomData.rules?.foldToPartnerEnabled ? 'Eşe Katlama Var' : 'Eşe Katlama Yok'}
+          </span>
+        )}
+      </div>
 
       {roomData.roundEnded && (
         <RoundResultBoard
@@ -1428,6 +1487,15 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             </div>
           )}
 
+          {/* 1. madde: Katlamalı mod aktifken kurulan baraj — herkese görünür,
+              per (Seri Aç) açmak isteyen muaf-olmayan herkesin GEÇMESİ gerekir. */}
+          {roomData.foldBarrier && (
+            <div className={`flex items-center bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
+              <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Baraj</span>
+              <span className={`font-mono font-bold text-fuchsia-200 ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
+            </div>
+          )}
+
           {/* 2. madde: eli bitiren atış (ister taş atarak, ister işleyerek)
               MASANIN ORTASINA, Göstergenin hemen yanına gelir — "sağdaki
               oyuncuya atma" görüntüsü vermez, oyun ortaya atarak biter. */}
@@ -1435,6 +1503,21 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             <div className={`flex items-center bg-emerald-500/10 border border-emerald-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}>
               <span className={`text-emerald-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Bitiren Taş</span>
               <Tile tile={roomData.centerDiscard} size="small" okeyInfo={okeyInfo} />
+            </div>
+          )}
+
+          {/* 4. madde: elde tam 1 taş kalınca VE sıra bizdeyse, elimizi
+              BİTİRMEK için son taşımızı buraya (göstergenin yanına) sürükleyip
+              bırakabildiğimiz, yanıp sönerek dikkat çeken YENİ bir hedef alan.
+              Eskiden bu SADECE ıstakanın altındaki "Sağa At" bölmesinden
+              yapılabiliyordu; artık ASIL bitiriş burasıdır. */}
+          {isFinishingDiscard && (
+            <div
+              data-center-finish-zone="true"
+              title="Elini bitirmek için son taşını buraya sürükle"
+              className={`flex items-center bg-emerald-500/15 border-2 border-dashed border-emerald-400 rounded-lg animate-pulse transition-colors touch-none ${isCompact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 sm:gap-2 px-2 py-1.5 sm:px-3'}`}
+            >
+              <span className={`text-emerald-300 font-black uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Bitir</span>
             </div>
           )}
         </div>
@@ -1606,7 +1689,6 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             okeyInfo={okeyInfo}
             canAct={mustDiscard}
             canDiscard={mustDiscard && !mySideTakePending}
-            isFinishingDiscard={isFinishingDiscard}
             flippedTileIds={flippedTileIds}
             onToggleFlippedTile={toggleFlippedTile}
             lastDiscardTile={myTopDiscard}

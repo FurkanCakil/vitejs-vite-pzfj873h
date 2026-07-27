@@ -37,7 +37,7 @@ export function normalizeRack(rack) {
   return next;
 }
 
-export const SETUP_DURATION_MS = 30000;
+export const SETUP_DURATION_MS = 40000;
 
 // 4 renk x (1-13) x 2 kopya = 104 + 2 Sahte Okey = 106 taş.
 export function createTileSet() {
