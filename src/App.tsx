@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
@@ -171,7 +171,7 @@ export default function App() {
       // arka planda bağlantıyı ısıtır; buton basıldığında kanal çoktan
       // hazırdır.
       if (currentUser) {
-        getDoc(doc(db, 'artifacts', appId, 'public', 'data', '__warmup__')).catch(() => { /* sonuç önemsiz, sadece bağlantıyı ısıtır */ });
+        getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', '__warmup__')).catch(() => { /* sonuç önemsiz, sadece bağlantıyı ısıtır */ });
       }
     });
     return () => unsubscribe();
@@ -346,16 +346,17 @@ export default function App() {
   };
 
   const createRoom = async (gameId) => {
-    setIsCreatingRoom(true);
     if (!user) return;
-    let newCode = ''; let success = false; let attempts = 0; const MAX_RETRIES = 10;
-    
-    while (!success && attempts < MAX_RETRIES) {
-       attempts++;
-       newCode = generateRoomCode();
-       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
-       
-       const initialState = {
+    setIsCreatingRoom(true);
+    // Oda kodu 33^6 (~1.29 milyar) olası kombinasyondan seçiliyor; çakışma
+    // ihtimali ihmal edilebilir düzeyde olduğundan, önceden var mı diye kontrol
+    // eden bir transaction yerine doğrudan tek bir yazma isteği yapılıyor.
+    // Bu, oda kurma süresinden bir tam round-trip'i (transaction'ın begin+get
+    // adımını) kaldırıyor.
+    const newCode = generateRoomCode();
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
+    {
+      const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
          scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
          turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
@@ -384,21 +385,15 @@ export default function App() {
       }
 
        try {
-         await runTransaction(db, async (t) => {
-            const snap = await t.get(roomRef);
-            if (snap.exists()) throw new Error("exists");
-            t.set(roomRef, initialState);
-         });
-         success = true;
+         await setDoc(roomRef, initialState);
          // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
          // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
          setRoomData(initialState); setCurrentView('room');
          setRoomCode(newCode); safeStorage.set('activeRoom', newCode); setDisconnectCountdown(null);
        } catch (err) {
-         if (err.message !== "exists") { setErrorMsg("Oda kurulamadı."); break; }
+         setErrorMsg("Oda kurulamadı.");
        }
     }
-    if (!success) setErrorMsg("Sunucu yoğun, oda açılamadı. Lütfen tekrar dene.");
     setIsCreatingRoom(false);
   };
 
