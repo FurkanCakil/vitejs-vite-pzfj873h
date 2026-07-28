@@ -45,6 +45,42 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
     );
   };
 
+  // EŞLİ (2v2) modda puan BİREYSEL DEĞİLDİR (kullanıcı isteği): tur içi anlık
+  // cezalar da (bkz. gameLogic#addScoreDelta) tur sonu cezaları da doğrudan
+  // TAKIM puanına yazılır ve takımın iki üyesi her zaman aynı sayıyı taşır.
+  // Bu yüzden tabloda oyuncu başına satır YOKTUR — takım başına TEK satır
+  // gösterilir, üyelerin isimleri satırın içinde listelenir.
+  const TeamRow = ({ teamKey }) => {
+    const teamUids = teams?.[teamKey] || [];
+    if (teamUids.length === 0) return null;
+    const pp = perPlayer[teamUids[0]] || { total: 0 };
+    const teamScore = scores?.[teamUids[0]] ?? 0;
+    const isWinnerTeam = teamUids.includes(winnerUid);
+    const openedPairs = teamUids.some((uid) => openedWithPairs?.[uid]);
+    return (
+      <div className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg ${isWinnerTeam ? 'bg-emerald-600/20 ring-1 ring-emerald-500/50' : 'bg-slate-900/60'}`}>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className={`text-[11px] font-black uppercase tracking-widest ${teamKey === 'A' ? 'text-blue-400' : 'text-red-400'}`}>Takım {teamKey}</span>
+            {isWinnerTeam && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
+            {openedPairs && !isWinnerTeam && (
+              <span className="shrink-0 text-[9px] font-black text-fuchsia-300 bg-fuchsia-500/15 border border-fuchsia-500/40 px-1.5 py-0.5 rounded-full">ÇİFT ×2</span>
+            )}
+          </div>
+          <span className="text-xs text-slate-300 truncate">
+            {teamUids.map((uid) => findPlayer(uid).name).join(' & ')}
+          </span>
+        </div>
+        <div className="flex items-center gap-3 text-xs shrink-0">
+          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-red-400' : pp.total < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+            Bu Tur: {pp.total > 0 ? '+' : ''}{pp.total}
+          </span>
+          <span className="font-mono font-black text-white w-14 text-right">{teamScore}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="absolute inset-0 z-[4500] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 rounded-[2rem]">
       <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-5 sm:p-6">
@@ -72,16 +108,7 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
         <div className="flex flex-col gap-2">
           {isTeamMode ? (
             <>
-              {['A', 'B'].map((teamKey) => {
-                const teamUids = teams[teamKey] || [];
-                if (teamUids.length === 0) return null;
-                return (
-                  <div key={teamKey} className="flex flex-col gap-1.5">
-                    <div className={`text-[11px] font-bold uppercase tracking-widest ${teamKey === 'A' ? 'text-blue-400' : 'text-red-400'}`}>Takım {teamKey}</div>
-                    {teamUids.map((uid) => <Row key={uid} uid={uid} />)}
-                  </div>
-                );
-              })}
+              {['A', 'B'].map((teamKey) => <TeamRow key={teamKey} teamKey={teamKey} />)}
               {players.filter((p) => !(teams.A || []).includes(p.uid) && !(teams.B || []).includes(p.uid)).map((p) => <Row key={p.uid} uid={p.uid} />)}
             </>
           ) : (

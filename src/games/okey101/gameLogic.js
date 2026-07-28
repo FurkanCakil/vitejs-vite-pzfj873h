@@ -60,11 +60,73 @@ export function formatFoldBarrier(total) {
 // uygulanır — ama para/puan yerine ÇİFT SAYISI üzerinden. İlk çift açan 5
 // çiftle açtıysa, ondan sonra çiftle açacak (ve muaf olmayan) herkesin EN AZ
 // 6 çift açması gerekir. Normalde (baraj yokken) ilk açılış için 5 çift şarttır.
+//
+// ÖNEMLİ (kullanıcı isteği): 5 bir ALT SINIRDIR, sabit bir sayı DEĞİL. Elinde
+// 6-7 çift olan oyuncu bunların TAMAMINI tek seferde açabilir (ve katlamalı
+// modda barajı doğrudan o sayıya kurar). Eskiden arayüz tam 5 çift seçilmesini
+// dayatıyor, oyuncu 6. çifti seçince "Çift Aç" butonu kayboluyor; ancak 5 çift
+// açtıktan SONRA 6.'sını ayrıca sürebiliyordu.
 export const PAIRS_OPEN_MIN = 5;
 
 export function requiredPairsToOpen(pairsBarrier, exempt) {
   if (!pairsBarrier || exempt) return PAIRS_OPEN_MIN;
   return Math.max(PAIRS_OPEN_MIN, pairsBarrier.count + 1);
+}
+
+// ============================================================
+// Eşli (2v2): CEZA/PUAN TAKIMA yazılır
+// ============================================================
+// Kullanıcı isteği: Eşli oyunda hiçbir ceza bireysel tutulmaz. Bir oyuncunun
+// aldığı her ceza (işlek/Okey atma, açamama, yandan alınan taş, baraj vb.)
+// DOĞRUDAN TAKIM PUANINA yazılır. Uygulama biçimi: takımın iki üyesinin
+// `scores` değeri HER ZAMAN aynı sayıyı — takımın toplam cezasını — tutar.
+// Böylece hem tur içi anlık cezalar hem de tur sonu havuzlaması (bkz.
+// computeRoundEnd) tek bir "takım puanı" olarak akar ve ekranda takım başına
+// TEK bir rakam gösterilir.
+export function teamMembersOf(uid, rules, teams) {
+  if (rules?.gameType !== '2v2' || !teams) return [uid];
+  const a = teams.A || []; const b = teams.B || [];
+  if (a.includes(uid)) return a;
+  if (b.includes(uid)) return b;
+  return [uid];
+}
+
+// Bir oyuncuya (Eşli modda TAKIMININ TAMAMINA) puan ekler. Firestore alan
+// güncellemelerini (`scores.<uid>`) ve güncellenmiş skor haritasını döndürür;
+// çağıran taraf bunları kendi `update` nesnesine yayar.
+export function addScoreDelta(data, uid, amount, baseScores = null) {
+  const scores = { ...(baseScores || data.scores || {}) };
+  const updates = {};
+  teamMembersOf(uid, data.rules, data.teams).forEach((u) => {
+    scores[u] = (scores[u] || 0) + amount;
+    updates[`scores.${u}`] = scores[u];
+  });
+  return { updates, scores };
+}
+
+// ============================================================
+// BÜYÜK AÇILIŞ ÖDÜLLERİ (kullanıcı isteği)
+// ============================================================
+// Tek bir açılışta olağanüstü bir el sergileyen oyuncu ÖDÜL (eksi puan) alır:
+//   - ÇİFT ile açış:  7 çift -> -101,  9 çift -> -202
+//   - SERİ/SET açış:  "tek" (toplam/3, bkz. formatFoldBarrier) 50'yi geçerse
+//     -101, 60'ı geçerse -202.
+// Ödüller KADEMELİDİR (toplanmaz): en yüksek eşiği hangisi karşılıyorsa o
+// uygulanır. Eşli modda bu ödül de takım puanına yazılır.
+export const BIG_OPEN_BONUS_1 = -101;
+export const BIG_OPEN_BONUS_2 = -202;
+
+export function pairsOpenBonus(pairCount) {
+  if (pairCount >= 9) return BIG_OPEN_BONUS_2;
+  if (pairCount >= 7) return BIG_OPEN_BONUS_1;
+  return 0;
+}
+
+export function seriesOpenBonus(total) {
+  const tek = Math.floor((total || 0) / 3);
+  if (tek > 60) return BIG_OPEN_BONUS_2;
+  if (tek > 50) return BIG_OPEN_BONUS_1;
+  return 0;
 }
 
 // Bu oyuncu, `barrier`i KURAN oyuncunun (barrier.uid) barajından MUAF mı?
@@ -483,6 +545,75 @@ export function findTackableSpotsForTile(tile, openedHandsAllPlayers, okeyInfo) 
 }
 
 // ============================================================
+// SEYİRCİNİN BOT KOLTUĞUNA GEÇMESİ
+// ============================================================
+// Host bir seyircinin "botun yerine geçme" teklifini kabul ettiğinde, masadaki
+// bot kimliği (uid) her yerde seyircinin kimliğiyle DEĞİŞTİRİLİR. Oyun tam
+// olarak kaldığı yerden sürer: botun ıstakası, açtığı perler, attığı taşlar,
+// puanı ve (varsa) sırası olduğu gibi yeni oyuncuya geçer.
+//
+// Tüm oda belgesini tarayan tek bir güncelleme nesnesi döndürür.
+export function buildSeatSwapUpdate(data, botUid, newUid, newName) {
+  const renameKey = (obj) => {
+    if (!obj || typeof obj !== 'object') return obj;
+    const out = { ...obj };
+    if (Object.prototype.hasOwnProperty.call(out, botUid)) {
+      out[newUid] = out[botUid];
+      delete out[botUid];
+    }
+    return out;
+  };
+  const swapUid = (uid) => (uid === botUid ? newUid : uid);
+  const swapList = (list) => (list || []).map(swapUid);
+
+  const isBotPlayer = { ...(data.isBotPlayer || {}) };
+  delete isBotPlayer[botUid];
+
+  const playerNames = renameKey(data.playerNames || {});
+  playerNames[newUid] = newName || playerNames[newUid] || 'Oyuncu';
+
+  const update = {
+    players: swapList(data.players),
+    playerNames,
+    isBotPlayer,
+    scores: renameKey(data.scores || {}),
+    spectators: (data.spectators || []).filter((uid) => uid !== newUid),
+    seatRequests: Object.fromEntries(
+      Object.entries(data.seatRequests || {}).filter(([uid, req]) => uid !== newUid && req?.botUid !== botUid),
+    ),
+  };
+
+  // Oyun içi (el sürerken) alanlar — oyun daha başlamadıysa bunlar yoktur.
+  if (data.racks) update.racks = renameKey(data.racks);
+  if (data.groups) update.groups = renameKey(data.groups);
+  if (data.discardPiles) update.discardPiles = renameKey(data.discardPiles);
+  if (data.openedHands) update.openedHands = renameKey(data.openedHands);
+  if (data.hasOpened) update.hasOpened = renameKey(data.hasOpened);
+  if (data.openedWithPairs) update.openedWithPairs = renameKey(data.openedWithPairs);
+  if (data.takenOkeys) update.takenOkeys = renameKey(data.takenOkeys);
+  if (data.roundStartScores) update.roundStartScores = renameKey(data.roundStartScores);
+  if (data.teams) update.teams = { A: swapList(data.teams.A), B: swapList(data.teams.B) };
+  if (data.turn) update.turn = swapUid(data.turn);
+  if (data.starterUid) update.starterUid = swapUid(data.starterUid);
+  if (data.host) update.host = swapUid(data.host);
+  if (data.sideTake) update.sideTake = { ...data.sideTake, uid: swapUid(data.sideTake.uid), fromUid: swapUid(data.sideTake.fromUid) };
+  if (data.foldBarrier) update.foldBarrier = { ...data.foldBarrier, uid: swapUid(data.foldBarrier.uid) };
+  if (data.foldPairsBarrier) update.foldPairsBarrier = { ...data.foldPairsBarrier, uid: swapUid(data.foldPairsBarrier.uid) };
+  if (data.roundResult) {
+    update.roundResult = {
+      ...data.roundResult,
+      winnerUid: data.roundResult.winnerUid ? swapUid(data.roundResult.winnerUid) : data.roundResult.winnerUid,
+      perPlayer: renameKey(data.roundResult.perPlayer || {}),
+    };
+  }
+  // Devralınan bot sırasını oynayabilmesi için hamle süresi tazelenir.
+  if (data.turn === botUid && !data.roundEnded && !data.setupPhase) {
+    update.turnDeadline = Date.now() + 30000;
+  }
+  return update;
+}
+
+// ============================================================
 // 5. FAZ: Tur sonu puanlama
 // ============================================================
 export const NON_OPENER_PENALTY = PENALTY_POINTS * 2; // 202 — elini açamayan oyuncu
@@ -566,7 +697,10 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
   });
 
   // Eşli (2v2): takımın iki üyesinin bu turki delta'sı ortak havuzda toplanıp
-  // ikisine de aynı şekilde uygulanır.
+  // ikisine de aynı şekilde uygulanır. Tur İÇİ (anlık) cezalar da zaten takıma
+  // yazıldığı (bkz. addScoreDelta — iki üyenin `scores` değeri her zaman
+  // takımın toplamıdır) için sonuç TEK bir takım puanıdır; iki üyenin puanı
+  // birbirinin kopyasıdır, toplanmaz.
   const pooledDelta = { ...baseDelta };
   if (rules?.gameType === '2v2' && teams) {
     for (const teamUids of [teams.A || [], teams.B || []]) {

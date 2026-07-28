@@ -205,7 +205,16 @@ export default function App() {
           leaveRoomLocal();
         } 
         else if (data.status === 'abandoned') {
-          setRoomData(data); setCurrentView('room'); 
+          setRoomData(data); setCurrentView('room');
+          // 101 Okey'de sekme/uygulama değiştirme artık odayı "terk edilmiş"
+          // yapmıyor (bkz. handleVisibility'deki istisna). Yine de ESKİ
+          // oturumlardan kalmış böyle bir kayıt varsa masa sonsuza dek
+          // "bağlantı koptu" sayacında asılı kalmasın diye host sessizce onarır.
+          if (data.gameId === 'okey101' && data.abandonReason !== 'left') {
+            setDisconnectCountdown(null);
+            if (data.host === user.uid) updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {});
+            return;
+          }
           if (data.players?.includes(user.uid)) {
             if (data.abandonedBy === user.uid) {
                if (data.abandonReason !== 'left') { updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(()=>{}); }
@@ -245,14 +254,26 @@ export default function App() {
   }, [disconnectCountdown, roomCode]);
 
   useEffect(() => {
+    // 101 OKEY İSTİSNASI (ekran "koması"/anlık titreme düzeltmesi):
+    // Aşağıdaki mekanizma, sekme gizlendiğinde odayı KISA bir süreliğine
+    // `abandoned` yapıp geri döndürüyordu. 4 kişilik bir masada bu, biri
+    // telefonunda bildirim açtığında / sekme değiştirdiğinde / tarayıcı adres
+    // çubuğu gizlenip göründüğünde bile tetikleniyor ve HERKESİN ekranında:
+    //   1) "Bağlantı koptu" sayacı (DisconnectOverlay) bir anlığına beliriyor,
+    //   2) Okey101Game `status !== 'playing'` olduğu için MASAYI komple bırakıp
+    //      LOBİYİ çiziyor, hemen ardından masaya geri dönüyordu.
+    // Kullanıcının tarif ettiği "ekrana bir şey gelip gidiyor" tam olarak buydu.
+    // 101 Okey'de bir oyuncunun yokluğu zaten 30sn'lik hamle süresi + otomatik
+    // hamle mekanizmasıyla yönetildiği için bu koruma bu oyunda GEREKSİZ.
+    const isOkeyRoom = () => roomStateRef.current.roomData?.gameId === 'okey101';
     const handleDisconnect = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot) return;
+      if (isBot || isOkeyRoom()) return;
       if (code && u && data && data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code), { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
     };
     const handleVisibility = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot) return;
+      if (isBot || isOkeyRoom()) return;
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       if (document.visibilityState === 'hidden') { 
@@ -382,6 +403,8 @@ export default function App() {
           rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, botDifficulty: 'medium' },
           teams: { A: [], B: [] },
           countdownStartedAt: null,
+          // Seyircilerin "botun yerine geçme" teklifleri (bkz. Okey101Game).
+          seatRequests: {},
         });
       }
       else if (gameId === 'amiralbatti') {

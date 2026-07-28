@@ -13,8 +13,12 @@ import Tile, { TILE_ASPECT } from './Tile.jsx';
 // `vertical`: SOL ve SAĞ koltuklar, gerçek bir masada olduğu gibi yanlarda
 // DİKEY durur (avatar üstte, isim ve puan altında) — yatay kartlar masanın
 // iki yanında gereksiz genişlik kaplayıp ortadaki alanı daraltıyordu.
-function Seat({ player, score, isHost, isCurrentTurn, compact, vertical = false }) {
+function Seat({ player, score, teamKey, isHost, isCurrentTurn, compact, vertical = false }) {
   if (!player) return null;
+
+  // Eşli modda gösterilen sayı oyuncunun DEĞİL takımının puanıdır (bkz.
+  // Okey101Game#buildSeat) — karışmasın diye takım harfiyle etiketlenir.
+  const scoreLabel = teamKey ? `${teamKey}: ${score ?? 0}` : `${score ?? 0}`;
 
   const avatar = (
     <div className={`rounded-full flex items-center justify-center shrink-0 ${compact ? 'w-5 h-5' : 'w-6 h-6 sm:w-8 sm:h-8'} ${player.isBot ? 'bg-amber-600/30 text-amber-300' : 'bg-indigo-600/30 text-indigo-300'}`}>
@@ -39,7 +43,7 @@ function Seat({ player, score, isHost, isCurrentTurn, compact, vertical = false 
         >
           {player.name}
         </span>
-        <div className={`text-slate-500 font-mono leading-tight ${compact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{score ?? 0}</div>
+        <div className={`font-mono leading-tight ${teamKey ? (teamKey === 'A' ? 'text-blue-400' : 'text-red-400') : 'text-slate-500'} ${compact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{scoreLabel}</div>
       </div>
     );
   }
@@ -52,7 +56,9 @@ function Seat({ player, score, isHost, isCurrentTurn, compact, vertical = false 
           <span className={`truncate ${compact ? 'max-w-[70px]' : 'max-w-[80px] sm:max-w-[140px]'}`}>{player.name}</span>
           {isHost && <Crown className={`text-yellow-400 shrink-0 ${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />}
         </div>
-        <div className={`text-slate-500 font-mono leading-tight ${compact ? 'text-[9px]' : 'text-[10px] sm:text-xs'}`}>{score ?? 0} puan</div>
+        <div className={`font-mono leading-tight ${teamKey ? (teamKey === 'A' ? 'text-blue-400' : 'text-red-400') : 'text-slate-500'} ${compact ? 'text-[9px]' : 'text-[10px] sm:text-xs'}`}>
+          {teamKey ? `Takım ${scoreLabel}` : `${score ?? 0} puan`}
+        </div>
       </div>
     </div>
   );
@@ -91,10 +97,15 @@ function DiscardSlot({ tile, okeyInfo, compact }) {
 // Tur akışı: SOL → BEN → SAĞ → ÜST → SOL. Yani sağdaki üsttekine, üstteki
 // soldakine, soldaki de bana atar. Soldakinin bana attığı taş burada DEĞİL,
 // kendi ıstakamın üstündeki "Soldan Çek" bölmesinde gösterilir.
-export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, turnUid, okeyInfo, compact = false, turnBanner = null, centerExtra = null, children }) {
+// `bottomSeat`: SADECE seyirci görünümünde doludur — seyircinin kendi ıstakası
+// olmadığı için masanın alt koltuğu da (ve o koltuğa/koltuktan giden atış
+// bölmeleri de) burada çizilir. Böylece seyirci DÖRT oyuncuyu ve DÖRT atış
+// yığınını birden görür.
+export default function OpponentStrip({ topSeat, leftSeat, rightSeat, bottomSeat = null, hostUid, turnUid, okeyInfo, compact = false, turnBanner = null, centerExtra = null, children }) {
   const seatProps = (seat, vertical = false) => seat ? {
     player: seat.player,
     score: seat.score,
+    teamKey: seat.teamKey || null,
     isHost: seat.player.uid === hostUid,
     isCurrentTurn: turnUid === seat.player.uid,
     compact,
@@ -174,6 +185,17 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
           {centerExtra && <div className="w-full flex justify-center">{centerExtra}</div>}
         </div>
       </div>
+
+      {/* SEYİRCİ: alt koltuk + o koltuğa/koltuktan giden atış bölmeleri.
+          SOLDAKİ oyuncu ALTTAKİNE atar (sol bölme), ALTTAKİ de SAĞDAKİNE
+          atar (sağ bölme) — masanın üst yarısındaki mantığın aynası. */}
+      {bottomSeat && (
+        <div className="w-full flex items-center justify-between gap-2 px-[8%] sm:px-[14%] mt-1">
+          <DiscardSlot tile={leftSeat?.topDiscard || null} okeyInfo={okeyInfo} compact={compact} />
+          <Seat {...seatProps(bottomSeat)} />
+          <DiscardSlot tile={bottomSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />
+        </div>
+      )}
     </div>
   );
 }

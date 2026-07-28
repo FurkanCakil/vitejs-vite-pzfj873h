@@ -63,6 +63,57 @@ export const maxRackContentWidth = () => {
   return RACK_ROW_LENGTH * MAX_TILE_W + (RACK_ROW_LENGTH - 1) * gap + ROW_PADDING_PX * 2;
 };
 
+// PERFORMANS (taş sürüklerken hissedilen takılmanın ikinci büyük kaynağı):
+// Bir ıstaka slotu. Sürükleme sırasında imleç her yeni slotun üstüne geldiğinde
+// `hoverIndex` değişip PlayerRack yeniden render oluyor; eskiden bu, 30 slotun
+// (ve içlerindeki 22 taşın) TAMAMINI yeniden çiziyordu. `React.memo` + aşağıdaki
+// ÖZEL karşılaştırıcı sayesinde artık yalnızca durumu GERÇEKTEN değişen slotlar
+// (imlecin ayrıldığı ve girdiği slot) yeniden çizilir.
+//
+// Karşılaştırıcı `tile`'ı REFERANSLA değil ALANLARIYLA kıyaslar: Firestore
+// `onSnapshot` her pakette (ilgisiz bir alan değişse bile) tüm iç içe nesneleri
+// yeniden ürettiği için taş nesnelerinin referansı sürekli değişir, oysa taşın
+// kendisi aynıdır.
+const RackSlot = React.memo(function RackSlot({
+  index, tile, tileW, tileH, isHover, hidden, isPending, selected, grouped, faceDown, dragging, revealing, okeyInfo, handlers,
+}) {
+  return (
+    <div
+      data-slot-index={index}
+      style={{ width: `${tileW}px`, height: `${tileH}px` }}
+      className={`rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
+      onPointerMove={handlers.onPointerMove}
+      onPointerUp={handlers.onPointerUp}
+      onPointerCancel={handlers.onPointerUp}
+    >
+      {tile && !hidden && (
+        <Tile
+          tile={tile}
+          width={tileW}
+          okeyInfo={okeyInfo}
+          selected={selected}
+          grouped={grouped}
+          faceDown={faceDown}
+          dragging={dragging}
+          className={revealing ? 'okey101-tile-reveal' : ''}
+          onPointerDown={isPending ? undefined : (e) => handlers.onPointerDown(e, index, tile)}
+        />
+      )}
+    </div>
+  );
+}, (a, b) => (
+  a.index === b.index
+  && a.tileW === b.tileW && a.tileH === b.tileH
+  && a.isHover === b.isHover && a.hidden === b.hidden && a.isPending === b.isPending
+  && a.selected === b.selected && a.grouped === b.grouped && a.faceDown === b.faceDown
+  && a.dragging === b.dragging && a.revealing === b.revealing
+  && a.handlers === b.handlers && a.okeyInfo === b.okeyInfo
+  && (a.tile?.id ?? null) === (b.tile?.id ?? null)
+  && (a.tile?.color ?? null) === (b.tile?.color ?? null)
+  && (a.tile?.number ?? null) === (b.tile?.number ?? null)
+  && !!a.tile?.isJoker === !!b.tile?.isJoker
+));
+
 function useRackMetrics({ compact, viewportHeight, cols, rows }) {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
@@ -115,7 +166,7 @@ export default function PlayerRack({
   rack, groups, isOwner, onUpdateRack, okeyInfo,
   canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
-  canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true,
+  canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true, minPairsToOpen = 5,
   pendingDraw = null, flipTileId = null, compact = false,
   flippedTileIds = null, onToggleFlippedTile = null, indicator = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
@@ -195,6 +246,12 @@ export default function PlayerRack({
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
   const centerFinishHoverElRef = useRef(null);
+  // Sürükleme hedefinin (slot indeksi / atma bölmesi) en güncel hâli. bkz.
+  // updateDropTarget — hedef tespiti animasyon karesine ertelendiği için
+  // bırakma anında state yerine bu ref okunur.
+  const dropTargetRef = useRef({ index: null, discard: false });
+  const moveRafRef = useRef(0);
+  useEffect(() => () => { if (moveRafRef.current) cancelAnimationFrame(moveRafRef.current); }, []);
 
   // --- Sunucuya yazım hattı (aşağıdaki iyimser-katman efektleri buna bakar,
   //     bu yüzden BİLEREK en üstte tanımlanır; detaylı açıklama için bkz.
@@ -504,9 +561,13 @@ export default function PlayerRack({
     && ungroupedSelectedIds.length === 1
     && selectedIds.length === (baseGroups[selectedGroupIds[0]] || []).length + 1;
   const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule;
-  // İlk açılışta TAM 5 çift şart; zaten açmış (ve kural gereği çift sürebilen)
-  // bir oyuncu için 1+ çift yeterlidir (bkz. gameLogic#canPlayerLayPairs).
-  const pairCountOk = hasOpenedAlready ? selectedGroupIds.length >= 1 : selectedGroupIds.length === 5;
+  // İlk açılışta EN AZ `minPairsToOpen` (normalde 5; katlamalı modda masadaki
+  // çift barajının bir fazlası) çift gerekir — ÜST SINIR YOKTUR: elinde 6-7
+  // çift olan oyuncu hepsini tek seferde açabilir (ve katlamalı modda barajı
+  // doğrudan o sayıya kurar). Eskiden burada `=== 5` yazdığı için 6. çift
+  // seçilince "Çift Aç" butonu kayboluyordu.
+  // Zaten açmış (ve kural gereği çift sürebilen) bir oyuncu için 1+ yeterlidir.
+  const pairCountOk = hasOpenedAlready ? selectedGroupIds.length >= 1 : selectedGroupIds.length >= minPairsToOpen;
   const canOpenPairs = allSelectedAreCompleteGroups && pairCountOk && canAct && canOpenPairsRule;
 
   // `immediate`: Per Onayla/Onayı Kaldır/Peri Güncelle gibi SEYREK, KASITLI
@@ -660,6 +721,7 @@ export default function PlayerRack({
     const grabOffset = Math.max(0, tileIds.indexOf(tile.id));
     const tiles = tileIds.map((id) => rackNow.find((t) => t && t.id === id)).filter(Boolean);
     dragRef.current = { fromIndex, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
+    dropTargetRef.current = { index: null, discard: false }; // önceki sürüklemeden kalan hedef temizlenir
     e.currentTarget.setPointerCapture?.(e.pointerId);
 
     // 1sn basılı tutma -> taşı ters çevir / düzelt (bkz. LONG_PRESS_MS).
@@ -695,7 +757,21 @@ export default function PlayerRack({
     d.lastX = e.clientX; d.lastY = e.clientY;
     if (ghostElRef.current) applyGhostTransform(ghostElRef.current, e.clientX, e.clientY, d.grabOffset);
 
-    const el = document.elementFromPoint(e.clientX, e.clientY);
+    // PERFORMANS: Hedef tespiti (elementFromPoint + birkaç `closest` taraması)
+    // pahalıdır, `pointermove` ise saniyede 100+ kez tetiklenebilir. Hayalet
+    // taşın imleci takip etmesi her olayda ANINDA yapılır (yukarıda), ama
+    // hedef tespiti her ANİMASYON KARESİNDE en fazla bir kez çalışır.
+    if (moveRafRef.current) return;
+    moveRafRef.current = requestAnimationFrame(() => {
+      moveRafRef.current = 0;
+      if (dragRef.current === d) updateDropTarget(d.lastX, d.lastY);
+    });
+  };
+
+  const updateDropTarget = (clientX, clientY) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const el = document.elementFromPoint(clientX, clientY);
     const slotEl = el?.closest('[data-slot-index]');
     const discardEl = el?.closest('[data-discard-zone]');
     // 4. madde: elini bitirecek son taş, Okey101Game'in Gösterge yanına
@@ -712,10 +788,17 @@ export default function PlayerRack({
       if (centerFinishEl) { centerFinishEl.style.transform = 'scale(1.15)'; centerFinishEl.style.filter = 'brightness(1.3)'; centerFinishHoverElRef.current = centerFinishEl; }
     }
 
-    if (tackEl || centerFinishEl) { setHoverIndex(null); setHoverDiscard(false); }
-    else if (slotEl) { setHoverIndex(Number(slotEl.dataset.slotIndex)); setHoverDiscard(false); }
-    else if (discardEl) { setHoverIndex(null); setHoverDiscard(true); }
-    else { setHoverIndex(null); setHoverDiscard(false); }
+    let index = null; let discard = false;
+    if (tackEl || centerFinishEl) { /* hedef zaten işleme/bitirme alanı */ }
+    else if (slotEl) index = Number(slotEl.dataset.slotIndex);
+    else if (discardEl) discard = true;
+
+    // Bırakma kararı REF'ten okunur (bkz. finishDrag): hedef tespiti animasyon
+    // karesine ertelendiği için, parmak kaldırıldığı anda React state'i bir
+    // kare geride kalabiliyor — ref her zaman en son hesaplanan hedefi tutar.
+    dropTargetRef.current = { index, discard };
+    setHoverIndex(index);
+    setHoverDiscard(discard);
   };
 
   // Bir taşı (son bitiriş taşı ya da normal atış) sunucuya atma isteği
@@ -737,11 +820,19 @@ export default function PlayerRack({
 
   const finishDrag = () => {
     const d = dragRef.current;
+    // Bekleyen bir hedef-tespiti karesi varsa (parmak, son hareketten sonraki
+    // animasyon karesi gelmeden kaldırıldıysa) hedef BURADA senkron olarak
+    // hesaplanır — taşın bir kare eski slota bırakılması ihtimali kalmaz.
+    if (moveRafRef.current) {
+      cancelAnimationFrame(moveRafRef.current);
+      moveRafRef.current = 0;
+      if (d?.moved && d.lastX !== undefined) updateDropTarget(d.lastX, d.lastY);
+    }
     dragRef.current = null;
     clearLongPress();
     setGhost(null);
-    const dropIndex = hoverIndex;
-    const droppedOnDiscard = hoverDiscard;
+    const { index: dropIndex, discard: droppedOnDiscard } = dropTargetRef.current;
+    dropTargetRef.current = { index: null, discard: false };
     const tackEl = tackHoverElRef.current;
     const centerFinishEl = centerFinishHoverElRef.current;
     clearTackHover();
@@ -799,6 +890,33 @@ export default function PlayerRack({
     applyRack(moveTileToSlot(rackNow, d.fromIndex, dropIndex), baseGroupsRef.current);
   };
 
+  // bkz. RackSlot: memoize edilmiş slotların gereksiz yere yeniden çizilmemesi
+  // için işleyiciler SABİT KİMLİKLİ sarmalayıcılar üzerinden verilir. Gerçek
+  // işleyiciler (güncel state'i gören closure'lar) her render'da tazelenir ama
+  // slotların gördüğü `handlers` nesnesi hiç değişmez.
+  const liveHandlersRef = useRef({});
+  liveHandlersRef.current.pointerDown = handlePointerDown;
+  liveHandlersRef.current.pointerMove = handlePointerMove;
+  liveHandlersRef.current.finishDrag = finishDrag;
+  const slotHandlers = useMemo(() => ({
+    onPointerDown: (e, index, tile) => liveHandlersRef.current.pointerDown(e, index, tile),
+    onPointerMove: (e) => liveHandlersRef.current.pointerMove(e),
+    onPointerUp: () => liveHandlersRef.current.finishDrag(),
+  }), []);
+
+  // Okey bilgisi ({color, number}) her Firestore paketinde YENİ bir nesne olarak
+  // gelir ama içeriği el boyunca sabittir; slot memoizasyonunun her snapshot'ta
+  // boşa düşmemesi için sabitlenir.
+  const stableOkeyInfo = useMemo(
+    () => (okeyInfo ? { color: okeyInfo.color, number: okeyInfo.number } : null),
+    [okeyInfo?.color, okeyInfo?.number],
+  );
+
+  // Sürüklenen taşların id'leri (soluk çizilirler). `ghost` bir state olduğu
+  // için render sırasında güvenle okunur — `dragRef` (ref) okumak memoize
+  // slotlarla birlikte güvenilir çalışmazdı.
+  const draggingIds = useMemo(() => (ghost ? new Set(ghost.tiles.map((t) => t.id)) : null), [ghost]);
+
   const renderRow = (rowIndex) => {
     const start = rowIndex * cols;
     const slots = displayRack.slice(start, start + cols);
@@ -810,33 +928,24 @@ export default function PlayerRack({
       >
         {slots.map((tile, i) => {
           const index = start + i;
-          const isHover = hoverIndex === index && dragRef.current?.moved;
-          const hidden = tile && tile.id === optimisticDiscardId;
-          const isPending = tile && tile.id === pendingTileId;
           return (
-            <div
+            <RackSlot
               key={index}
-              data-slot-index={index}
-              style={{ width: `${tileW}px`, height: `${tileH}px` }}
-              className={`rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
-              onPointerMove={handlePointerMove}
-              onPointerUp={finishDrag}
-              onPointerCancel={finishDrag}
-            >
-              {tile && !hidden && (
-                <Tile
-                  tile={tile}
-                  width={tileW}
-                  okeyInfo={okeyInfo}
-                  selected={selected.has(tile.id)}
-                  grouped={!!groupOf[tile.id]}
-                  faceDown={flippedIds.has(tile.id)}
-                  dragging={dragRef.current?.moved && dragRef.current?.tileIds.includes(tile.id)}
-                  className={flipTileId === tile.id ? 'okey101-tile-reveal' : ''}
-                  onPointerDown={isPending ? undefined : (e) => handlePointerDown(e, index, tile)}
-                />
-              )}
-            </div>
+              index={index}
+              tile={tile}
+              tileW={tileW}
+              tileH={tileH}
+              isHover={hoverIndex === index && !!ghost}
+              hidden={!!tile && tile.id === optimisticDiscardId}
+              isPending={!!tile && tile.id === pendingTileId}
+              selected={!!tile && selected.has(tile.id)}
+              grouped={!!tile && !!groupOf[tile.id]}
+              faceDown={!!tile && flippedIds.has(tile.id)}
+              dragging={!!tile && !!draggingIds?.has(tile.id)}
+              revealing={!!tile && flipTileId === tile.id}
+              okeyInfo={stableOkeyInfo}
+              handlers={slotHandlers}
+            />
           );
         })}
       </div>
@@ -948,7 +1057,7 @@ export default function PlayerRack({
                 type="button"
                 onClick={openPairs}
                 disabled={!canOpenPairs}
-                title={!canOpenPairsRule ? 'Masada çift açan biri olmadan çift işleyemezsin' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : (hasOpenedAlready ? 'Seçili çiftleri masaya sür' : 'Tam 5 çift seçmelisin'))}
+                title={!canOpenPairsRule ? 'Masada çift açan biri olmadan çift işleyemezsin' : (!canAct ? 'Sadece kendi sıranda, taş çektikten sonra' : (hasOpenedAlready ? 'Seçili çiftleri masaya sür' : `En az ${minPairsToOpen} çift seçmelisin (daha fazlasıyla da açabilirsin)`))}
                 className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Layers className="w-3.5 h-3.5" /> {pairsButtonLabel}

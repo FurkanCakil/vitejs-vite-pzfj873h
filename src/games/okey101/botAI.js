@@ -5,7 +5,7 @@
 // fonksiyonların döndürdüğü kararları uygular.
 
 import { COLORS, isOkeyTile, effectiveTile } from './tiles.js';
-import { validateGroup, canTackTile, isTileTackable, OPEN_THRESHOLD } from './gameLogic.js';
+import { validateGroup, canTackTile, isTileTackable, OPEN_THRESHOLD, PAIRS_OPEN_MIN } from './gameLogic.js';
 
 // Taşın kurallara göre geçerli yüz değeri. Sahte Okey artık joker DEĞİL; o elin
 // Okey'inin renk/sayısına sahip normal bir taş gibi davranır (bkz. tiles.js).
@@ -112,9 +112,16 @@ export function pickBotMelds(handTiles, okeyInfo) {
   return melds;
 }
 
-// 5 çift arar (aynı renk+sayı ikilisi; sadece gerçek Okey herhangi bir taşın
-// eşi olabilir — Sahte Okey normal bir taş gibi kendi yüz değeriyle eşleşir).
-export function pickBotPairs(handTiles, okeyInfo) {
+// Elindeki TÜM geçerli çiftleri bulur (aynı renk+sayı ikilisi; sadece gerçek
+// Okey herhangi bir taşın eşi olabilir — Sahte Okey normal bir taş gibi kendi
+// yüz değeriyle eşleşir).
+//
+// `target`: açılış için gereken en az çift sayısı. Gerçek çiftler HER ZAMAN
+// tümüyle döndürülür (bot da insan gibi 6-7 çiftle açıp katlamalı modda barajı
+// yükseltebilsin diye); Okey harcayarak çift TAMAMLAMA ise sadece bu hedefe
+// ulaşmak için yapılır (aksi halde bot elindeki Okey'i gereksiz yere çifte
+// bağlardı).
+export function pickBotPairs(handTiles, okeyInfo, target = PAIRS_OPEN_MIN) {
   const jokers = handTiles.filter((t) => isOkeyTile(t, okeyInfo));
   const normals = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
   const byKey = {};
@@ -126,13 +133,13 @@ export function pickBotPairs(handTiles, okeyInfo) {
     if (arr.length >= 2) pairs.push([arr[0], arr[1]]);
   }
   for (const arr of Object.values(byKey)) {
-    if (pairs.length >= 5) break;
+    if (pairs.length >= target) break;
     if (arr.length === 1) {
       const j = jokers.find((jk) => !usedJokers.includes(jk.id));
       if (j) { pairs.push([arr[0], j]); usedJokers.push(j.id); }
     }
   }
-  return pairs.slice(0, 5).map((tiles) => ({ tiles, type: 'cift' }));
+  return pairs.map((tiles) => ({ tiles, type: 'cift' }));
 }
 
 // Yerden (bir önceki oyuncunun attığı) taşı almanın işe yarayıp yaramadığını
@@ -163,16 +170,16 @@ export function shouldTakeDiscard(handTiles, discardTile, okeyInfo) {
 // heuristiği) aksine burada SADECE "bu taşla gerçekten açabilir miyim?"
 // sorusu sorulur. `requiredTotal`, katlamalı mod barajı aktifse (ve bot
 // ondan muaf değilse) normal 101'den YÜKSEK olabilir (bkz. Okey101Game).
-export function shouldTakeDiscardToOpen(handTiles, discardTile, okeyInfo, requiredTotal = OPEN_THRESHOLD) {
+export function shouldTakeDiscardToOpen(handTiles, discardTile, okeyInfo, requiredTotal = OPEN_THRESHOLD, requiredPairs = PAIRS_OPEN_MIN) {
   if (!discardTile) return false;
   const withTile = [...handTiles, discardTile];
 
-  // Çift açma barajdan ETKİLENMEZ (sadece Seri Aç etkilenir) — bu yüzden
-  // `requiredTotal` normal eşiğin üstündeyse (baraj aktifse) çift yolu
-  // denenmez, sadece per (seri/set) yolu değerlendirilir.
-  if (requiredTotal <= OPEN_THRESHOLD) {
-    const pairs = pickBotPairs(withTile, okeyInfo);
-    if (pairs.length === 5 && pairs.some((p) => p.tiles.some((t) => t.id === discardTile.id))) return true;
+  // Çift açmanın kendi barajı vardır (`requiredPairs`, bkz.
+  // gameLogic#requiredPairsToOpen) — seri barajından (requiredTotal) bağımsız
+  // olarak değerlendirilir.
+  {
+    const pairs = pickBotPairs(withTile, okeyInfo, requiredPairs);
+    if (pairs.length >= requiredPairs && pairs.some((p) => p.tiles.some((t) => t.id === discardTile.id))) return true;
   }
 
   const melds = pickBotMelds(withTile, okeyInfo);
