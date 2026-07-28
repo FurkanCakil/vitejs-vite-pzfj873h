@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
-import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize } from 'lucide-react';
+import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
 
@@ -668,6 +668,22 @@ export default function App() {
                     <Minimize className="w-5 h-5 sm:w-6 sm:h-6" />
                  </button>
                </>
+            )}
+
+            {/* Telefon YATAY (okeyCompact) modda üst başlık — dolayısıyla
+                RoomHeader'daki "Tam Ekran Yap" butonu — tamamen gizleniyordu;
+                yani telefon yatayken tam ekrana GEÇMEK imkânsızdı. Bu buton o
+                boşluğu doldurur (Okey101Game'in kendi "Çık" butonunun solunda
+                durur). Tam ekrandayken zaten yukarıdaki "Tam Ekrandan Çık"
+                butonu görünüyor, o yüzden burada gösterilmez. */}
+            {okeyCompact && !isFullscreen && (
+              <button
+                onClick={toggleFullscreen}
+                title="Tam Ekran Yap"
+                className="fixed top-1 right-12 z-[4600] text-slate-200 bg-slate-900/80 border border-slate-600 p-1.5 rounded-lg backdrop-blur-sm"
+              >
+                <Maximize className="w-4 h-4" />
+              </button>
             )}
 
             {roomData?.status === 'waiting' && roomData?.gameId !== 'okey101' ? (

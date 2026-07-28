@@ -32,9 +32,14 @@ const RACK_PANEL_PADDING_PX = 16;
 // turun en yoğun/en çok düşünülen anı; normal 30sn buna yetmiyordu.
 const OPEN_EXTRA_TIME_MS = 15000;
 
-// Elini açan oyuncunun turuna eklenecek yeni son tarih: kalan süresi
-// 15sn'den azsa 15sn'ye tamamlanır, fazlaysa dokunulmaz (süresini kısaltmaz).
-const extendedDeadlineAfterOpen = (currentDeadline) => Math.max(currentDeadline || 0, Date.now() + OPEN_EXTRA_TIME_MS);
+// Elini açan oyuncunun turuna eklenecek yeni son tarih: kalan süresi NE OLURSA
+// OLSUN 15sn EKLENİR (ör. 22sn kalmışsa 37sn'ye çıkar).
+//
+// ÖNCEKİ (hatalı) davranış `Math.max(currentDeadline, now + 15sn)` idi: bu,
+// süresi 15sn'den ÇOK kalan oyuncuya hiçbir ek süre vermiyor, sadece 15sn'nin
+// altına düşmüşse 15sn'ye TAMAMLIYORDU. Yani "açana +15sn" kuralı pratikte
+// sadece son saniyelerde açanlar için işliyordu.
+const extendedDeadlineAfterOpen = (currentDeadline) => Math.max(currentDeadline || 0, Date.now()) + OPEN_EXTRA_TIME_MS;
 // Bir bot turu bu süreyi aşarsa (ağ/transaction asılması) yeni bir deneme
 // kilidi devralabilir. Normal bir tur artık ~3-6sn sürüyor.
 const BOT_TURN_STUCK_MS = 15000;
@@ -195,6 +200,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
       centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
+      takenOkeys: {},
     }).catch((err) => console.error('Okey101 taş dağıtım hatası:', err));
   }, [roomData.status, roomData.racks, isHost]);
 
@@ -619,6 +625,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: data.okey || null,
           foldMultiplier: data.foldMultiplier || 1,
+          takenOkeys: data.takenOkeys || {},
         }, null, false);
         const ended = {
           turn: null, turnDeadline: null, hasDrawnThisTurn: false, sideTake: null, forcedPileDraw: false,
@@ -802,6 +809,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: data.okey || null,
           foldMultiplier: data.foldMultiplier || 1,
+          takenOkeys: data.takenOkeys || {},
         }, rack.length === 0 ? actingUid : null, false);
         t.update(roomRef, {
           turn: null, turnDeadline: null, hasDrawnThisTurn: false, sideTake: null, forcedPileDraw: false,
@@ -871,6 +879,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: okeyNow,
           foldMultiplier: data.foldMultiplier || 1,
+          takenOkeys: data.takenOkeys || {},
         }, actingUid, wonByOkeyDiscard, wentOutFromHand);
 
         outcome = { success: true, roundEnded: true };
@@ -951,6 +960,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: okeyNow,
           foldMultiplier: data.foldMultiplier || 1,
+          takenOkeys: data.takenOkeys || {},
         }, null, false);
 
         outcome = { success: true, carelessDiscard, discardedOkey, discardedTackable, roundEnded: true };
@@ -1023,8 +1033,21 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const alreadyOpened = !!data.hasOpened?.[user.uid];
       const total = computeSelectedGroupsValue(results);
 
+      // "ELDEN BİTME" açılışı: bu açılış ıstakada atılacak TEK bir taş
+      // bırakıyorsa (yani oyuncu tüm elini bir hamlede masaya serip son taşı
+      // ortaya atarak bitirecekse) oyuncu katlamalı moddaki BARAJDAN MUAFTIR
+      // — gerçek 101 Okey kuralı: elden biten barajı geçmek zorunda değildir.
+      // (101 alt sınırı yine aranır; ama 21 taşlık bir açılış zaten onu
+      // fazlasıyla geçer.)
+      const rackTileCount = myRackNow.filter(Boolean).length;
+      const tilesUsedCount = validGroupIds.reduce((n, gid) => n + (myGroupsNow[gid]?.length || 0), 0);
+      const goesOutFromHand = (rackTileCount - tilesUsedCount) <= 1;
+
       if (!alreadyOpened && total < OPEN_THRESHOLD) {
-        outcome = { success: false, reason: 'below101' };
+        // Ceza mesajında oyuncunun KENDİ toplamı da (baraj gösterimiyle aynı
+        // "123 (41 yan 2)" biçiminde) yazılır — "kaçta kaldım?" sorusu için
+        // masaya bakıp tekrar toplamak gerekmesin.
+        outcome = { success: false, reason: 'below101', myTotalLabel: formatFoldBarrier(total) };
         t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) + PENALTY_POINTS });
         return;
       }
@@ -1037,8 +1060,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // kapalıysa barajı kuranın takım arkadaşı muaftır).
       const foldingActive = !!data.rules?.foldingEnabled;
       const barrier = data.foldBarrier || null;
-      if (!alreadyOpened && foldingActive && barrier && !isExemptFromFoldBarrier(user.uid, barrier, data.rules, data.teams) && total <= barrier.total) {
-        outcome = { success: false, reason: 'below-fold-barrier', barrierLabel: formatFoldBarrier(barrier.total) };
+      if (!alreadyOpened && foldingActive && !goesOutFromHand && barrier && !isExemptFromFoldBarrier(user.uid, barrier, data.rules, data.teams) && total <= barrier.total) {
+        outcome = { success: false, reason: 'below-fold-barrier', barrierLabel: formatFoldBarrier(barrier.total), myTotalLabel: formatFoldBarrier(total) };
         t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) + PENALTY_POINTS });
         return;
       }
@@ -1089,9 +1112,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
     if (outcome?.reason === 'pairs-opener') showToast('Çift açtığın için per (seri/set) açamazsın. Sadece çift sürebilir ve tek tek taş işleyebilirsin.', 'red');
     else if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
-    else if (outcome?.reason === 'below101') showToast('101\'e Ulaşamadınız! Ceza Yediniz.', 'red');
+    else if (outcome?.reason === 'below101') showToast(`101'e ulaşamadın — ${outcome.myTotalLabel} ile kaldın. +101 ceza yedin.`, 'red');
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
-    else if (outcome?.reason === 'below-fold-barrier') showToast(`Katlamalı modda baraj (${outcome.barrierLabel}) geçilmeden per açılamaz! Ceza yedin.`, 'red');
+    else if (outcome?.reason === 'below-fold-barrier') showToast(`Barajı (${outcome.barrierLabel}) geçemedin — ${outcome.myTotalLabel} ile kaldın. +101 ceza yedin.`, 'red');
     else if (outcome?.success === true) {
       showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için +${outcome.penaltyAmount} ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
     }
@@ -1259,7 +1282,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // turu boş geçmesini sağlar).
       const foldingActiveBot = !isPairs && !!data.rules?.foldingEnabled;
       const barrierBot = data.foldBarrier || null;
-      if (foldingActiveBot && !alreadyOpened && barrierBot && !isExemptFromFoldBarrier(actingUid, barrierBot, data.rules, data.teams) && total <= barrierBot.total) {
+      // bkz. handleOpenSeries#goesOutFromHand — elden biten (tüm elini bir
+      // hamlede serip son taşı atacak olan) oyuncu barajdan muaftır; bot da.
+      const botRackTileCount = actorRackNow.filter(Boolean).length;
+      const botTilesUsedCount = melds.reduce((n, m) => n + m.tiles.length, 0);
+      const botGoesOutFromHand = (botRackTileCount - botTilesUsedCount) <= 1;
+      if (foldingActiveBot && !alreadyOpened && !botGoesOutFromHand && barrierBot && !isExemptFromFoldBarrier(actingUid, barrierBot, data.rules, data.teams) && total <= barrierBot.total) {
         t.update(roomRef, { [`scores.${actingUid}`]: (data.scores?.[actingUid] || 0) + PENALTY_POINTS });
         outcome = { success: false };
         return;
@@ -1395,6 +1423,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         targetOpened[target.groupIndex] = { ...group, tiles: newGroupTiles };
         newRack[idx] = jokerTile; // atılan taş çıkar, Okey onun yerine ıstakaya gelir
 
+        // Masadan ALINAN (çalınan) Okey'in kimliği kaydedilir: tur sonunda bu
+        // Okey HÂLÂ o oyuncunun ıstakasındaysa (yani çalıp kullanamadıysa)
+        // kendisine +101 ceza yazılır — bkz. computeRoundEnd#takenOkeys.
+        // Gerçek masadaki "kullanamayacaksan okeyi çalma" kuralı.
+        update[`takenOkeys.${actingUid}`] = [...(data.takenOkeys?.[actingUid] || []), jokerTile.id];
+
         // Ceza: SADECE başkasının (rakip) perinden Okey alınırsa, VE Eşli
         // modda aynı takımdan değillerse (eşinin okeyini almanın cezası yok).
         let penalizedName = null;
@@ -1441,6 +1475,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           teams: data.teams || null,
           okeyInfo: okeyNow,
           foldMultiplier: data.foldMultiplier || 1,
+          takenOkeys: data.takenOkeys || {},
         }, actingUid, false, wentOutFromHand);
 
         outcome.roundEnded = true;
@@ -1510,6 +1545,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
         centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
+        takenOkeys: {},
       });
     }).catch((err) => console.error('Okey101 yeni tur hatası:', err));
   };
@@ -1677,7 +1713,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       {/* 1. madde: oyun başlamadan seçilen oda kuralları (eşli/tekli,
           katlamalı/katlamasız, eşe katlama) tüm oyun boyunca ekranın EN
           SAĞINDA küçük rozetler halinde görünür kalır. */}
-      <div className="absolute top-0 right-0 z-[10] flex flex-col items-end gap-1 pointer-events-none">
+      {/* KOMPAKT (telefon yatay) modda sağ üst köşede App.tsx'in SABİT "Çık" ve
+          "Tam Ekran Yap" butonları duruyor — rozetler top-0'da kalırsa onların
+          ALTINA binip okunmaz oluyordu. Bu yüzden kompakt modda biraz aşağı
+          alınır. */}
+      <div className={`absolute right-0 z-[10] flex flex-col items-end gap-1 pointer-events-none ${isCompact ? 'top-9' : 'top-0'}`}>
         <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider bg-slate-900/80 border border-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full">
           {roomData.rules?.gameType === '2v2' ? 'Eşli' : 'Tekli'}
         </span>
@@ -1724,7 +1764,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         {/* 2. madde: Desteye basmak için hedef alan belirgin şekilde BÜYÜTÜLDÜ
             ve Göstergeden iyice ayrıldı — parmak yanlışlıkla Göstergeye
             gitmesin (Gösterge'nin zaten tıklanacak bir işlevi yoktur). */}
-        <div className={`flex items-center ${isCompact ? 'gap-3' : 'gap-5 sm:gap-8'}`}>
+        {/* `flex-wrap`: telefon DİKEY modda Deste + Gösterge + (katlamalı modda)
+            baraj rozetleri tek satıra sığmıyor, taşan rozetler ekran dışında
+            kalıp GÖRÜNMÜYORDU. Artık alt satıra sarılırlar. */}
+        <div className={`flex items-center flex-wrap justify-center ${isCompact ? 'gap-3' : 'gap-3 sm:gap-8'}`}>
           <div
             {...pileDrag.handlers}
             title={mustDraw ? 'Desteden çek (tıkla ya da ıstakaya sürükle)' : undefined}

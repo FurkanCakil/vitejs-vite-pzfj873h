@@ -489,11 +489,26 @@ export function computeRemainingTilesPenalty(rack, okeyInfo) {
 export const OKEY_DISCARD_OPPONENT_MULTIPLIER = 2;
 export const WENT_OUT_FROM_HAND_OPPONENT_MULTIPLIER = 2;
 
+// Masadaki bir per'den işleyerek Okey ALAN (çalan) ama tur bitene kadar o
+// Okey'i KULLANAMAYIP ıstakasında bırakan oyuncuya yazılan ek ceza. Gerçek
+// masadaki "kullanamayacaksan okeyi çalma" kuralı: çalma anında okeyi
+// kaptırana +101 yazılır (bkz. handleTackTile), çalan da kullanamazsa aynı
+// bedeli öder. NOT: Okey zaten "elde kalan taş" olarak da 101 sayılır
+// (computeRemainingTilesPenalty) — bu ceza onun ÜSTÜNE eklenir.
+export const UNUSED_STOLEN_OKEY_PENALTY = PENALTY_POINTS;
+
+// Bir oyuncunun masadan aldığı Okey'lerden KAÇ TANESİ hâlâ ıstakasında?
+export function countUnusedStolenOkeys(rack, takenOkeyIds) {
+  if (!takenOkeyIds || takenOkeyIds.length === 0) return 0;
+  const taken = new Set(takenOkeyIds);
+  return (rack || []).filter((tile) => tile && taken.has(tile.id)).length;
+}
+
 // Bir el (round) bittiğinde her oyuncunun bu turdaki net puan değişimini ve
 // (Eşli modda) takım havuzlamasını hesaplar. `roomData.scores` zaten anlık
 // (yandan-alma/açamama gibi) cezaları içerdiği için, o anlık cezaları
 // roundStartScores'a göre ayrıştırıp tablo için ayrıca raporluyoruz.
-export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, openedWithPairs, racks, rules, teams, okeyInfo, foldMultiplier }, winnerUid, wonByOkeyDiscard, wentOutFromHand = false) {
+export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, openedWithPairs, racks, rules, teams, okeyInfo, foldMultiplier, takenOkeys }, winnerUid, wonByOkeyDiscard, wentOutFromHand = false) {
   // Diğer (kazanmayan) oyuncuların bu turki cezasına uygulanan toplam katsayı.
   let opponentBonusMultiplier = 1;
   if (wonByOkeyDiscard) opponentBonusMultiplier *= OKEY_DISCARD_OPPONENT_MULTIPLIER;
@@ -513,6 +528,12 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
       const remaining = computeRemainingTilesPenalty(racks?.[uid], okeyInfo);
       baseDelta[uid] = (openedWithPairs?.[uid] ? remaining * PAIRS_OPENER_PENALTY_MULTIPLIER : remaining) * opponentBonusMultiplier;
     }
+    // Masadan çalınıp kullanılamayan her Okey için ek +101. Kazananın ıstakası
+    // zaten boş olduğu için pratikte sadece kaybedenleri etkiler. Bu ceza
+    // "elde kalan taş" katsayılarından (çift ×2, elden bitme ×2) BAĞIMSIZDIR —
+    // çalma cezası sabittir, rakibin nasıl bittiğine göre katlanmaz.
+    const unusedStolen = countUnusedStolenOkeys(racks?.[uid], takenOkeys?.[uid]);
+    if (unusedStolen > 0) baseDelta[uid] += unusedStolen * UNUSED_STOLEN_OKEY_PENALTY;
   });
 
   // Eşli (2v2): takımın iki üyesinin bu turki delta'sı ortak havuzda toplanıp

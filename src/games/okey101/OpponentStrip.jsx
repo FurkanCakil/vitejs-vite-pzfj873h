@@ -58,13 +58,28 @@ function Seat({ player, score, isHost, isCurrentTurn, compact, vertical = false 
   );
 }
 
-// Atılan bir taşın "uçuş" rozeti: taşı ATAN ile taşı ALAN oyuncunun tam
-// ortasında durur. Kimin kime attığı zaten masa geometrisinden (üstteki
-// soldakine, sağdaki üsttekine atar) belli olduğu için altına ayrıca isim
-// yazılmaz — sadece taş, biraz büyütülmüş halde gösterilir.
-function DiscardFloat({ tile, okeyInfo, compact }) {
-  if (!tile) return null;
-  return <Tile tile={tile} width={compact ? 22 : 30} okeyInfo={okeyInfo} />;
+// Bir rakibin ATTIĞI taşın durduğu bölme: taşı ATAN ile taşı ALAN oyuncunun
+// arasında durur. Kimin kime attığı zaten masa geometrisinden (üstteki
+// soldakine, sağdaki üsttekine atar) belli olduğu için altına isim yazılmaz.
+//
+// Bölme, kendi ıstakamın üstündeki "Soldan Çek" / "Sağa At" bölmeleriyle AYNI
+// dilde çizilir: taş yokken bile KESİK ÇİZGİLİ boş bir yer olarak durur —
+// böylece "buraya taş atılacak" bilgisi masadan okunur ve taş gelip gittikçe
+// layout zıplamaz.
+const DISCARD_TILE_W = { compact: 30, normal: 42 };
+
+function DiscardSlot({ tile, okeyInfo, compact }) {
+  const tileW = compact ? DISCARD_TILE_W.compact : DISCARD_TILE_W.normal;
+  const slotW = Math.round(tileW * 1.18);
+  const slotH = Math.round(slotW * TILE_ASPECT);
+  return (
+    <div
+      style={{ width: `${slotW}px`, height: `${slotH}px` }}
+      className="rounded-lg border-2 border-dashed border-slate-600/70 bg-slate-900/40 flex items-center justify-center shrink-0"
+    >
+      {tile && <Tile tile={tile} width={tileW} okeyInfo={okeyInfo} />}
+    </div>
+  );
 }
 
 // Masayı 4 oyuncunun tam bir kare oluşturacağı şekilde dizer: ben her zaman
@@ -86,15 +101,6 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
     vertical,
   } : null;
 
-  // 2. madde: bu şerit eskiden SADECE bir atış varken (hasFloat) render
-  // ediliyordu — ilk bot taşını attığı an bu satır aniden BELİRİP altındaki
-  // her şeyi (tur bilgisi, açılan eller, ıstaka) aşağı itiyor, bu da "ekran
-  // hafif kayıyor" diye hissedilen ani sıçramanın kaynağıydı. Artık şerit
-  // HER ZAMAN render edilir (yüksekliği baştan ayrılır); içindeki taş(lar)
-  // sadece varsa gösterilir — layout hiçbir zaman zıplamaz.
-  const floatWidth = compact ? 22 : 30;
-  const floatHeight = Math.round(floatWidth * TILE_ASPECT);
-
   return (
     <div className={`w-full flex flex-col items-center ${compact ? 'gap-1' : 'gap-1.5 sm:gap-2'}`}>
       {/* Tur bandı ("Sıra Sende!" / "X oynuyor...") masanın ORTASINDA değil,
@@ -107,16 +113,17 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
         {topSeat && <Seat {...seatProps(topSeat)} />}
       </div>
 
-      {/* Atılan taşlar: sol taraf = ÜSTTEKİ'nin SOLDAKİ'ne attığı taş, sağ
+      {/* Atış bölmeleri: sol taraf = ÜSTTEKİ'nin SOLDAKİ'ne attığı taş, sağ
           taraf = SAĞDAKİ'nin ÜSTTEKİ'ne attığı taş. Kimin kime attığı masa
-          geometrisinden zaten belli olduğu için isim yazılmaz. Taşlar masanın
-          ortasına yakın değil, gidecekleri koltuğa doğru (köşelere) yerleşir. */}
-      <div className="w-full flex items-start justify-between px-[14%] sm:px-[20%]" style={{ minHeight: `${floatHeight}px` }}>
+          geometrisinden zaten belli olduğu için isim yazılmaz. Bölmeler
+          gidecekleri koltuğa doğru (köşelere) yerleşir ve taş yokken de
+          kesik çizgili olarak durur (bkz. DiscardSlot). */}
+      <div className="w-full flex items-start justify-between px-[14%] sm:px-[20%]">
         <div className="flex justify-start">
-          {topSeat?.topDiscard && leftSeat && <DiscardFloat tile={topSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
+          {leftSeat && topSeat && <DiscardSlot tile={topSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
         </div>
         <div className="flex justify-end">
-          {rightSeat?.topDiscard && topSeat && <DiscardFloat tile={rightSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
+          {rightSeat && topSeat && <DiscardSlot tile={rightSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
         </div>
       </div>
 
@@ -140,7 +147,12 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
             (İsimler artık DİKEY yazıldığı için koltuklar zaten dar — sütun
             genişliği `auto`ya çevrildi, merkez sütun `1fr` ile kalan TÜM
             genişliği alır.) */}
-        <div className={`flex justify-between items-start gap-2 ${compact ? 'contents' : 'sm:contents'}`}>
+        {/* `w-full` ŞART: dar (telefon DİKEY) ekranda bu sarmalayıcı gerçek bir
+            flex satırıdır ve `justify-between` ancak tam genişlikteyken sol/sağ
+            koltukları iki uca yaslar. w-full olmadan satır içeriğe göre daralıp
+            iki koltuğu yan yana (ikisi de solda) bırakıyordu. `sm` ve üstünde
+            zaten `contents` olduğu için bu genişliğin hiçbir etkisi yoktur. */}
+        <div className={`w-full flex justify-between items-start gap-2 ${compact ? 'contents' : 'sm:contents'}`}>
           <div className={`shrink-0 ${compact ? 'col-start-1 row-start-1 flex justify-start' : 'sm:col-start-1 sm:row-start-1 sm:flex sm:justify-start'}`}>
             {leftSeat && <Seat {...seatProps(leftSeat, true)} />}
           </div>
