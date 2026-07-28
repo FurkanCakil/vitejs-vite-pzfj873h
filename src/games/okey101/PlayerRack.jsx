@@ -196,6 +196,24 @@ export default function PlayerRack({
   const tackHoverElRef = useRef(null);
   const centerFinishHoverElRef = useRef(null);
 
+  // --- Sunucuya yazım hattı (aşağıdaki iyimser-katman efektleri buna bakar,
+  //     bu yüzden BİLEREK en üstte tanımlanır; detaylı açıklama için bkz.
+  //     `flushRackWrite` ve `applyRack`). ---
+  const pendingWriteRef = useRef(null); // { rack, groups } — henüz gönderilmemiş en son istenen durum
+  const writeChainRef = useRef(Promise.resolve());
+  const writeDebounceRef = useRef(null);
+  const inFlightRef = useRef(0);        // sunucuda ŞU AN işlenen yazım sayısı
+  const settleTimerRef = useRef(null);
+  const [writeSettleTick, setWriteSettleTick] = useState(0);
+  useEffect(() => () => {
+    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+  }, []);
+
+  // Yazım hattı tamamen boş mu? (bekleyen debounce YOK, gönderilmemiş
+  // değişiklik YOK, uçuşta transaction YOK)
+  const isWriteIdle = () => !writeDebounceRef.current && !pendingWriteRef.current && inFlightRef.current === 0;
+
   // Istaka düzenlemesi artık sunucuda transaction ile birleştirilerek yazılıyor
   // (taş kaybını önlemek için — bkz. tiles.js#mergeRackLayout). Bu fazladan bir
   // sunucu gidiş-dönüşü demek; sürükle-bırak'ın anlık hissettirmesi için taşın
@@ -217,12 +235,49 @@ export default function PlayerRack({
   const baseRackRef = useRef(baseRack);
   useEffect(() => { baseRackRef.current = baseRack; }, [baseRack]);
 
-  // Sunucu aynı yerleşime ulaştıysa iyimser kopya kendiliğinden düşer.
+  // Iyimser kopya NE ZAMAN bırakılır?
+  //
+  // KÖK NEDEN ("6-7 kez üst üste sürükleyince son 2 sürükleme geri alınıp
+  // sonra tekrar uygulanıyor"): Eskiden iyimser katman, yazım hattı boşaldıktan
+  // 500ms sonra KÖR bir zamanlayıcıyla bırakılıyordu. Ama `runTransaction`'ın
+  // resolve olması "sunucu yazdı" demektir — "o veri onSnapshot ile BİZE geri
+  // döndü" DEMEK DEĞİLDİR. Snapshot henüz gelmemişken zamanlayıcı tetiklenince
+  // ekran, elimizdeki EN SON sunucu verisine (yani birkaç sürükleme ÖNCEKİ ara
+  // duruma) düşüyor; asıl snapshot gelince de yeniden son hâle sıçrıyordu.
+  // Kullanıcının gördüğü "geri alıp tekrar yapma" tam olarak buydu.
+  //
+  // Artık zamanlayıcı YOK. Karar tamamen İÇERİĞE bakar:
+  //   1. Sunucu bizim yerleşimimize ulaştıysa -> bırak (görsel değişiklik olmaz).
+  //   2. Sunucudaki TAŞ KÜMESİ bizimkinden farklıysa (taş çekildi/atıldı/açıldı)
+  //      -> sunucuda BİZİM BİLMEDİĞİMİZ bir içerik değişikliği var, hemen bırak.
+  //   3. Küme aynı ama konumlar farklıysa -> bizim yerleşimimiz DAHA YENİdir
+  //      (mergeRackLayout sunucuda konumlarımızı korur), iyimser katman KALIR.
+  // Böylece ara snapshot'lar ekranı asla geri sıçratmaz.
+  const rackIdSet = (rows) => {
+    const s = new Set();
+    (rows || []).forEach((t) => { if (t) s.add(t.id); });
+    return s;
+  };
+  const sameIdSet = (a, b) => a.size === b.size && [...a].every((id) => b.has(id));
+
   useEffect(() => {
     if (!optimisticRack) return;
-    const same = safeRack.every((t, i) => (t?.id ?? null) === (optimisticRack[i]?.id ?? null));
-    if (same) setOptimisticRack(null);
-  }, [safeRack, optimisticRack]);
+    // (2) Sunucudaki TAŞ KÜMESİ değiştiyse yerleşimimiz geçersizdir -> hemen bırak.
+    if (!sameIdSet(rackIdSet(safeRack), rackIdSet(optimisticRack))) { setOptimisticRack(null); return; }
+    // (1) Konumlar eşleşse BİLE, gönderilecek/uçuşta yazım VARKEN bırakma.
+    //
+    // KRİTİK: Aynı taşı iki slot arasında ileri-geri sürüklerken ara durumlar
+    // BİRBİRİNE EŞİT olur (0->22->0->22... dizisinde 1., 3., 5. hamleler aynı
+    // görünür). Sunucudan gelen ESKİ bir ara snapshot, o an elimizdeki EN SON
+    // iyimser durumla tesadüfen eşleşiyor diye katmanı bırakırsak, hemen
+    // ardından gelen bir sonraki (yine eski) snapshot taşı geri götürüyor —
+    // kullanıcının gördüğü "son 2 sürükleme geri alınıyor, sonra tekrar
+    // yapılıyor" salınımı TAM OLARAK BUYDU. Yazım hattı tamamen boşalmadan
+    // hiçbir eşleşmeye güvenmiyoruz.
+    if (!isWriteIdle()) return;
+    const samePositions = safeRack.every((t, i) => (t?.id ?? null) === (optimisticRack[i]?.id ?? null));
+    if (samePositions) setOptimisticRack(null);
+  }, [safeRack, optimisticRack, writeSettleTick]);
 
   // KÖK NEDEN (3. madde — "per ışınlanıyor" + "Per Onayla'da gecikme"):
   // `rack`'ın aksine `groups` (perler) hiç iyimser katmana sahip değildi —
@@ -247,13 +302,20 @@ export default function PlayerRack({
   // sayılabildiği için (lint bunu doğru tespit ediyor) gereksiz tetiklenirdi.
   useEffect(() => {
     if (!optimisticGroups) return;
+    if (!isWriteIdle()) return; // bkz. rack'teki aynı gerekçe (eşit görünen ara durumlar)
     const serverGroups = groups || {};
     const serverKeys = Object.keys(serverGroups);
     const optKeys = Object.keys(optimisticGroups);
     const same = serverKeys.length === optKeys.length
       && optKeys.every((gid) => (serverGroups[gid] || []).join(',') === (optimisticGroups[gid] || []).join(','));
     if (same) setOptimisticGroups(null);
-  }, [groups, optimisticGroups]);
+  }, [groups, optimisticGroups, writeSettleTick]);
+
+  // Iyimser katman, ıstakadaki TAŞ KÜMESİ değiştiğinde (yukarıdaki 2. kural)
+  // rack ile BİRLİKTE bırakılır — perler ıstakadan bağımsız yaşayamaz.
+  useEffect(() => {
+    if (optimisticRack === null && optimisticGroups !== null) setOptimisticGroups(null);
+  }, [optimisticRack, optimisticGroups]);
 
   // PERFORMANS/DOĞRULUK: `handleUpdateRack` (Okey101Game.jsx) her çağrıldığında
   // sunucudan OKUYUP birleştirip (mergeRackLayout) YAZAN bir transaction'dır.
@@ -267,29 +329,25 @@ export default function PlayerRack({
   // art arda birçok transaction'ı aynı anda işliyordu).
   //
   // Çözüm: EKRANDAKİ (iyimser) görünüm HER hareket için ANINDA güncellenir
-  // (gecikme YOK), ama sunucuya asıl YAZIM kısa bir süre (300ms) DEBOUNCE
-  // edilip TEK BİR yazım zinciri (writeChainRef) üzerinden SIRAYLA gönderilir
-  // — asla iki transaction aynı anda uçuşmaz. `flushRackWrite`, bir aksiyonun
-  // (ör. "Seri Aç") sunucudaki GÜNCEL `groups`'a ihtiyaç duyduğu anlarda
-  // debounce'u atlayıp hemen (ve varsa önceki yazımların ardından) göndermek
-  // için kullanılır.
-  const pendingWriteRef = useRef(null); // { rack, groups } — henüz gönderilmemiş en son istenen durum
-  const writeChainRef = useRef(Promise.resolve());
-  const writeDebounceRef = useRef(null);
-  const inFlightRef = useRef(0);          // sunucuda ŞU AN işlenen yazım sayısı
-  const settleTimerRef = useRef(null);
-  const [writeSettleTick, setWriteSettleTick] = useState(0);
-  useEffect(() => () => {
-    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-  }, []);
+  // (gecikme YOK), ama sunucuya asıl YAZIM kısa bir süre DEBOUNCE edilip TEK
+  // BİR yazım zinciri (writeChainRef) üzerinden SIRAYLA gönderilir — asla iki
+  // transaction aynı anda uçuşmaz. `flushRackWrite`, bir aksiyonun (ör. "Seri
+  // Aç") sunucudaki GÜNCEL `groups`'a ihtiyaç duyduğu anlarda debounce'u
+  // atlayıp hemen (ve varsa önceki yazımların ardından) göndermek için
+  // kullanılır. (Hattın ref/state tanımları, iyimser-katman efektlerinin
+  // onlara erişebilmesi için bu dosyada DAHA YUKARIDA yapılır.)
 
-  // Yazım hattı tamamen boş mu? (bekleyen debounce YOK, gönderilmemiş
-  // değişiklik YOK, uçuşta transaction YOK)
-  const isWriteIdle = () => !writeDebounceRef.current && !pendingWriteRef.current && inFlightRef.current === 0;
-
+  // AYNI ANDA EN FAZLA BİR yazım uçuşta olur. Uçuşta bir yazım varken gelen
+  // yeni hareketler `pendingWriteRef` içinde BİRİKİR (eskisinin üzerine yazar)
+  // ve uçuştaki bitince SADECE EN GÜNCEL hali gönderilir.
+  //
+  // Eskiden her hareket zincire AYRI bir transaction ekliyordu: 7 sürükleme =
+  // 7 sunucu gidiş-dönüşü = saniyelerce süren bir "ara durum snapshot'ı yağmuru".
+  // Artık 7 sürükleme en fazla 2 gidiş-dönüşe (1 uçuştaki + 1 birleştirilmiş
+  // son hâl) iner.
   const flushRackWrite = () => {
     if (writeDebounceRef.current) { clearTimeout(writeDebounceRef.current); writeDebounceRef.current = null; }
+    if (inFlightRef.current > 0) return writeChainRef.current; // biriksin, bitince gönderilir
     const pending = pendingWriteRef.current;
     if (pending) {
       pendingWriteRef.current = null;
@@ -299,6 +357,8 @@ export default function PlayerRack({
         .catch((err) => console.error('Okey101 ıstaka senkron hatası:', err))
         .finally(() => {
           inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+          // Bu arada biriken daha güncel bir hâl varsa onu şimdi gönder.
+          if (pendingWriteRef.current) { flushRackWrite(); return; }
           // Hat tamamen boşaldıysa "artık sunucu otoritedir" sinyalini ver
           // (bkz. aşağıdaki iyimser-katman bırakma efekti).
           if (isWriteIdle()) setWriteSettleTick((n) => n + 1);
@@ -324,7 +384,11 @@ export default function PlayerRack({
     pendingWriteRef.current = { rack: newRack, groups: newGroups };
     if (immediate) { flushRackWrite(); return; }
     if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
-    writeDebounceRef.current = setTimeout(flushRackWrite, 300);
+    // 300ms -> 140ms: ekrandaki görüntü zaten ANINDA güncelleniyor, ama yazımı
+    // geciktirmek "sunucu bizim düzenimize ulaşana kadar geçen süreyi" uzatıyor
+    // ve iyimser katmanın açık kaldığı pencereyi büyütüyordu. 140ms art arda
+    // sürüklemeleri hâlâ tek yazıma birleştirmeye yetiyor.
+    writeDebounceRef.current = setTimeout(flushRackWrite, 140);
   };
 
   // 7. madde — "taş bir anlığına eski yerine ışınlanıp geri geliyor" ARTIĞI:
@@ -341,6 +405,12 @@ export default function PlayerRack({
   // GERÇEKTEN farklı bir şey yazdıysa (ör. araya giren bir çekme) devreye
   // girer — ve o zaman da düzeltme DOĞRUdur, üstelik yazım bittikten sonra
   // yalnızca BİR KEZ olur.
+  // EMNİYET AĞI (normalde HİÇ tetiklenmez): iyimser katmanın asıl bırakılma
+  // yolu yukarıdaki İÇERİK karşılaştırmalarıdır. Bu zamanlayıcı sadece patolojik
+  // bir durumda (yazım kalıcı olarak başarısız oldu ve sunucu bizim yerleşimimize
+  // HİÇ ulaşmayacak) ekranın sonsuza dek kaydedilmemiş bir düzeni göstermesini
+  // engeller. Süre bilerek UZUN (4sn) tutulur — eski 500ms'lik sürüm, son yazımın
+  // snapshot'ı gelmeden tetiklenip ekranı ara duruma geri sıçratıyordu.
   useEffect(() => {
     if (!optimisticRack && !optimisticGroups) return;
     if (!isWriteIdle()) return;
@@ -350,7 +420,7 @@ export default function PlayerRack({
       if (!isWriteIdle()) return; // bu arada yeni bir hareket geldiyse dokunma
       setOptimisticRack(null);
       setOptimisticGroups(null);
-    }, 500);
+    }, 4000);
     return () => { if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; } };
   }, [optimisticRack, optimisticGroups, writeSettleTick]);
 

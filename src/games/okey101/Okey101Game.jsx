@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { doc, getDocFromServer, updateDoc, runTransaction } from 'firebase/firestore';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import Okey101Lobby from './Okey101Lobby.jsx';
 import PlayerRack, { maxRackContentWidth } from './PlayerRack.jsx';
 import OpponentStrip from './OpponentStrip.jsx';
@@ -9,7 +9,7 @@ import RoundResultBoard from './RoundResultBoard.jsx';
 import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
-import { playOkeySound } from '../../utils/okeySound.js';
+import { playOkeySound, isOkeySoundMuted, setOkeySoundMuted, subscribeOkeySoundMuted } from '../../utils/okeySound.js';
 import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import {
@@ -109,7 +109,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // İlk snapshot'ta (ref henüz null) ses ÇALINMAZ — odaya sonradan katılan ya
   // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
   // topluca duymasın diye.
-  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null });
+  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null, drawPileLen: null });
+
+  // Ses aç/kapa tercihi (tarayıcıda kalıcı — bkz. okeySound#setOkeySoundMuted).
+  const [soundMuted, setSoundMuted] = useState(() => isOkeySoundMuted());
+  useEffect(() => subscribeOkeySoundMuted(setSoundMuted), []);
 
   // Atış sesi: masadaki TÜM atış yığınlarının toplam uzunluğu her arttığında
   // (yani biri taş attığında) bir kez çalar. Tek tek oyuncu takip etmek yerine
@@ -119,8 +123,20 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   useEffect(() => {
     const prev = soundRefs.current.discardCount;
     soundRefs.current.discardCount = totalDiscards;
-    if (prev !== null && totalDiscards > prev) playOkeySound('discard');
+    if (prev === null) return;
+    if (totalDiscards > prev) playOkeySound('discard');
+    // Toplam AZALDIYSA biri yandan taş ÇEKMİŞTİR (soldaki oyuncunun atış
+    // yığınının tepesindeki taş alındı) — çekme sesi.
+    else if (totalDiscards < prev) playOkeySound('draw');
   }, [totalDiscards]);
+
+  // Ortadaki KAPALI DESTEDEN çekiş: deste uzunluğu her azaldığında.
+  const drawPileLen = roomData?.drawPile?.length ?? null;
+  useEffect(() => {
+    const prev = soundRefs.current.drawPileLen;
+    soundRefs.current.drawPileLen = drawPileLen;
+    if (prev !== null && drawPileLen !== null && drawPileLen < prev) playOkeySound('draw');
+  }, [drawPileLen]);
 
   // Açma sesi: masadaki toplam açık per sayısı arttığında (biri elini açtı ya
   // da yeni per/çift sürdü) kısa rüzgar sesi.
@@ -1807,6 +1823,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             {roomData.rules?.foldToPartnerEnabled ? 'Eşe Katlama Var' : 'Eşe Katlama Yok'}
           </span>
         )}
+        {/* Ses aç/kapa. Sarmalayıcı `pointer-events-none` olduğu için buton
+            kendi üzerinde bunu geri açar. Tercih tarayıcıda saklanır. */}
+        <button
+          type="button"
+          onClick={() => setOkeySoundMuted(!soundMuted)}
+          title={soundMuted ? 'Sesi aç' : 'Sesi kapat'}
+          aria-label={soundMuted ? 'Sesi aç' : 'Sesi kapat'}
+          className={`pointer-events-auto flex items-center gap-1 text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full transition-colors ${soundMuted ? 'bg-slate-900/80 border-slate-700 text-slate-500 hover:text-slate-300' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'}`}
+        >
+          {soundMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+          {soundMuted ? 'Ses Kapalı' : 'Ses Açık'}
+        </button>
       </div>
 
       {roomData.roundEnded && (

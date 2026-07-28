@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Droplet, Flame, Skull, X } from 'lucide-react';
+import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X } from 'lucide-react';
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey } from './logic.js';
@@ -280,33 +280,127 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     );
   }
 
+  // Her HÜCRE için "hangi geminin kaçıncı parçası" bilgisini çıkarır. Gemiyi
+  // 3 ayrı kutu gibi değil TEK BİR GÖVDE gibi çizebilmek için gerekli: sadece
+  // baş/kıç uçları yuvarlatılır, aradaki parçalar birbirine yapışır.
+  const buildSegmentMap = (ships) => {
+    const map = {};
+    (ships || []).forEach((ship) => {
+      const cells = ship.cells || [];
+      cells.forEach((cell, i) => {
+        map[cellKey(cell.row, cell.col)] = {
+          shipId: ship.id,
+          name: ship.name,
+          orientation: ship.orientation,
+          isFirst: i === 0,
+          isLast: i === cells.length - 1,
+        };
+      });
+    });
+    return map;
+  };
+
+  // Tek bir gemi parçası: yukarıdan bakılan METALİK savaş gemisi gövdesi.
+  // Hücre kenarlarını (inset -1px) örterek yan parçayla dikişsiz birleşir.
+  //   state: 'intact' | 'hit' | 'sunk'
+  const ShipHull = ({ seg, state = 'intact', placing = false }) => {
+    const horiz = seg.orientation === 'H';
+    // Gövde gradyanı gemi EKSENİNE DİK uygulanır: üstte güverte ışığı, altta
+    // gölge -> yuvarlak/hacimli bir gövde izlenimi.
+    const steel = horiz
+      ? 'linear-gradient(to bottom, #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)'
+      : 'linear-gradient(to right,  #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)';
+    const burnt = horiz
+      ? 'linear-gradient(to bottom, #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)'
+      : 'linear-gradient(to right,  #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)';
+    // Baş/kıç yuvarlatma: sadece geminin DIŞ uçları.
+    const R = '46%';
+    const radius = horiz
+      ? { borderTopLeftRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 }
+      : { borderTopLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 };
+
+    return (
+      <div
+        className={`absolute pointer-events-none transition-[background,filter] duration-500 ${placing ? 'bs-place' : ''}`}
+        style={{
+          inset: '-1px',
+          background: state === 'sunk' ? burnt : steel,
+          ...radius,
+          boxShadow: state === 'sunk'
+            ? 'inset 0 0 6px rgba(0,0,0,0.85)'
+            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -2px 3px rgba(0,0,0,0.45)',
+          filter: state === 'hit' ? 'saturate(0.5) brightness(0.72)' : undefined,
+        }}
+      >
+        {/* Güverte orta hattı — gövdeye "gemi" karakteri veren ince çizgi. */}
+        <div
+          className="absolute bg-slate-900/25"
+          style={horiz
+            ? { left: 0, right: 0, top: '50%', height: 1, transform: 'translateY(-0.5px)' }
+            : { top: 0, bottom: 0, left: '50%', width: 1, transform: 'translateX(-0.5px)' }}
+        />
+        {/* Taret/baca detayı: her parçanın ortasında küçük bir kule. */}
+        <div
+          className={`absolute rounded-[1px] ${state === 'sunk' ? 'bg-black/50' : 'bg-slate-700/70'}`}
+          style={{ left: '34%', top: '34%', width: '32%', height: '32%' }}
+        />
+        {/* Batan gemide sürekli duman/alev nabzı. */}
+        {state === 'sunk' && (
+          <div
+            className="bs-sunk-glow absolute rounded-full"
+            style={{ inset: '10%', background: 'radial-gradient(circle, rgba(251,146,60,0.85) 0%, rgba(239,68,68,0.4) 45%, rgba(0,0,0,0) 72%)' }}
+          />
+        )}
+      </div>
+    );
+  };
+
   // Ortak tahta iskeleti: sütun/satır etiketleri + verilen hücre üretici
   // fonksiyonuna göre 10x10 gövde. Yerleştirme (Faz 1) ve savaş (Faz 2)
   // tahtaları aynı iskeleti, farklı hücre görünümleriyle kullanır.
-  const renderGrid = (renderCell, onMouseLeaveBoard) => (
+  //   radar: hedef tahtasına dönen tarama ışığı ekler.
+  const renderGrid = (renderCell, onMouseLeaveBoard, { radar = false } = {}) => (
     <div className="inline-flex flex-col select-none" onMouseLeave={onMouseLeaveBoard}>
       <div className="flex">
         <div className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 shrink-0" />
         {Array.from({ length: BOARD_SIZE }, (_, c) => (
-          <div key={c} className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 flex items-center justify-center text-[10px] sm:text-xs font-bold text-slate-400 shrink-0">{c + 1}</div>
+          <div key={c} className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 flex items-center justify-center text-[10px] sm:text-xs font-bold text-cyan-300/70 shrink-0">{c + 1}</div>
         ))}
       </div>
-      {ROW_LABELS.map((label, r) => (
-        <div key={label} className="flex">
-          <div className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 flex items-center justify-center text-[10px] sm:text-xs font-bold text-slate-400 shrink-0">{label}</div>
-          {Array.from({ length: BOARD_SIZE }, (_, c) => renderCell(r, c))}
+      <div className="flex">
+        <div className="flex flex-col">
+          {ROW_LABELS.map((label) => (
+            <div key={label} className="w-5 h-6 sm:w-6 sm:h-7 md:w-7 md:h-8 flex items-center justify-center text-[10px] sm:text-xs font-bold text-cyan-300/70 shrink-0">{label}</div>
+          ))}
         </div>
-      ))}
+        <div className="bs-board relative rounded-md overflow-hidden">
+          {radar && <div className="bs-sweep absolute inset-[-25%] pointer-events-none z-0" />}
+          <div className="relative z-[1]">
+            {ROW_LABELS.map((label, r) => (
+              <div key={label} className="flex">
+                {Array.from({ length: BOARD_SIZE }, (_, c) => renderCell(r, c))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 
+  const CELL = 'w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 shrink-0 relative';
+
+  const setupSegments = buildSegmentMap(placedShips);
+
   const renderSetupMyCell = (r, c) => {
-    const occupantId = occupancy[cellKey(r, c)];
-    const inPreview = previewSet.has(cellKey(r, c));
-    let cls = 'bg-slate-800/60 border-slate-700 hover:border-slate-500';
-    if (occupantId) cls = 'bg-indigo-600/70 border-indigo-400';
-    if (inPreview) cls = previewInfo.valid ? 'bg-emerald-500/60 border-emerald-300' : 'bg-red-500/50 border-red-300';
+    const key = cellKey(r, c);
+    const occupantId = occupancy[key];
+    const seg = setupSegments[key];
+    const inPreview = previewSet.has(key);
     const shaking = occupantId && shakeShipId === occupantId;
+    // Önizleme (sürüklerken/hedeflerken) hücrenin ÜSTÜNE bindirilen renk.
+    const previewCls = inPreview
+      ? (previewInfo.valid ? 'bg-emerald-400/45 border-emerald-300/80' : 'bg-rose-500/45 border-rose-300/80')
+      : '';
     return (
       <div
         key={c}
@@ -320,55 +414,80 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
           const shipId = e.dataTransfer.getData('text/plain') || selectedShipId;
           if (shipId) attemptPlace(shipId, { row: r, col: c }, pendingOrientation);
         }}
-        className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 border shrink-0 transition-colors ${cls} ${setupLocked ? 'cursor-default' : 'cursor-pointer'} ${shaking ? 'animate-[shake_0.35s_ease-in-out]' : ''}`}
+        className={`${CELL} bs-cell ${!setupLocked && !occupantId ? 'bs-cell-live' : ''} transition-colors ${previewCls} ${setupLocked ? 'cursor-default' : 'cursor-pointer'} ${shaking ? 'animate-[shake_0.35s_ease-in-out] z-20' : ''}`}
         title={occupantId ? 'Çevirmek için çift tıkla / sağ tıkla' : undefined}
-      />
+      >
+        {seg && <ShipHull seg={seg} state="intact" placing />}
+      </div>
     );
   };
 
   const renderLockedCell = (r, c) => (
-    <div key={c} className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 border border-slate-700/60 bg-slate-800/30 shrink-0" />
+    <div key={c} className={`${CELL} bs-cell`} />
   );
 
   // FAZ 2 — "Kendi Filom": kendi gemilerim (sabit) + rakibin bana yaptığı
   // atışların üstten gösterimi (isabet: alev/kızıl, ıska: damla/mavi).
+  const myBattleSegments = buildSegmentMap(myShips);
+
+  // Bir atış hücresinin ÜSTÜNE binen efekt katmanı: isabet -> patlama,
+  // karavana -> su halkası. Gemi gövdesinin üzerine çizilir (gövdeyi silmez).
+  //   sunk: gemi TAMAMEN battıysa patlama topu küçülüp saydamlaşır — böylece
+  //   altındaki KÖMÜRLEŞMİŞ gövde (ve onun duman/alev nabzı) görünür kalır.
+  //   Aksi halde opak ateş topu gövdeyi tamamen örtüyordu.
+  const ShotMarker = ({ hit, sunk = false }) => (hit ? (
+    <>
+      <div
+        className={`bs-burst absolute rounded-full ${sunk ? 'opacity-50' : ''}`}
+        style={{
+          inset: sunk ? '26%' : '13%',
+          background: 'radial-gradient(circle at 50% 45%, #fff7ed 0%, #fbbf24 26%, #f97316 48%, #dc2626 70%, rgba(127,29,29,0) 88%)',
+        }}
+      />
+      <Flame className={`bs-ember relative z-[1] text-amber-50 drop-shadow-[0_0_3px_rgba(239,68,68,0.9)] ${sunk ? 'w-2.5 h-2.5 opacity-80' : 'w-3 h-3 sm:w-3.5 sm:h-3.5'}`} />
+    </>
+  ) : (
+    <>
+      <div className="bs-ripple absolute inset-0" />
+      <div className="absolute rounded-full bg-sky-300/80" style={{ width: '18%', height: '18%' }} />
+    </>
+  ));
+
   const renderBattleMyCell = (r, c) => {
     const key = cellKey(r, c);
-    const shipId = myShips.find((s) => s.cells.some((cell) => cell.row === r && cell.col === c))?.id || null;
+    const seg = myBattleSegments[key];
     const shot = opponentShotMap[key];
-    const sunk = shipId && mySunkShipIds.has(shipId);
-    let cls = 'bg-slate-800/60 border-slate-700';
-    if (shipId) cls = 'bg-indigo-600/70 border-indigo-400';
-    if (sunk) cls = 'bg-amber-600/80 border-amber-300 ring-1 ring-amber-300';
-    else if (shot?.hit) cls = 'bg-red-600/70 border-red-400';
-    else if (shot && !shot.hit) cls = 'bg-sky-900/50 border-sky-700';
+    const sunk = seg && mySunkShipIds.has(seg.shipId);
+    const state = sunk ? 'sunk' : (shot?.hit ? 'hit' : 'intact');
     return (
-      <div key={c} className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 border shrink-0 transition-colors flex items-center justify-center ${cls}`}>
-        {sunk ? <Skull className="w-3.5 h-3.5 text-amber-100" /> : shot?.hit ? <Flame className="w-3.5 h-3.5 text-red-100" /> : shot ? <Droplet className="w-3 h-3 text-sky-200" /> : null}
+      <div key={c} className={`${CELL} bs-cell flex items-center justify-center`}>
+        {seg && <ShipHull seg={seg} state={state} />}
+        {shot && <ShotMarker hit={!!shot.hit} sunk={!!sunk} />}
       </div>
     );
   };
 
   // FAZ 2 — "Hedef Tahtası": SADECE bu tahtaya atış yapılabilir. Kendi
   // atışlarımın sonucu + batırdığım gemilerin tam hatları burada belirginleşir.
+  // Batırılan rakip gemilerin TAM hatları radar üzerinde açığa çıkar; bunun
+  // için sadece batmış gemilerden bir segment haritası kurulur.
+  const sunkOpponentSegments = buildSegmentMap(opponentShips.filter((s) => opponentSunkShipIds.has(s.id)));
+
   const renderBattleTargetCell = (r, c) => {
     const key = cellKey(r, c);
     const shot = myShotMap[key];
-    const sunkShip = opponentShips.find((s) => opponentSunkShipIds.has(s.id) && s.cells.some((cell) => cell.row === r && cell.col === c));
+    const sunkSeg = sunkOpponentSegments[key];
     const clickable = isMyTurn && !shot;
-    let cls = 'bg-sky-950/40 border-slate-700';
-    if (sunkShip) cls = 'bg-amber-600/80 border-amber-300 ring-1 ring-amber-300';
-    else if (shot?.hit) cls = 'bg-red-600/70 border-red-400';
-    else if (shot && !shot.hit) cls = 'bg-sky-900/50 border-sky-700';
-    else if (clickable) cls = 'bg-sky-950/40 border-slate-700 hover:border-sky-400 hover:bg-sky-900/40';
     return (
       <div
         key={c}
         onClick={() => handleShoot(r, c)}
-        className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 border shrink-0 transition-colors flex items-center justify-center ${cls} ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
-        title={sunkShip ? `${sunkShip.name} battı!` : undefined}
+        className={`${CELL} bs-cell flex items-center justify-center transition-colors ${clickable ? 'bs-cell-live bs-crosshair cursor-pointer' : 'cursor-default'}`}
+        title={sunkSeg ? `${sunkSeg.name} battı!` : undefined}
       >
-        {sunkShip ? <Skull className="w-3.5 h-3.5 text-amber-100" /> : shot?.hit ? <Flame className="w-3.5 h-3.5 text-red-100" /> : shot ? <Droplet className="w-3 h-3 text-sky-200" /> : null}
+        {/* Batan gemi radar üzerinde hurda gövdesiyle görünür hale gelir. */}
+        {sunkSeg && <ShipHull seg={sunkSeg} state="sunk" />}
+        {shot && <ShotMarker hit={!!shot.hit} sunk={!!sunkSeg} />}
       </div>
     );
   };
@@ -384,8 +503,79 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
 
   return (
     <div className="relative flex flex-col items-center w-full max-w-4xl bg-gradient-to-br from-sky-950/40 to-slate-900 p-4 md:p-8 rounded-[2rem] border border-sky-800/30 shadow-xl overflow-hidden">
+      {/* ============================================================
+          GÖRSEL KATMAN (sadece sunum — oyun mantığına HİÇ dokunmaz)
+          ============================================================ */}
       <style>{`
         @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+        /* KARAVANA: suya düşen merminin genişleyip kaybolan dalga halkası. */
+        @keyframes bsRipple {
+          0%   { transform: scale(0.25); opacity: 0.95; border-width: 2px; }
+          70%  { opacity: 0.35; }
+          100% { transform: scale(2.1);  opacity: 0;    border-width: 1px; }
+        }
+        .bs-ripple::after {
+          content: ''; position: absolute; inset: 12%;
+          border: 2px solid rgba(125, 211, 252, 0.95); border-radius: 9999px;
+          animation: bsRipple 900ms ease-out 1 both;
+        }
+
+        /* İSABET: aniden büyüyüp hafifçe geri oturan ateş topu. */
+        @keyframes bsBurst {
+          0%   { transform: scale(0.25); opacity: 0; }
+          30%  { transform: scale(1.35); opacity: 1; }
+          60%  { transform: scale(0.88); opacity: 0.95; }
+          100% { transform: scale(1);    opacity: 0.92; }
+        }
+        .bs-burst { animation: bsBurst 520ms cubic-bezier(0.2, 1.4, 0.4, 1) 1 both; }
+
+        /* İsabet hücresinin altında yanıp sönen sıcak çekirdek. */
+        @keyframes bsEmber { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        .bs-ember { animation: bsEmber 1.6s ease-in-out infinite; }
+
+        /* BATTI: hurda/kömür gövdenin üstünde sürekli duman-alev nabzı. */
+        @keyframes bsSunkGlow {
+          0%, 100% { opacity: 0.28; transform: scale(0.92); }
+          50%      { opacity: 0.8;  transform: scale(1.12); }
+        }
+        .bs-sunk-glow { animation: bsSunkGlow 2.1s ease-in-out infinite; }
+
+        /* Gemi yerleştirilirken "oturma" (bounce) hissi. */
+        @keyframes bsPlace {
+          0%   { transform: scale(1.3); }
+          55%  { transform: scale(0.93); }
+          100% { transform: scale(1); }
+        }
+        .bs-place { animation: bsPlace 320ms cubic-bezier(0.2, 1.5, 0.4, 1) 1 both; }
+
+        /* Radar taraması: hedef tahtasının üstünde dönen ışık süpürgesi. */
+        @keyframes bsSweep { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .bs-sweep {
+          background: conic-gradient(from 0deg, rgba(34,211,238,0) 0deg, rgba(34,211,238,0) 300deg, rgba(34,211,238,0.16) 350deg, rgba(34,211,238,0.32) 360deg);
+          animation: bsSweep 4.5s linear infinite;
+        }
+
+        /* Taktiksel ızgara zemini: derin deniz + neon çizgiler. */
+        .bs-board {
+          background:
+            radial-gradient(ellipse at 50% 0%, rgba(14,116,144,0.20) 0%, rgba(2,6,23,0) 65%),
+            linear-gradient(160deg, #071a2f 0%, #04101f 55%, #020a14 100%);
+          box-shadow: inset 0 0 42px rgba(6,182,212,0.10), 0 0 0 1px rgba(34,211,238,0.16), 0 14px 34px rgba(0,0,0,0.5);
+        }
+        /* Hücre ayırıcıları: ince, hafif parlayan neon çizgiler. */
+        .bs-cell { border: 1px solid rgba(34, 211, 238, 0.13); }
+        .bs-cell-live:hover { border-color: rgba(34, 211, 238, 0.55); background-color: rgba(8, 145, 178, 0.16); }
+
+        /* Nişangâh (target lock): SADECE imlecin üzerinde olduğu hedef
+           hücrede köşe braketleri belirir (tüm tahtada değil). */
+        .bs-crosshair:hover::before, .bs-crosshair:hover::after {
+          content: ''; position: absolute; pointer-events: none; z-index: 2;
+          border-color: rgba(244, 63, 94, 0.95); border-style: solid;
+        }
+        .bs-crosshair:hover::before { inset: 8% auto auto 8%; width: 34%; height: 34%; border-width: 2px 0 0 2px; }
+        .bs-crosshair:hover::after  { inset: auto 8% 8% auto; width: 34%; height: 34%; border-width: 0 2px 2px 0; }
+        .bs-crosshair:hover { background-color: rgba(244, 63, 94, 0.14); border-color: rgba(244, 63, 94, 0.6) !important; }
       `}</style>
 
       {toast && (
@@ -471,20 +661,35 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
                     draggable={!setupLocked && !isPlaced}
                     onDragStart={(e) => { e.dataTransfer.setData('text/plain', def.id); setSelectedShipId(def.id); }}
                     onClick={() => { if (!setupLocked && !isPlaced) setSelectedShipId((id) => (id === def.id ? null : def.id)); }}
-                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors ${
+                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-all duration-150 ${
                       isPlaced ? 'bg-slate-800/40 border-slate-700 opacity-50' :
-                      isSelected ? 'bg-indigo-600/25 border-indigo-400 cursor-pointer' :
-                      `bg-slate-800/80 border-slate-600 hover:border-indigo-400 ${setupLocked ? '' : 'cursor-pointer'}`
+                      // Seçili gemi hafifçe KALKAR (scale + glow) — "elime aldım" hissi.
+                      isSelected ? 'bg-cyan-500/15 border-cyan-400 cursor-pointer scale-[1.03] shadow-[0_0_18px_rgba(34,211,238,0.35)]' :
+                      `bg-slate-800/80 border-slate-600 hover:border-cyan-400/70 hover:scale-[1.02] ${setupLocked ? '' : 'cursor-pointer active:scale-95'}`
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <Ship className="w-4 h-4 text-sky-400 shrink-0" />
+                      <Ship className={`w-4 h-4 shrink-0 ${isSelected ? 'text-cyan-300' : 'text-sky-400'}`} />
                       <span className="text-xs sm:text-sm font-medium text-slate-200 truncate">{def.name}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <div className={`flex ${isSelected && pendingOrientation === 'V' ? 'flex-col' : 'flex-row'} gap-0.5`}>
+                      {/* Envanterdeki silüet de TEK BİR metalik gövde olarak
+                          çizilir (ayrı kutucuklar değil) — masadaki görünümle
+                          aynı dili konuşur. */}
+                      <div
+                        className={`flex ${isSelected && pendingOrientation === 'V' ? 'flex-col' : 'flex-row'} overflow-hidden`}
+                        style={{
+                          borderRadius: '9999px',
+                          background: (isSelected && pendingOrientation === 'V')
+                            ? 'linear-gradient(to right, #e2e8f0 0%, #a8b6c8 32%, #6b7c93 64%, #3d4a5c 100%)'
+                            : 'linear-gradient(to bottom, #e2e8f0 0%, #a8b6c8 32%, #6b7c93 64%, #3d4a5c 100%)',
+                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 3px rgba(0,0,0,0.4)',
+                        }}
+                      >
                         {Array.from({ length: def.length }, (_, i) => (
-                          <div key={i} className="w-3 h-3 sm:w-3.5 sm:h-3.5 bg-sky-500 rounded-sm" />
+                          <div key={i} className="w-3 h-3 sm:w-3.5 sm:h-3.5 relative">
+                            <span className="absolute rounded-[1px] bg-slate-700/60" style={{ left: '32%', top: '32%', width: '36%', height: '36%' }} />
+                          </div>
                         ))}
                       </div>
                       {isPlaced && <Check className="w-4 h-4 text-emerald-400" />}
@@ -521,7 +726,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
         <div className="flex flex-col items-center gap-4">
           <h3 className="text-sm font-bold uppercase tracking-widest text-rose-300">Hedef Tahtası (Radar)</h3>
           <div className="relative bg-slate-900/70 p-2 sm:p-3 rounded-xl border border-slate-700 shadow-inner overflow-x-auto">
-            {roomData.setupPhase ? renderGrid(renderLockedCell) : renderGrid(renderBattleTargetCell)}
+            {roomData.setupPhase
+              ? renderGrid(renderLockedCell)
+              : renderGrid(renderBattleTargetCell, undefined, { radar: true })}
             {roomData.setupPhase && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/50 rounded-xl">
                 <Lock className="w-8 h-8 text-slate-500" />
