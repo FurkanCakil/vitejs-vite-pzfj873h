@@ -51,6 +51,17 @@ const rackColumns = (compact, viewportWidth) => (
   (!compact && viewportWidth > 0 && viewportWidth < NARROW_SCREEN_PX) ? NARROW_ROW_LENGTH : RACK_ROW_LENGTH
 );
 
+// Istakanın taş koyulabilen ALANININ ulaşabileceği en büyük genişlik (px).
+// Taşlar MAX_TILE_W'de doyduğu için, bundan daha geniş bir ekranda satırlar
+// büyümez; eskiden satır kutusu yine de `w-full` olduğu için iki yanda taş
+// SÜRÜKLENEMEYEN ama yeşil görünen ölü alanlar açılıyordu. Istaka paneline
+// bu değer üst sınır olarak verilir, böylece yeşil çerçeve tam da taş
+// koyulabilen yerde biter (bkz. Okey101Game — ıstaka sarmalayıcısı).
+export const maxRackContentWidth = () => {
+  const gap = Math.max(2, Math.floor(MAX_TILE_W * GAP_RATIO));
+  return RACK_ROW_LENGTH * MAX_TILE_W + (RACK_ROW_LENGTH - 1) * gap + ROW_PADDING_PX * 2;
+};
+
 function useRackMetrics({ compact, viewportHeight, cols, rows }) {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
@@ -114,6 +125,13 @@ export default function PlayerRack({
   const cols = rackColumns(compact, viewportWidth);
   const rows = Math.ceil(RACK_SLOTS / cols);
   const { ref: rackWrapRef, ready, tileW, tileH, gap } = useRackMetrics({ compact, viewportHeight, cols, rows });
+  // Satırın GERÇEK içerik genişliği. Ölçüm sarmalayıcısı (rackWrapRef) tam
+  // genişlikte kalır — ölçüm buna göre yapılmalı, aksi halde kendi kendini
+  // besleyen bir daralma döngüsü oluşur — ama GÖRÜNEN satır kutuları bu
+  // genişliğe sabitlenip ortalanır: yeşil zemin artık taşların bittiği yerde
+  // biter, iki yanda "sürüklenemeyen boşluk" kalmaz.
+  const rowWidth = cols * tileW + (cols - 1) * gap + ROW_PADDING_PX * 2;
+  const contentWidthStyle = ready ? { maxWidth: `${rowWidth}px` } : undefined;
 
   const [selected, setSelected] = useState(() => new Set());
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -781,7 +799,10 @@ export default function PlayerRack({
   );
 
   const rackRows = (
-    <div className="flex flex-col w-full" style={{ gap: `${Math.max(3, Math.round(gap * 1.4))}px` }}>
+    <div
+      className="flex flex-col w-full mx-auto"
+      style={{ gap: `${Math.max(3, Math.round(gap * 1.4))}px`, maxWidth: `${rowWidth}px` }}
+    >
       {Array.from({ length: rows }, (_, i) => renderRow(i))}
     </div>
   );
@@ -792,7 +813,10 @@ export default function PlayerRack({
       onDragStart={(e) => e.preventDefault()}
     >
       {isOwner && (
-        <div className={`w-full flex items-center justify-between gap-2 flex-wrap ${compact ? 'min-h-0' : 'min-h-8'}`}>
+        <div
+          style={compact ? undefined : contentWidthStyle}
+          className={`w-full mx-auto flex items-center justify-between gap-2 flex-wrap ${compact ? 'min-h-0' : 'min-h-8'}`}
+        >
           <div className="flex items-center gap-2 flex-wrap">
             {canAttemptConfirm && (
               <button type="button" onClick={confirmGroup} className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/50 px-2.5 py-1 rounded-lg transition-colors">
@@ -839,7 +863,7 @@ export default function PlayerRack({
       {/* SOL: solumdaki oyuncunun bana attığı taş (buradan çekerim) — SAĞ: sağımdaki
           oyuncuya atacağım taş (buraya sürüklerim). */}
       {isOwner && ready && !compact && (
-        <div className="w-full flex items-end justify-between gap-2">
+        <div style={contentWidthStyle} className="w-full mx-auto flex items-end justify-between gap-2">
           {incomingSlot}
           {discardSlot}
         </div>
