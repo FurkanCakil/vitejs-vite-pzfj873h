@@ -24,16 +24,22 @@ function Seat({ player, score, isHost, isCurrentTurn, compact, vertical = false 
   const frame = `bg-slate-900/70 border rounded-lg ${isCurrentTurn ? 'border-indigo-500/70 ring-1 ring-indigo-500/40' : 'border-slate-700'}`;
 
   if (vertical) {
+    // İsim DİKEY (yukarıdan aşağı akan, harfleri 90° yatık) yazılır — hem
+    // masaya "bir tık büyütülmüş" okunaklı bir isim koyar hem de koltuğun
+    // GENİŞLİĞİNİ daraltarak yanlarda merkez sütuna (deste/gösterge/açılan
+    // eller) yer açar (kullanıcı isteği). Skor yatay kalır (tek-iki haneli
+    // sayı zaten dar).
     return (
-      <div className={`flex flex-col items-center text-center ${frame} ${compact ? 'gap-0.5 px-1 py-1 w-[58px]' : 'gap-1 px-1.5 py-2 w-[76px] sm:w-[94px]'}`}>
+      <div className={`relative flex flex-col items-center text-center ${frame} ${compact ? 'gap-1 px-1 py-1.5 w-11' : 'gap-1.5 px-1.5 py-2 w-12 sm:w-14'}`}>
+        {isHost && <Crown className={`absolute -top-1.5 -right-1.5 text-yellow-400 drop-shadow shrink-0 ${compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}`} />}
         {avatar}
-        <div className="w-full min-w-0">
-          <div className={`flex items-center justify-center gap-0.5 font-bold text-slate-200 ${compact ? 'text-[9px] leading-tight' : 'text-[10px] sm:text-xs leading-tight'}`}>
-            <span className="truncate" title={player.name}>{player.name}</span>
-            {isHost && <Crown className={`text-yellow-400 shrink-0 ${compact ? 'w-2.5 h-2.5' : 'w-3 h-3'}`} />}
-          </div>
-          <div className={`text-slate-500 font-mono leading-tight whitespace-nowrap ${compact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{score ?? 0} puan</div>
-        </div>
+        <span
+          title={player.name}
+          className={`font-bold text-slate-200 [writing-mode:vertical-rl] truncate ${compact ? 'text-[10px] max-h-16' : 'text-[11px] sm:text-sm max-h-28 sm:max-h-36'}`}
+        >
+          {player.name}
+        </span>
+        <div className={`text-slate-500 font-mono leading-tight ${compact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{score ?? 0}</div>
       </div>
     );
   }
@@ -70,7 +76,7 @@ function DiscardFloat({ tile, okeyInfo, compact }) {
 // Tur akışı: SOL → BEN → SAĞ → ÜST → SOL. Yani sağdaki üsttekine, üstteki
 // soldakine, soldaki de bana atar. Soldakinin bana attığı taş burada DEĞİL,
 // kendi ıstakamın üstündeki "Soldan Çek" bölmesinde gösterilir.
-export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, turnUid, okeyInfo, compact = false, turnBanner = null, children }) {
+export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, turnUid, okeyInfo, compact = false, turnBanner = null, centerExtra = null, children }) {
   const seatProps = (seat, vertical = false) => seat ? {
     player: seat.player,
     score: seat.score,
@@ -118,28 +124,37 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
           Telefonda (dar ekran) sol+sağ koltuklar yan yana bir satırda, orta alan
           onların ALTINDA durur — 3 sütunlu kare düzen dar ekrana sığmıyor ve
           koltuklar desteyle üst üste biniyordu. sm ve üstünde gerçek kare masa. */}
-      <div className={`w-full flex items-center ${compact ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-1' : 'flex-col gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center'}`}>
+      {/* `items-start` (items-center DEĞİL): orta sütun artık deste/gösterge
+          ALTINA açılan eller panelini de aldığı için (bkz. `centerExtra`)
+          çok daha uzun olabiliyor — sol/sağ koltuklar bu durumda dikeyde
+          ORTALANMAK yerine üstte sabit kalır, tıpkı gerçek bir masada
+          oyuncunun sabit bir yerde oturup ortadaki yığının büyümesi gibi. */}
+      <div className={`w-full flex items-start ${compact ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-1' : 'flex-col gap-2 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-start'}`}>
         {/* NOT: Koltuk sarmalayıcılarında `justify-self-start/end` KULLANILMAZ.
             O, grid hücresini içeriğe göre boyutlandırıp (stretch yerine) hücre
             genişliğinden TAŞMASINA izin veriyordu — uzun oyuncu isimleri +
             geniş bir orta blok (Deste + Gösterge + barajlar) olduğunda isim
             kartları ortadaki bloğun ÜSTÜNE biniyordu. Bunun yerine hücre
             gerilir (stretch) ve içerik `flex justify-*` ile hizalanır; böylece
-            `min-w-0` gerçekten devreye girip isimler kısalır (truncate). */}
-        <div className={`w-full flex justify-between items-start gap-2 ${compact ? 'contents' : 'sm:contents'}`}>
-          <div className={`min-w-0 ${compact ? 'col-start-1 row-start-1 flex justify-start' : 'sm:col-start-1 sm:row-start-1 sm:flex sm:justify-start'}`}>
+            `min-w-0` gerçekten devreye girip isimler kısalır (truncate).
+            (İsimler artık DİKEY yazıldığı için koltuklar zaten dar — sütun
+            genişliği `auto`ya çevrildi, merkez sütun `1fr` ile kalan TÜM
+            genişliği alır.) */}
+        <div className={`flex justify-between items-start gap-2 ${compact ? 'contents' : 'sm:contents'}`}>
+          <div className={`shrink-0 ${compact ? 'col-start-1 row-start-1 flex justify-start' : 'sm:col-start-1 sm:row-start-1 sm:flex sm:justify-start'}`}>
             {leftSeat && <Seat {...seatProps(leftSeat, true)} />}
           </div>
-          <div className={`min-w-0 ${compact ? 'col-start-3 row-start-1 flex justify-end' : 'sm:col-start-3 sm:row-start-1 sm:flex sm:justify-end'}`}>
+          <div className={`shrink-0 ${compact ? 'col-start-3 row-start-1 flex justify-end' : 'sm:col-start-3 sm:row-start-1 sm:flex sm:justify-end'}`}>
             {rightSeat && <Seat {...seatProps(rightSeat, true)} />}
           </div>
         </div>
 
-        {/* `self-start`: deste + gösterge, yanlardaki (artık dikey ve daha
-            uzun) koltuklara göre ORTALANMAK yerine yukarı yaslanır — altında
-            açılan perlere yer kalır. */}
-        <div className={`flex justify-center self-start ${compact ? 'col-start-2 row-start-1' : 'sm:col-start-2 sm:row-start-1'}`}>
-          {children}
+        {/* Merkez sütun: deste/gösterge (children) ÜSTTE, açılan eller
+            (centerExtra) ALTINDA — kullanıcı isteği: sol/sağ oyuncular
+            gerçekten bu bloğun yanında dursun, üstünde değil. */}
+        <div className={`min-w-0 flex flex-col items-center gap-2 ${compact ? 'col-start-2 row-start-1' : 'sm:col-start-2 sm:row-start-1'}`}>
+          <div className="flex justify-center">{children}</div>
+          {centerExtra && <div className="w-full flex justify-center">{centerExtra}</div>}
         </div>
       </div>
     </div>

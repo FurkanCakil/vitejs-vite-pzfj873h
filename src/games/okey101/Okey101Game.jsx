@@ -13,7 +13,7 @@ import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTil
 import { isBotUid } from './botPlayers.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
-  validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
+  validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, findJokerReplacements, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
   formatFoldBarrier, isExemptFromFoldBarrier, requiredPairsToOpen,
   anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds,
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
@@ -1379,13 +1379,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (target.replaceTileId) {
         // Okey işleği: gruptaki Okey/Sahte Okey'i, temsil ettiği GERÇEK taşla
         // değiştirir; çıkan Okey işleyen oyuncunun ıstakasına gelir (kazanılır).
+        // Per türü fark etmez: seri/set (validateGroup) ya da ÇİFT (2 taş,
+        // validateGroup'un minimum-3 şartına takılır — bkz. findJokerReplacements'in
+        // 'cift' dalı) — kullanıcı isteği: kırmızı 13 + Okey çiftinde DİĞER
+        // kırmızı 13 de artık bu şekilde okeyi çalabilir.
         if (isOkeyTile(tile, okeyNow)) { outcome = { success: false }; return; } // Okey'i Okey ile değiştiremezsin
         const jokerIdx = group.tiles.findIndex((tl) => tl.id === target.replaceTileId);
         if (jokerIdx === -1 || !isOkeyTile(group.tiles[jokerIdx], okeyNow)) { outcome = { success: false }; return; }
+        const replacements = findJokerReplacements(group.tiles, group.type, tile, okeyNow);
+        const match = replacements.find((r) => r.jokerIdx === jokerIdx);
+        if (!match) { outcome = { success: false }; return; }
         const jokerTile = group.tiles[jokerIdx];
-        const newGroupTiles = [...group.tiles]; newGroupTiles[jokerIdx] = tile;
-        const result = validateGroup(newGroupTiles, okeyNow);
-        if (!result.valid) { outcome = { success: false }; return; }
+        const newGroupTiles = match.newTiles;
 
         targetOpened[target.groupIndex] = { ...group, tiles: newGroupTiles };
         newRack[idx] = jokerTile; // atılan taş çıkar, Okey onun yerine ıstakaya gelir
@@ -1545,6 +1550,111 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
   const hasAnyOpenedHand = Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0);
 
+  // AÇILAN ELLER paneli: kullanıcı isteğiyle artık masanın ORTA sütununda
+  // (deste/gösterge'nin ALTINDA), sol/sağ koltukların YANINDA duruyor —
+  // eskiden koltukların ayrı bir satırının ALTINDA, tam genişlikte ayrı bir
+  // kutuydu. Genişliği merkez sütuna göre SINIRLI olduğundan içerik burada
+  // biraz daha dar bir sarmalayıcıya sığdırılır (bkz. OpponentStrip#center).
+  // KOMPAKT (telefon yatay) modda bu yeniden düzenleme uygulanmaz: dar dikey
+  // alanda sol/sağ koltukların yanına sıkıştırmak okunmaz olurdu, panel eskisi
+  // gibi ayrı ve tam genişlikte kalır (bkz. aşağıdaki `isCompact` dallanması).
+  const openedHandsPanel = hasAnyOpenedHand ? (
+    <div className={`bg-slate-900/60 border border-slate-700 rounded-xl p-2 sm:p-3 ${isCompact ? 'w-full' : 'w-full sm:w-auto sm:max-w-none'}`}>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">Açılan Eller</span>
+        {canTackNow && <span className="text-[9px] sm:text-[10px] text-amber-300/90 font-bold">Taşı kesik çizgili boşluğa sürükle</span>}
+      </div>
+      <div className="flex flex-col gap-2 sm:gap-3">
+        {players.map((p) => {
+          const openedGroups = roomData.openedHands?.[p.uid] || [];
+          if (openedGroups.length === 0) return null;
+          return (
+            // Perler arası boşluk BİLEREK geniş tutuldu: yan yana duran iki
+            // per birbirine yapışıkken hangi taşın hangi perin ucuna
+            // işleneceği karışıyordu.
+            <div key={p.uid} className="flex items-start gap-x-4 gap-y-2 sm:gap-x-6 flex-wrap">
+              <span className="text-[10px] sm:text-[11px] text-slate-500 font-bold shrink-0 mt-2">
+                {p.name}
+                {roomData.openedWithPairs?.[p.uid] && <span className="ml-1 text-fuchsia-400">(çift)</span>}:
+              </span>
+              {openedGroups.map((g, gi) => {
+                // İşleme (tacking) yerleri: SADECE gerçekten taş kabul eden
+                // uçlarda, bir TAŞ BOYUNDA kesik çizgili boşluk olarak
+                // gösterilir. Çiftlerde (cift) hiç gösterilmez; seri 1'de
+                // başlıyorsa solda, 13'te bitiyorsa sağda gösterilmez.
+                //
+                // Bu boşluklar artık SIRADAN BAĞIMSIZ olarak hep durur —
+                // eskiden sıra bize gelince belirip gidince kayboluyordu,
+                // masa her turda "zıplıyor" gibi görünüyordu. Sıra bizdeyken
+                // sadece renklenip sürüklemeye açılırlar (aşağıdaki
+                // `tackActive`).
+                const ends = openEndsMap[`${p.uid}:${gi}`] || { left: false, right: false };
+                const tackActive = canTackNow;
+                const tackSlotClass = `shrink-0 rounded-md border-2 border-dashed transition-colors ${isCompact ? 'w-5 h-7' : 'w-6 h-8 sm:w-7 sm:h-9'} ${tackActive ? 'border-amber-400/70 bg-amber-400/5' : 'border-slate-600/40 bg-slate-800/20'}`;
+                // `data-tack-*` sadece sıra bizdeyken yazılır; PlayerRack
+                // zaten kendi tarafında da (canAct + hasOpenedAlready)
+                // kontrol ediyor, bu ikinci bir emniyet.
+                const tackData = (side) => (tackActive
+                  ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-side': side }
+                  : {});
+                // 3. madde: az önce atılan işlek bir taş TAM OLARAK buraya
+                // oturuyorsa, kim atmış/kimin sırası olursa olsun masadaki
+                // HERKESE 2-3sn kırmızı yanıp sönerek gösterilir.
+                const flashing = isTackFlashing(p.uid, gi);
+                return (
+                  <div key={gi} className="flex items-center gap-1">
+                    {ends.left && (
+                      <div
+                        {...tackData('left')}
+                        title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
+                        className={tackSlotClass}
+                      />
+                    )}
+                    <div className={`flex items-center gap-0.5 bg-black/20 rounded-md p-1 transition-shadow ${flashing ? 'ring-2 ring-red-500 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.8)]' : `ring-1 ${g.type === 'cift' ? 'ring-fuchsia-500/40' : 'ring-emerald-500/40'}`}`}>
+                      {g.tiles.map((tl) => {
+                        const tileIsOkey = isOkeyTile(tl, okeyInfo);
+                        // Okey işleği: gruptaki bir Okey taşının ÜZERİNE, o taşın
+                        // temsil ettiği gerçek taş sürüklenip bırakılırsa Okey
+                        // işleyen oyuncunun ıstakasına geçer (bkz. handleTackTile).
+                        // ÇİFT dahil HER per türünde geçerlidir artık (kullanıcı isteği:
+                        // kırmızı 13 + Okey çiftinde diğer kırmızı 13 de okeyi çalabilir).
+                        // Sürüklenen taşın GERÇEKTEN uyup uymadığı (hangi taş olursa
+                        // olsun) yine sunucu tarafında `findJokerReplacements` ile
+                        // doğrulanır (bkz. handleTackTile) — buradaki `canReplace` diğer
+                        // uçlardaki (`ends.left/right`) gibi sadece "buraya taş
+                        // sürüklenebilir" görsel ipucudur.
+                        const canReplace = canTackNow && tileIsOkey;
+                        const replaceProps = canReplace
+                          ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-replace-tile-id': tl.id }
+                          : {};
+                        // Masaya (herhangi bir oyuncunun perine) açılan/işlenen
+                        // Okey, gerçek Okey masasındaki gelenekte olduğu gibi
+                        // TERS çevrilmiş gösterilir — kaç numarayı temsil ettiği
+                        // gizli kalır, sadece "burada bir Okey var" görünür.
+                        return (
+                          <div key={tl.id} title={canReplace ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
+                            <Tile tile={tl} size="small" okeyInfo={okeyInfo} faceDown={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {ends.right && (
+                      <div
+                        {...tackData('right')}
+                        title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
+                        className={tackSlotClass}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
+
   // Tur bandı: masanın ORTASINDAN alınıp en üstteki oyuncunun üstüne taşındı
   // (bkz. OpponentStrip#turnBanner) — böylece ortada açılan perlere yer kalır.
   const turnBanner = setupPhase ? null : (
@@ -1609,6 +1719,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         okeyInfo={okeyInfo}
         compact={isCompact}
         turnBanner={turnBanner}
+        centerExtra={!isCompact ? openedHandsPanel : null}
       >
         {/* 2. madde: Desteye basmak için hedef alan belirgin şekilde BÜYÜTÜLDÜ
             ve Göstergeden iyice ayrıldı — parmak yanlışlıkla Göstergeye
@@ -1732,95 +1843,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         </div>
       )}
 
-      {hasAnyOpenedHand && (
-        <div className="w-full bg-slate-900/60 border border-slate-700 rounded-xl p-2 sm:p-3">
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">Açılan Eller</span>
-            {canTackNow && <span className="text-[9px] sm:text-[10px] text-amber-300/90 font-bold">Taşı kesik çizgili boşluğa sürükle</span>}
-          </div>
-          <div className="flex flex-col gap-2 sm:gap-3">
-            {players.map((p) => {
-              const openedGroups = roomData.openedHands?.[p.uid] || [];
-              if (openedGroups.length === 0) return null;
-              return (
-                // Perler arası boşluk BİLEREK geniş tutuldu: yan yana duran iki
-                // per birbirine yapışıkken hangi taşın hangi perin ucuna
-                // işleneceği karışıyordu.
-                <div key={p.uid} className="flex items-start gap-x-4 gap-y-2 sm:gap-x-6 flex-wrap">
-                  <span className="text-[10px] sm:text-[11px] text-slate-500 font-bold shrink-0 mt-2">
-                    {p.name}
-                    {roomData.openedWithPairs?.[p.uid] && <span className="ml-1 text-fuchsia-400">(çift)</span>}:
-                  </span>
-                  {openedGroups.map((g, gi) => {
-                    // İşleme (tacking) yerleri: SADECE gerçekten taş kabul eden
-                    // uçlarda, bir TAŞ BOYUNDA kesik çizgili boşluk olarak
-                    // gösterilir. Çiftlerde (cift) hiç gösterilmez; seri 1'de
-                    // başlıyorsa solda, 13'te bitiyorsa sağda gösterilmez.
-                    //
-                    // Bu boşluklar artık SIRADAN BAĞIMSIZ olarak hep durur —
-                    // eskiden sıra bize gelince belirip gidince kayboluyordu,
-                    // masa her turda "zıplıyor" gibi görünüyordu. Sıra bizdeyken
-                    // sadece renklenip sürüklemeye açılırlar (aşağıdaki
-                    // `tackActive`).
-                    const ends = openEndsMap[`${p.uid}:${gi}`] || { left: false, right: false };
-                    const tackActive = canTackNow;
-                    const tackSlotClass = `shrink-0 rounded-md border-2 border-dashed transition-colors ${isCompact ? 'w-5 h-7' : 'w-6 h-8 sm:w-7 sm:h-9'} ${tackActive ? 'border-amber-400/70 bg-amber-400/5' : 'border-slate-600/40 bg-slate-800/20'}`;
-                    // `data-tack-*` sadece sıra bizdeyken yazılır; PlayerRack
-                    // zaten kendi tarafında da (canAct + hasOpenedAlready)
-                    // kontrol ediyor, bu ikinci bir emniyet.
-                    const tackData = (side) => (tackActive
-                      ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-side': side }
-                      : {});
-                    // 3. madde: az önce atılan işlek bir taş TAM OLARAK buraya
-                    // oturuyorsa, kim atmış/kimin sırası olursa olsun masadaki
-                    // HERKESE 2-3sn kırmızı yanıp sönerek gösterilir.
-                    const flashing = isTackFlashing(p.uid, gi);
-                    return (
-                      <div key={gi} className="flex items-center gap-1">
-                        {ends.left && (
-                          <div
-                            {...tackData('left')}
-                            title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
-                            className={tackSlotClass}
-                          />
-                        )}
-                        <div className={`flex items-center gap-0.5 bg-black/20 rounded-md p-1 transition-shadow ${flashing ? 'ring-2 ring-red-500 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.8)]' : `ring-1 ${g.type === 'cift' ? 'ring-fuchsia-500/40' : 'ring-emerald-500/40'}`}`}>
-                          {g.tiles.map((tl) => {
-                            const tileIsOkey = isOkeyTile(tl, okeyInfo);
-                            // Okey işleği: gruptaki bir Okey taşının ÜZERİNE, o taşın
-                            // temsil ettiği gerçek taş sürüklenip bırakılırsa Okey
-                            // işleyen oyuncunun ıstakasına geçer (bkz. handleTackTile).
-                            const canReplace = canTackNow && tileIsOkey && g.type !== 'cift';
-                            const replaceProps = canReplace
-                              ? { 'data-tack-uid': p.uid, 'data-tack-index': gi, 'data-tack-replace-tile-id': tl.id }
-                              : {};
-                            // Masaya (herhangi bir oyuncunun perine) açılan/işlenen
-                            // Okey, gerçek Okey masasındaki gelenekte olduğu gibi
-                            // TERS çevrilmiş gösterilir — kaç numarayı temsil ettiği
-                            // gizli kalır, sadece "burada bir Okey var" görünür.
-                            return (
-                              <div key={tl.id} title={canReplace ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
-                                <Tile tile={tl} size="small" okeyInfo={okeyInfo} faceDown={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {ends.right && (
-                          <div
-                            {...tackData('right')}
-                            title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
-                            className={tackSlotClass}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Bu panel NORMAL (kompakt olmayan) modda artık OpponentStrip'in ORTA
+          sütununda render ediliyor (bkz. `centerExtra` prop'u yukarıda) —
+          sol/sağ koltukların YANINDA durması için. Sadece KOMPAKT (telefon
+          yatay) modda eskisi gibi ayrı ve tam genişlikte kalır. */}
+      {isCompact && openedHandsPanel}
 
       {/* NOT: "Masada çift açan bir oyuncu var…" bilgilendirmesi kullanıcı
           isteğiyle kaldırıldı (kural zaten "Çift İşle" butonunun açık

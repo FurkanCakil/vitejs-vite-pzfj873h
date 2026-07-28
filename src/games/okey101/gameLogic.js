@@ -389,38 +389,71 @@ export function canPlayerLayMelds(uid, openedWithPairs) {
   return !openedWithPairs?.[uid];
 }
 
+// Bir per'deki (seri/set/ÇİFT fark etmez) bir Okey/Sahte Okey'i, verilen taşla
+// DEĞİŞTİRMENİN (okey işleği / handleTackTile'daki `replaceTileId` mekaniği)
+// geçerli olup olmadığını kontrol eder — geçerliyse HANGİ joker'in (index)
+// değişeceğini de döndürür. Hem "bu taş işlek mi?" (discard cezası) hem de
+// gerçek Okey alma işlemi AYNI bu kurala göre çalışır: bir per'de mavi+sarı+
+// kırmızı 13 + Okey varsa (4. renk siyah eksik), Okey siyah 13'ü temsil eder
+// ve siyah 13 atılırsa/işlenirse tam bu fonksiyon onu yakalar. Aynı mantık
+// bir çiftte (ör. kırmızı 13 + Okey) DİĞER kırmızı 13 için de geçerlidir.
+export function findJokerReplacements(groupTiles, groupType, newTile, okeyInfo) {
+  if (!groupTiles || !newTile || isOkeyTile(newTile, okeyInfo)) return [];
+  const results = [];
+  groupTiles.forEach((t, jokerIdx) => {
+    if (!isOkeyTile(t, okeyInfo)) return;
+    const newTiles = [...groupTiles]; newTiles[jokerIdx] = newTile;
+    if (groupType === 'cift') {
+      if (newTiles.length === 2 && isValidPairTiles(newTiles[0], newTiles[1], okeyInfo)) results.push({ jokerIdx, newTiles });
+      return;
+    }
+    const result = validateGroup(newTiles, okeyInfo);
+    if (result.valid && result.type === groupType) results.push({ jokerIdx, newTiles });
+  });
+  return results;
+}
+
 // Bir taşın "işlek" olup olmadığını kontrol eder: masadaki (herhangi bir
-// oyuncunun) açık en az bir seri/set'inin sağına ya da soluna tam oturuyorsa
-// (bkz. canTackTile) o taş işlektir. Okey/Sahte Okey taşı da HER ZAMAN işlek
-// sayılır (kendisi zaten her yere işlenebilir bir taştır). Bu, "işlek ya da
-// Okey bir taş atan oyuncuya +101 ceza yazılır" kuralını uygulamak için
-// kullanılır (bkz. handleDiscardTile).
+// oyuncunun) açık bir per'inin
+//   a) sağına ya da soluna tam oturuyorsa (seri/set uç eklemesi, bkz. canTackTile), YA DA
+//   b) içindeki bir Okey'in YERİNE geçebiliyorsa (seri/set/ÇİFT — bkz.
+//      findJokerReplacements; ör. mavi+sarı+kırmızı 13 + Okey açıksa siyah 13,
+//      ya da kırmızı 13 + Okey çifti açıksa diğer kırmızı 13),
+// o taş işlektir. Okey/Sahte Okey taşının kendisi de HER ZAMAN işlek sayılır.
+// Bu, "işlek ya da Okey bir taş atan oyuncuya +101 ceza yazılır" kuralını
+// uygulamak için kullanılır (bkz. handleDiscardTile).
 export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
   if (!tile) return false;
   if (isOkeyTile(tile, okeyInfo)) return true;
   for (const groups of Object.values(openedHandsAllPlayers || {})) {
     for (const g of (groups || [])) {
-      if (!g || g.type === 'cift') continue;
-      if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) return true;
-      if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) return true;
+      if (!g) continue;
+      if (g.type !== 'cift') {
+        if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) return true;
+        if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) return true;
+      }
+      if (findJokerReplacements(g.tiles, g.type, tile, okeyInfo).length > 0) return true;
     }
   }
   return false;
 }
 
 // isTileTackable ile AYNI taramayı yapar ama sadece true/false yerine TAM
-// OLARAK HANGİ per(ler)e (hangi oyuncunun, kaçıncı grubu, hangi ucu) taşın
-// oturduğunu döndürür. "İşlek taş attın!" cezası uygulandığında oyuncuya
-// (ve masadaki herkese) taşın NEREYE oturduğunu 2-3sn yanıp söndürerek
-// göstermek için kullanılır (bkz. Okey101Game#tackHint).
+// OLARAK HANGİ per(ler)e (hangi oyuncunun, kaçıncı grubu, hangi ucu/Okey'i)
+// taşın oturduğunu döndürür. "İşlek taş attın!" cezası uygulandığında
+// oyuncuya (ve masadaki herkese) taşın NEREYE oturduğunu 2-3sn yanıp
+// söndürerek göstermek için kullanılır (bkz. Okey101Game#tackHint).
 export function findTackableSpotsForTile(tile, openedHandsAllPlayers, okeyInfo) {
   const spots = [];
   if (!tile || isOkeyTile(tile, okeyInfo)) return spots;
   Object.entries(openedHandsAllPlayers || {}).forEach(([uid, groups]) => {
     (groups || []).forEach((g, groupIndex) => {
-      if (!g || g.type === 'cift') return;
-      if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'left' });
-      if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'right' });
+      if (!g) return;
+      if (g.type !== 'cift') {
+        if (canTackTile(g.tiles, g.type, tile, 'left', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'left' });
+        if (canTackTile(g.tiles, g.type, tile, 'right', okeyInfo).valid) spots.push({ uid, groupIndex, side: 'right' });
+      }
+      if (findJokerReplacements(g.tiles, g.type, tile, okeyInfo).length > 0) spots.push({ uid, groupIndex, side: 'replace' });
     });
   });
   return spots;

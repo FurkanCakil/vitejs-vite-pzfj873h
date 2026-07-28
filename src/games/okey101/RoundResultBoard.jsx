@@ -16,7 +16,7 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
 
   const Row = ({ uid }) => {
     const p = findPlayer(uid);
-    const pp = perPlayer[uid] || { interimPenalty: 0, roundDelta: 0, total: 0 };
+    const pp = perPlayer[uid] || { total: 0 };
     const isWinner = uid === winnerUid;
     return (
       <div className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg ${isWinner ? 'bg-emerald-600/20 ring-1 ring-emerald-500/50' : 'bg-slate-900/60'}`}>
@@ -32,9 +32,12 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
           {isWinner && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}
         </div>
         <div className="flex items-center gap-3 text-xs shrink-0">
-          {pp.interimPenalty !== 0 && <span className="text-red-400 font-mono">Anlık: {pp.interimPenalty > 0 ? '+' : ''}{pp.interimPenalty}</span>}
-          <span className={`font-mono font-bold ${pp.roundDelta > 0 ? 'text-red-400' : pp.roundDelta < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
-            Tur: {pp.roundDelta > 0 ? '+' : ''}{pp.roundDelta}
+          {/* Anlık (yandan-alma/açamama gibi tur İÇİ) ceza ile tur sonu
+              (bitirme/kalan taş) cezası artık AYRI gösterilmiyor — oyuncuyu
+              sadece "bu tur toplamda ne kadar yedi/kazandı" (pp.total) ve
+              geçmiş turlarla birlikte kümülatif skor (scores[uid]) ilgilendiriyor. */}
+          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-red-400' : pp.total < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+            Bu Tur: {pp.total > 0 ? '+' : ''}{pp.total}
           </span>
           <span className="font-mono font-black text-white w-14 text-right">{scores?.[uid] ?? 0}</span>
         </div>
