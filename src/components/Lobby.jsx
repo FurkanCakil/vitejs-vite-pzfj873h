@@ -7,7 +7,7 @@ const GAMES = [
   { id: 'satranc', name: 'Satranç', available: true, icon: '♟️' },
   { id: 'dama', name: 'Dama', available: true, icon: '⚪⚫' },
   { id: 'okey101', name: '101 Okey', available: true, icon: '🀄' },
-  { id: 'connect4', name: 'Bağlan 4', available: true, icon: '🔴🔵' },
+  { id: 'connect4', name: 'Connect 4', available: true, icon: '🔴🔵' },
 ];
 
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4'];
@@ -30,7 +30,14 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       <div className="bg-slate-800 p-6 rounded-xl mb-8 shadow-xl border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
         <div><h2 className="text-xl font-semibold mb-1">Davet Kodun Var Mı?</h2><p className="text-sm text-slate-400">Arkadaşının gönderdiği 6 haneli kodu gir ve masaya otur.</p></div>
         <div className="flex w-full md:w-auto gap-2">
-          <input type="text" placeholder="Örn: AB12CD" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())} className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 uppercase tracking-widest text-center w-full md:w-40 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono" maxLength={6} />
+          {/* NOT: Değer JS ile .toUpperCase()'e ZORLANMAZ — bazı Android
+              klavyelerinde (küçük harfle yazıp arada rakam girince) controlled
+              input'un değeri her tuşta büyük harfe dönüştürülmesi klavyenin
+              kendi otomatik-düzeltme/tahmin motorunu şaşırtıp TÜM alanı
+              siliyordu. Büyük harf görünümü sadece CSS `uppercase` ile
+              sağlanır; gerçek normalize işlemi (trim + toUpperCase) zaten
+              `joinRoom` içinde odaya katılırken yapılıyor. */}
+          <input type="text" placeholder="Örn: AB12CD" value={joinCodeInput} onChange={(e) => setJoinCodeInput(e.target.value)} className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 uppercase tracking-widest text-center w-full md:w-40 focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono" maxLength={6} />
           <button onClick={() => joinRoom(joinCodeInput)} className="bg-indigo-500 hover:bg-indigo-600 px-6 py-2 rounded-lg font-medium transition-colors">Katıl</button>
         </div>
       </div>
