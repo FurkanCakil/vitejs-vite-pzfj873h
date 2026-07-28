@@ -154,7 +154,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   const canDropInHover = isMyTurn && !roomData.winner && hoveredCol !== null && !isColumnFull(board, hoveredCol);
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-amber-950/40 to-slate-900 p-4 md:p-8 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden">
+    <div className="relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl bg-gradient-to-br from-amber-950/40 to-slate-900 p-4 md:p-8 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden">
       <style>{`
         @keyframes connect4Drop {
           0% { transform: translateY(-520%); opacity: 0.5; }
@@ -225,7 +225,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
         {/* 1. MADDE (7x6 Tahta): gerçekçi AHŞAP dokulu çerçeve + oyulmuş
             delikler (bkz. üstteki .connect4-board / .connect4-hole). Sütuna
             tıklamak için tüm sütun (üstteki "düşürme" ipucu dahil) tıklanabilir. */}
-        <div className="connect4-board flex gap-1 sm:gap-1.5 md:gap-2 p-2 sm:p-3 md:p-4 rounded-2xl mx-auto z-10">
+        <div className="connect4-board flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
           {Array.from({ length: CONNECT4_COLS }, (_, col) => {
             const colFull = isColumnFull(board, col);
             const clickable = isMyTurn && !roomData.winner && !colFull;
@@ -235,13 +235,13 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
                 onClick={() => handleColumnClick(col)}
                 onMouseEnter={() => setHoveredCol(col)}
                 onMouseLeave={() => setHoveredCol((c) => (c === col ? null : c))}
-                className={`flex flex-col gap-1 sm:gap-1.5 md:gap-2 rounded-lg transition-colors ${clickable ? 'cursor-pointer hover:bg-white/10' : 'cursor-default'}`}
+                className={`flex flex-col gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 rounded-lg transition-colors ${clickable ? 'cursor-pointer hover:bg-white/10' : 'cursor-default'}`}
               >
                 {/* Sütun üstü ipucu: sırası gelen oyuncunun taşı nereye
                     düşeceğini önceden görmesi için hayalet bir pul. */}
-                <div className="w-9 h-4 sm:w-12 sm:h-5 md:w-14 md:h-6 flex items-end justify-center">
+                <div className="w-8 h-4 sm:w-12 sm:h-5 md:w-14 md:h-6 lg:w-16 lg:h-6 flex items-end justify-center">
                   {canDropInHover && hoveredCol === col && (
-                    <span className={`w-7 h-3 sm:w-9 sm:h-4 md:w-11 md:h-5 rounded-full opacity-50 ${DISC_CLASS[myColor]}`} />
+                    <span className={`w-6 h-3 sm:w-9 sm:h-4 md:w-11 md:h-5 lg:w-12 lg:h-5 rounded-full opacity-50 ${DISC_CLASS[myColor]}`} />
                   )}
                 </div>
                 {Array.from({ length: CONNECT4_ROWS }, (_, row) => {
@@ -250,7 +250,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
                   const isWinningCell = roomData.winningLine?.includes(index);
                   const justDropped = lastMove && lastMove.row === row && lastMove.col === col;
                   return (
-                    <div key={row} className="connect4-hole w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center overflow-hidden">
+                    <div key={row} className="connect4-hole w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-full flex items-center justify-center overflow-hidden">
                       {cell && (
                         <div
                           className={`w-[85%] h-[85%] rounded-full ${DISC_CLASS[cell]} ${isWinningCell ? 'ring-4 ring-yellow-300 shadow-[0_0_16px_rgba(253,224,71,0.9)] scale-105' : ''} ${justDropped ? 'connect4-drop' : ''}`}
