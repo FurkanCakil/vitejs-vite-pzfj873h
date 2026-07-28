@@ -389,6 +389,29 @@ export function canPlayerLayMelds(uid, openedWithPairs) {
   return !openedWithPairs?.[uid];
 }
 
+// SERİ ile açmış bir oyuncu elindeki çiftleri masaya sürdüğünde, o çiftler
+// KENDİ perlerinin yanına DEĞİL, masada ÇİFT AÇMIŞ bir oyuncunun perlerinin
+// yanına konur (gerçek masada çiftler tek bir yerde toplanır).
+//
+// Hedef seçimi:
+//   - Oyuncunun KENDİSİ çift açanlardansa (çift açan kendi çiftini sürüyorsa)
+//     hedef yine kendisidir.
+//   - Eşli (2v2) modda EŞİ çift açmışsa: eşi.
+//   - Aksi halde: çift açanlardan rastgele biri.
+//   - Masada hiç çift açan yoksa null (çağıran taraf kendine yazar).
+export function pickPairsHostUid(uid, openedWithPairs, rules, teams, random = Math.random) {
+  const hosts = Object.keys(openedWithPairs || {}).filter((u) => openedWithPairs[u]);
+  if (hosts.length === 0) return null;
+  if (hosts.includes(uid)) return uid;
+
+  if (rules?.gameType === '2v2' && teams) {
+    const myTeam = (teams.A || []).includes(uid) ? (teams.A || []) : ((teams.B || []).includes(uid) ? (teams.B || []) : null);
+    const partner = myTeam?.find((u) => u !== uid && hosts.includes(u));
+    if (partner) return partner;
+  }
+  return hosts[Math.floor(random() * hosts.length)];
+}
+
 // Bir per'deki (seri/set/ÇİFT fark etmez) bir Okey/Sahte Okey'i, verilen taşla
 // DEĞİŞTİRMENİN (okey işleği / handleTackTile'daki `replaceTileId` mekaniği)
 // geçerli olup olmadığını kontrol eder — geçerliyse HANGİ joker'in (index)
@@ -467,14 +490,20 @@ export const NON_OPENER_PENALTY = PENALTY_POINTS * 2; // 202 — elini açamayan
 // ÇİFT ile açan oyuncunun tur sonunda elinde kalan taşlara uygulanan ceza katı.
 export const PAIRS_OPENER_PENALTY_MULTIPLIER = 2;
 
-// Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. Sadece gerçek
-// Okey (joker) 101 sayı kabul edilir; Sahte Okey dahil diğer tüm taşlar kendi
-// (Sahte Okey için: temsil ettiği) yüz değeriyle sayılır.
+// Bir oyuncunun ıstakasında kalan taşların ceza değerini toplar. HER taş (Okey
+// ve Sahte Okey dahil) kendi — Sahte Okey/Okey için temsil ettiği — YÜZ
+// DEĞERİYLE sayılır.
+//
+// KURAL DEĞİŞİKLİĞİ (kullanıcı isteği): Okey eskiden elde kaldığında sabit 101
+// ceza yazdırıyordu. Artık desteden çekilen ya da en baştan elinde dağıtılan
+// bir Okey için ceza YOKTUR — sadece MASADAN İŞLEYEREK ALINAN (çalınan) Okey,
+// kullanılmadan elde kalırsa +101 ceza doğurur (bkz. UNUSED_STOLEN_OKEY_PENALTY
+// ve computeRoundEnd'deki `takenOkeys`).
 export function computeRemainingTilesPenalty(rack, okeyInfo) {
   let sum = 0;
   (rack || []).forEach((tile) => {
     if (!tile) return;
-    sum += isOkeyTile(tile, okeyInfo) ? 101 : (effectiveTile(tile, okeyInfo).number || 0);
+    sum += effectiveTile(tile, okeyInfo).number || 0;
   });
   return sum;
 }

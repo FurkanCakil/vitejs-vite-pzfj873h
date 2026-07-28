@@ -6,16 +6,17 @@ import PlayerRack, { maxRackContentWidth } from './PlayerRack.jsx';
 import OpponentStrip from './OpponentStrip.jsx';
 import SetupCountdown from './SetupCountdown.jsx';
 import RoundResultBoard from './RoundResultBoard.jsx';
-import Tile, { TileBack } from './Tile.jsx';
+import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
+import { playOkeySound } from '../../utils/okeySound.js';
 import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
   validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, findJokerReplacements, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
   formatFoldBarrier, isExemptFromFoldBarrier, requiredPairsToOpen,
-  anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds,
+  anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds, pickPairsHostUid,
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
 import {
@@ -96,6 +97,57 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const interval = setInterval(() => setBotWatchdogTick((n) => n + 1), 20000);
     return () => clearInterval(interval);
   }, []);
+
+  // ============================================================
+  // MASA ÇAPINDA SESLER
+  // ============================================================
+  // Oyunu ilgilendiren hamlelerin sesi, hamleyi KİM yaparsa yapsın MASADAKİ
+  // HERKESTE çalmalıdır. Bu yüzden sesler yerel tıklamaya değil, Firestore'dan
+  // gelen VERİ DEĞİŞİMİNE bağlanır: her istemci kendi `roomData`'sındaki
+  // ilgili alanın değiştiğini görüp sesi kendisi çalar.
+  //
+  // İlk snapshot'ta (ref henüz null) ses ÇALINMAZ — odaya sonradan katılan ya
+  // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
+  // topluca duymasın diye.
+  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null });
+
+  // Atış sesi: masadaki TÜM atış yığınlarının toplam uzunluğu her arttığında
+  // (yani biri taş attığında) bir kez çalar. Tek tek oyuncu takip etmek yerine
+  // toplam saymak, aynı anda birden fazla alanın değiştiği snapshot'larda da
+  // güvenilir çalışır.
+  const totalDiscards = Object.values(roomData?.discardPiles || {}).reduce((n, pile) => n + (pile?.length || 0), 0);
+  useEffect(() => {
+    const prev = soundRefs.current.discardCount;
+    soundRefs.current.discardCount = totalDiscards;
+    if (prev !== null && totalDiscards > prev) playOkeySound('discard');
+  }, [totalDiscards]);
+
+  // Açma sesi: masadaki toplam açık per sayısı arttığında (biri elini açtı ya
+  // da yeni per/çift sürdü) kısa rüzgar sesi.
+  const totalOpenedGroups = Object.values(roomData?.openedHands || {}).reduce((n, groups) => n + (groups?.length || 0), 0);
+  useEffect(() => {
+    const prev = soundRefs.current.openedCount;
+    soundRefs.current.openedCount = totalOpenedGroups;
+    if (prev !== null && totalOpenedGroups > prev) playOkeySound('open');
+  }, [totalOpenedGroups]);
+
+  // El bitti -> taşların devrilme sesi.
+  const roundEndedNow = !!roomData?.roundEnded;
+  useEffect(() => {
+    const prev = soundRefs.current.roundEnded;
+    soundRefs.current.roundEnded = roundEndedNow;
+    if (prev === false && roundEndedNow) playOkeySound('roundEnd');
+  }, [roundEndedNow]);
+
+  // Yeni el başladı (kurulum fazına girildi) -> taşların dağıtılma sesi.
+  const setupPhaseNow = !!roomData?.setupPhase;
+  useEffect(() => {
+    const prev = soundRefs.current.setupPhase;
+    soundRefs.current.setupPhase = setupPhaseNow;
+    // İlk girişte de çalar (prev === null): oyuna girdiğinde taşlar zaten
+    // dağıtılıyor olur, bu ses o anın parçasıdır.
+    if (setupPhaseNow && prev !== true) playOkeySound('deal');
+  }, [setupPhaseNow]);
 
   // Tam ekran modunda ıstaka ve taşlar belirgin şekilde büyür (sadece etrafı
   // izole etmek yetmiyor; asıl fayda daha rahat dokunulabilir taşlar).
@@ -1189,11 +1241,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         });
         delete myGroupsNow[gid];
       }
-      const existingOpened = data.openedHands?.[user.uid] || [];
+      // Çiftler NEREYE konacak? SERİ ile açmış bir oyuncu çift sürüyorsa,
+      // çiftleri kendi perlerinin yanına değil masada ÇİFT AÇMIŞ oyuncunun
+      // (2v2'de öncelikle EŞİNİN) perlerinin yanına gider — bkz. pickPairsHostUid.
+      // İlk açılışını çiftle yapan oyuncu için hedef her zaman kendisidir.
+      const pairsHostUid = alreadyOpened
+        ? (pickPairsHostUid(user.uid, data.openedWithPairs, data.rules, data.teams) || user.uid)
+        : user.uid;
+      const existingOpened = data.openedHands?.[pairsHostUid] || [];
       const update = {
         [`racks.${user.uid}`]: newRack,
         [`groups.${user.uid}`]: myGroupsNow,
-        [`openedHands.${user.uid}`]: [...existingOpened, ...openedNow],
+        [`openedHands.${pairsHostUid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${user.uid}`]: true,
         // 4. madde: elini açana taşlarını işlemesi/düşünmesi için ek süre.
         turnDeadline: extendedDeadlineAfterOpen(data.turnDeadline),
@@ -1314,11 +1373,17 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           if (idx !== -1) actorRackNow[idx] = null;
         });
       }
-      const existingOpened = data.openedHands?.[actingUid] || [];
+      // bkz. handleOpenPairs#pairsHostUid — SERİ ile açmış bir bot çift
+      // sürüyorsa, çiftler masadaki ÇİFT AÇANIN (2v2'de öncelikle eşinin)
+      // perlerinin yanına gider. Bot da insanla aynı kurala tabidir.
+      const botPairsHostUid = (isPairs && alreadyOpened)
+        ? (pickPairsHostUid(actingUid, data.openedWithPairs, data.rules, data.teams) || actingUid)
+        : actingUid;
+      const existingOpened = data.openedHands?.[botPairsHostUid] || [];
       const nextOpenedWithPairs = { ...(data.openedWithPairs || {}) };
       const update = {
         [`racks.${actingUid}`]: actorRackNow,
-        [`openedHands.${actingUid}`]: [...existingOpened, ...openedNow],
+        [`openedHands.${botPairsHostUid}`]: [...existingOpened, ...openedNow],
         [`hasOpened.${actingUid}`]: true,
         // 4. madde: bot da açtıktan sonra aynı ek süreyi alır (insanla eşit
         // koşullar; süre aşımı kurtarma mekanizması da buna göre kayar).
@@ -1361,7 +1426,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         next: {
           ...data,
           racks: { ...(data.racks || {}), [actingUid]: actorRackNow },
-          openedHands: { ...(data.openedHands || {}), [actingUid]: [...existingOpened, ...openedNow] },
+          // NOT: açılan perler `botPairsHostUid`'e yazılır (çift sürerken bu
+          // BAŞKA bir oyuncu olabilir) — iyimser kopya da aynı yere yazmalı,
+          // aksi halde bot orkestrasyonu bir sonraki adımda masayı yanlış görür.
+          openedHands: { ...(data.openedHands || {}), [botPairsHostUid]: [...existingOpened, ...openedNow] },
           hasOpened: { ...(data.hasOpened || {}), [actingUid]: true },
           openedWithPairs: nextOpenedWithPairs,
           scores: nextScores,
@@ -1594,6 +1662,14 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // KOMPAKT (telefon yatay) modda bu yeniden düzenleme uygulanmaz: dar dikey
   // alanda sol/sağ koltukların yanına sıkıştırmak okunmaz olurdu, panel eskisi
   // gibi ayrı ve tam genişlikte kalır (bkz. aşağıdaki `isCompact` dallanması).
+  // Masaya açılan taşların boyutu. Eskiden `size="small"` (~26px) idi ve
+  // "işlek taş" kontrolü için gözü kısmak gerekiyordu. Masa kabı genişletildiği
+  // (bkz. App.tsx#max-w-6xl) için artık belirgin şekilde daha büyük çizilebilir.
+  const openedTileW = isCompact ? 26 : 34;
+  // İşleme (kesik çizgili) boşlukları taşla AYNI ölçüde olmalı, aksi halde
+  // per'ler ve boşluklar farklı yüksekliklerde durup satırı bozuyor.
+  const tackSlotStyle = { width: `${Math.round(openedTileW * 0.92)}px`, height: `${Math.round(openedTileW * TILE_ASPECT)}px` };
+
   const openedHandsPanel = hasAnyOpenedHand ? (
     <div className={`bg-slate-900/60 border border-slate-700 rounded-xl p-2 sm:p-3 ${isCompact ? 'w-full' : 'w-full sm:w-auto sm:max-w-none'}`}>
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -1626,7 +1702,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
                 // `tackActive`).
                 const ends = openEndsMap[`${p.uid}:${gi}`] || { left: false, right: false };
                 const tackActive = canTackNow;
-                const tackSlotClass = `shrink-0 rounded-md border-2 border-dashed transition-colors ${isCompact ? 'w-5 h-7' : 'w-6 h-8 sm:w-7 sm:h-9'} ${tackActive ? 'border-amber-400/70 bg-amber-400/5' : 'border-slate-600/40 bg-slate-800/20'}`;
+                const tackSlotClass = `shrink-0 rounded-md border-2 border-dashed transition-colors ${tackActive ? 'border-amber-400/70 bg-amber-400/5' : 'border-slate-600/40 bg-slate-800/20'}`;
                 // `data-tack-*` sadece sıra bizdeyken yazılır; PlayerRack
                 // zaten kendi tarafında da (canAct + hasOpenedAlready)
                 // kontrol ediyor, bu ikinci bir emniyet.
@@ -1643,6 +1719,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
                       <div
                         {...tackData('left')}
                         title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
+                        style={tackSlotStyle}
                         className={tackSlotClass}
                       />
                     )}
@@ -1669,7 +1746,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
                         // gizli kalır, sadece "burada bir Okey var" görünür.
                         return (
                           <div key={tl.id} title={canReplace ? 'Okey\'i almak için gerçek taşı buraya sürükle' : undefined} {...replaceProps}>
-                            <Tile tile={tl} size="small" okeyInfo={okeyInfo} faceDown={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
+                            <Tile tile={tl} width={openedTileW} okeyInfo={okeyInfo} faceDown={tileIsOkey} className={canReplace ? 'animate-pulse cursor-pointer' : ''} />
                           </div>
                         );
                       })}
@@ -1678,6 +1755,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
                       <div
                         {...tackData('right')}
                         title={tackActive ? 'Buraya taş sürükleyerek işle' : 'Bu perin açık ucu — sıra sana geldiğinde buraya taş işleyebilirsin'}
+                        style={tackSlotStyle}
                         className={tackSlotClass}
                       />
                     )}
@@ -1703,7 +1781,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   );
 
   return (
-    <div className={`w-full flex flex-col items-center relative ${isCompact ? 'gap-1 h-[100dvh] max-h-[100dvh] overflow-hidden' : 'gap-2 sm:gap-3'} ${isFullscreenView ? 'max-w-[1500px]' : 'max-w-4xl'}`}>
+    <div className={`w-full flex flex-col items-center relative ${isCompact ? 'gap-1 h-[100dvh] max-h-[100dvh] overflow-hidden' : 'gap-2 sm:gap-3'} ${isFullscreenView ? 'max-w-[1500px]' : 'max-w-6xl'}`}>
       {toast && (
         <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[5000] text-white px-4 py-2.5 sm:px-6 sm:py-3 rounded-xl shadow-2xl font-bold border text-center text-xs sm:text-sm w-[92%] max-w-sm ${toastColors[toast.tone] || toastColors.red}`}>
           {toast.msg}

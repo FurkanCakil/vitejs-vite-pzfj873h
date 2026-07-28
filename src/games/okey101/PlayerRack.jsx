@@ -4,6 +4,7 @@ import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
 import { validateGroup, isProperlyOrderedGroup, isValidPairTiles } from './gameLogic.js';
 import useViewport from '../../hooks/useViewport.js';
+import { playOkeySound } from '../../utils/okeySound.js';
 
 const DRAG_THRESHOLD_PX = 6;
 const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
@@ -388,6 +389,28 @@ export default function PlayerRack({
     return map;
   }, [baseGroups]);
 
+  // BUG DÜZELTMESİ — "görünmeyen ama seçili kalan taş":
+  // `selected` sadece taş ID'si tutar. Seçili bir taş ıstakadan ÇIKTIĞINDA
+  // (elle atıldığında, 30sn dolunca OTOMATİK atıldığında, masaya per olarak
+  // sürüldüğünde ya da işlendiğinde) ID'si bu kümede KALIYORDU. O taş artık
+  // çizilmediği için ekranda hiçbir seçim görünmüyor, ama:
+  //   - `selectedIds.length` bir fazla sayılıyor,
+  //   - tek bir taşa tıklamak `canAttemptConfirm` (>=2 seçili) şartını
+  //     sağlayıp "Per Onayla" butonunu ORTAYA ÇIKARIYOR,
+  //   - onaya basınca hayalet taş ıstakada bulunamadığı için bitişiklik
+  //     kontrolü "taşların yan yana olması gerekir" hatası veriyordu.
+  // Çözüm: ıstakada artık var olmayan ID'ler her yerleşim değişiminde temizlenir.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set();
+      baseRack.forEach((t) => { if (t) live.add(t.id); });
+      const next = new Set();
+      prev.forEach((id) => { if (live.has(id)) next.add(id); });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [baseRack]);
+
   const selectedIds = useMemo(() => [...selected], [selected]);
   const allUngrouped = selectedIds.length > 0 && selectedIds.every((id) => !groupOf[id]);
   const contiguous = allUngrouped && isContiguousSelection(selectedIds, baseRack);
@@ -427,6 +450,9 @@ export default function PlayerRack({
   // gruplar korunur) — böylece "Seri Aç"/"Çift Aç" için birden fazla per aynı anda seçilebilir.
   const handleTileTap = (tile) => {
     if (!isOwner) return;
+    // Taşa dokunma sesi SADECE yereldir (oyunu ilgilendiren bir hamle değil,
+    // sadece seçim) — bkz. Okey101Game'deki masa çapında sesler.
+    playOkeySound('tile');
     const gid = groupOf[tile.id];
     if (gid) {
       const groupTileIds = baseGroups[gid] || [];
@@ -575,6 +601,7 @@ export default function PlayerRack({
         const d = dragRef.current;
         if (!d || d.moved || d.tile.id !== tile.id) return;
         d.longPressed = true;
+        playOkeySound('flip'); // taşın arkası dönerken kısık çevirme sesi
         toggleFlipped(tile.id);
       }, LONG_PRESS_MS);
     }
@@ -687,7 +714,7 @@ export default function PlayerRack({
       // Blok, TUTULAN taş imlecin altındaki slota gelecek şekilde hizalanır.
       const start = Math.max(0, Math.min(dropIndex - d.grabOffset, RACK_SLOTS - d.tileIds.length));
       const newRack = moveGroupBlockToSlot(rackNow, d.tileIds, start);
-      if (newRack !== rackNow) applyRack(newRack, baseGroupsRef.current);
+      if (newRack !== rackNow) { playOkeySound('tile'); applyRack(newRack, baseGroupsRef.current); }
       return;
     }
 
@@ -698,6 +725,7 @@ export default function PlayerRack({
 
     // Sabit slot fiziği: sadece hedef slot etkilenir, diğer taşlar ASLA kaymaz
     // (boşsa taş oraya gider, doluysa yer değiştirir).
+    playOkeySound('tile'); // taş bırakıldı — dokunma sesiyle aynı tahta tıkırtısı
     applyRack(moveTileToSlot(rackNow, d.fromIndex, dropIndex), baseGroupsRef.current);
   };
 

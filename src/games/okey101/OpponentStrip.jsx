@@ -118,11 +118,16 @@ export default function OpponentStrip({ topSeat, leftSeat, rightSeat, hostUid, t
           geometrisinden zaten belli olduğu için isim yazılmaz. Bölmeler
           gidecekleri koltuğa doğru (köşelere) yerleşir ve taş yokken de
           kesik çizgili olarak durur (bkz. DiscardSlot). */}
-      <div className="w-full flex items-start justify-between px-[14%] sm:px-[20%]">
-        <div className="flex justify-start">
+      {/* Bölmeler ayrıca ~1 taş kadar DIŞA ve YUKARI kaydırılır (sol bölme sol-üst,
+          sağ bölme sağ-üst çaprazına): taşın masanın ortasından değil, atan
+          oyuncunun köşesinden çıkıyormuş izlenimi verir. `-mt` ile yukarı
+          çekmek, altındaki 3 sütunlu masa satırının konumunu DEĞİŞTİRMEZ
+          (bölmeler kendi satırında akıştan taşar). */}
+      <div className="w-full flex items-start justify-between px-[14%] sm:px-[20%] -mt-1">
+        <div className={`flex justify-start ${compact ? '-translate-x-6 -translate-y-1.5' : '-translate-x-10 -translate-y-2.5'}`}>
           {leftSeat && topSeat && <DiscardSlot tile={topSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
         </div>
-        <div className="flex justify-end">
+        <div className={`flex justify-end ${compact ? 'translate-x-6 -translate-y-1.5' : 'translate-x-10 -translate-y-2.5'}`}>
           {rightSeat && topSeat && <DiscardSlot tile={rightSeat.topDiscard} okeyInfo={okeyInfo} compact={compact} />}
         </div>
       </div>

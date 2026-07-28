@@ -647,7 +647,10 @@ export default function App() {
       {currentView === 'lobby' ? (
         <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} />
       ) : (
-        <main className={`max-w-5xl mx-auto flex flex-col items-center ${okeyCompact ? 'h-full w-full' : ''}`}>
+        // 101 Okey masası diğer oyunlardan DAHA GENİŞ bir kaba oturur: masanın
+        // ortasındaki "Açılan Eller" alanına daha büyük (okunaklı) taşlar sığsın
+        // ve yan koltuklar gerçekten kenarlara açılsın diye.
+        <main className={`${isOkeyTable ? 'max-w-6xl' : 'max-w-5xl'} mx-auto flex flex-col items-center ${okeyCompact ? 'h-full w-full' : ''}`}>
           {!hideChrome && (
             <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} />
           )}
