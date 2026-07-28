@@ -894,7 +894,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const discardPile = [...(data.discardPiles?.[actingUid] || []), tile];
 
       // İşlek (masadaki -kendisinin ya da rakibinin- bir seri/set'e tam
-      // oturan) ya da Okey bir taş atılırsa, atan oyuncuya -101 ceza yazılır
+      // oturan) ya da Okey bir taş atılırsa, atan oyuncuya +101 ceza yazılır
       // (tur/eli bitiren atışlar hariç — o puanlama computeRoundEnd'de ayrı
       // ele alınıyor, üstüne ayrıca bu ceza eklenmez). İkisi AYRI durumlardır
       // ve oyuncuya da ayrı ayrı bildirilir.
@@ -922,7 +922,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         tackHint: discardedTackable ? { tileId: tile.id, spots: tackSpots, expiresAt: Date.now() + 2800 } : null,
       };
       if (carelessDiscard) {
-        update[`scores.${actingUid}`] = (data.scores?.[actingUid] || 0) - PENALTY_POINTS;
+        update[`scores.${actingUid}`] = (data.scores?.[actingUid] || 0) + PENALTY_POINTS;
       }
 
       // Kapalı deste bittiyse el, ATAN oyuncunun turu tamamlandığı anda
@@ -936,7 +936,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // hamlesini tamamladığında el kapanır.
       if ((data.drawPile || []).length === 0) {
         const scoresBeforeEnd = { ...(data.scores || {}) };
-        if (carelessDiscard) scoresBeforeEnd[actingUid] = (data.scores?.[actingUid] || 0) - PENALTY_POINTS;
+        if (carelessDiscard) scoresBeforeEnd[actingUid] = (data.scores?.[actingUid] || 0) + PENALTY_POINTS;
         const { newScores, roundResult } = computeRoundEnd({
           players: data.players || [],
           scores: scoresBeforeEnd,
@@ -972,8 +972,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 atma hatası:', err); outcome = null; });
 
-    if (outcome?.discardedOkey) showToast('Okey attın! -101 ceza aldın.', 'red');
-    else if (outcome?.discardedTackable) showToast('İşlek taş attın! -101 ceza aldın.', 'red');
+    if (outcome?.discardedOkey) showToast('Okey attın! +101 ceza aldın.', 'red');
+    else if (outcome?.discardedTackable) showToast('İşlek taş attın! +101 ceza aldın.', 'red');
     return outcome;
   };
 
@@ -1022,7 +1022,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
       if (!alreadyOpened && total < OPEN_THRESHOLD) {
         outcome = { success: false, reason: 'below101' };
-        t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) - PENALTY_POINTS });
+        t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) + PENALTY_POINTS });
         return;
       }
 
@@ -1036,7 +1036,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const barrier = data.foldBarrier || null;
       if (!alreadyOpened && foldingActive && barrier && !isExemptFromFoldBarrier(user.uid, barrier, data.rules, data.teams) && total <= barrier.total) {
         outcome = { success: false, reason: 'below-fold-barrier', barrierLabel: formatFoldBarrier(barrier.total) };
-        t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) - PENALTY_POINTS });
+        t.update(roomRef, { [`scores.${user.uid}`]: (data.scores?.[user.uid] || 0) + PENALTY_POINTS });
         return;
       }
 
@@ -1075,7 +1075,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       let penalizedName = null; let penaltyAmount = 0;
       if (st && st.uid === user.uid) {
         penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_SERIES_MULTIPLIER;
-        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) - penaltyAmount;
+        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) + penaltyAmount;
         update.sideTake = null;
         penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
       }
@@ -1090,7 +1090,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
     else if (outcome?.reason === 'below-fold-barrier') showToast(`Katlamalı modda baraj (${outcome.barrierLabel}) geçilmeden per açılamaz! Ceza yedin.`, 'red');
     else if (outcome?.success === true) {
-      showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
+      showToast(outcome.penalizedName ? `Per başarıyla açıldı! ${outcome.penalizedName} taşı yandan alındığı için +${outcome.penaltyAmount} ceza aldı.` : 'Per başarıyla açıldı!', outcome.penalizedName ? 'amber' : 'emerald');
     }
     return outcome;
   };
@@ -1186,7 +1186,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       let penalizedName = null; let penaltyAmount = 0;
       if (st && st.uid === user.uid) {
         penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_PAIRS_MULTIPLIER;
-        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) - penaltyAmount;
+        update[`scores.${st.fromUid}`] = (data.scores?.[st.fromUid] || 0) + penaltyAmount;
         update.sideTake = null;
         penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
       }
@@ -1201,7 +1201,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
     else if (outcome?.success === true) {
       const base = outcome.alreadyOpened ? `${outcome.count} çift masaya sürüldü!` : '5 çift başarıyla açıldı!';
-      showToast(outcome.penalizedName ? `${base} ${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.` : base, outcome.penalizedName ? 'amber' : 'emerald');
+      showToast(outcome.penalizedName ? `${base} ${outcome.penalizedName} taşı yandan alındığı için +${outcome.penaltyAmount} ceza aldı.` : base, outcome.penalizedName ? 'amber' : 'emerald');
     }
     return outcome;
   };
@@ -1252,12 +1252,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // bkz. handleOpenSeries'teki katlamalı mod barajı — bot da AYNI kurala
       // tabidir. `pickBotMelds` barajdan habersiz olduğu için (sadece normal
       // 101'i hedefler) bot GERÇEKTEN bu duruma düşebilir; insan oyuncuyla
-      // AYNI şekilde -101 ceza yer (bot orkestrasyonundaki geri-dönüş bu
+      // AYNI şekilde +101 ceza yer (bot orkestrasyonundaki geri-dönüş bu
       // turu boş geçmesini sağlar).
       const foldingActiveBot = !isPairs && !!data.rules?.foldingEnabled;
       const barrierBot = data.foldBarrier || null;
       if (foldingActiveBot && !alreadyOpened && barrierBot && !isExemptFromFoldBarrier(actingUid, barrierBot, data.rules, data.teams) && total <= barrierBot.total) {
-        t.update(roomRef, { [`scores.${actingUid}`]: (data.scores?.[actingUid] || 0) - PENALTY_POINTS });
+        t.update(roomRef, { [`scores.${actingUid}`]: (data.scores?.[actingUid] || 0) + PENALTY_POINTS });
         outcome = { success: false };
         return;
       }
@@ -1317,7 +1317,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (st && st.uid === actingUid) {
         const multiplier = isPairs ? SIDE_TAKE_PAIRS_MULTIPLIER : SIDE_TAKE_SERIES_MULTIPLIER;
         penaltyAmount = (st.tileValue || 0) * multiplier;
-        nextScores[st.fromUid] = (data.scores?.[st.fromUid] || 0) - penaltyAmount;
+        nextScores[st.fromUid] = (data.scores?.[st.fromUid] || 0) + penaltyAmount;
         update[`scores.${st.fromUid}`] = nextScores[st.fromUid];
         update.sideTake = null;
         penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
@@ -1341,7 +1341,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       };
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 bot açma hatası:', err); outcome = null; });
-    if (outcome?.penalizedName) showToast(`${outcome.penalizedName} taşı yandan alındığı için -${outcome.penaltyAmount} ceza aldı.`, 'amber');
+    if (outcome?.penalizedName) showToast(`${outcome.penalizedName} taşı yandan alındığı için +${outcome.penaltyAmount} ceza aldı.`, 'amber');
     return outcome;
   };
 
@@ -1395,7 +1395,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           const sameTeam = data.rules?.gameType === '2v2'
             && ((teamsA.includes(actingUid) && teamsA.includes(target.uid)) || (teamsB.includes(actingUid) && teamsB.includes(target.uid)));
           if (!sameTeam) {
-            nextScores[target.uid] = (data.scores?.[target.uid] || 0) - PENALTY_POINTS;
+            nextScores[target.uid] = (data.scores?.[target.uid] || 0) + PENALTY_POINTS;
             update[`scores.${target.uid}`] = nextScores[target.uid];
             penalizedName = players.find((p) => p.uid === target.uid)?.name || 'Rakip';
           }
@@ -1467,7 +1467,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     if (outcome?.success === false) showToast('Bu taş buraya uymuyor, ıstakana geri döndü.', 'red');
     else if (outcome?.roundEnded) showToast('Elini taş atmadan işleyerek bitirdin!', 'emerald');
     else if (outcome?.success === true && outcome.wonOkey) {
-      showToast(outcome.penalizedName ? `Okey'i kazandın! ${outcome.penalizedName} -101 ceza aldı.` : 'Okey\'i kazandın!', 'emerald');
+      showToast(outcome.penalizedName ? `Okey'i kazandın! ${outcome.penalizedName} +101 ceza aldı.` : 'Okey\'i kazandın!', 'emerald');
     }
     return outcome;
   };

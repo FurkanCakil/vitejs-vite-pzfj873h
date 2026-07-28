@@ -45,7 +45,7 @@ export function getPrevTurnUid(players, currentUid) {
 // `foldBarrier` her başarılı per açılışında `total > barrier.total` ise
 // güncellenir). Per ile açmaya çalışan (ve muaf olmayan) her oyuncu GÜNCEL
 // barajı KESİN OLARAK GEÇMEK (>) zorundadır; aksi halde normal 101 barajını
-// geçememiş gibi -101 ceza yer.
+// geçememiş gibi +101 ceza yer.
 
 // Baraj gösterimi: "123 (41)" (3'e tam bölünüyorsa) ya da "124 (41 yan 1)"
 // (bölümden kalan varsa). 3'e bölme, oyuncuların gerçek Okey masalarında
@@ -393,7 +393,7 @@ export function canPlayerLayMelds(uid, openedWithPairs) {
 // oyuncunun) açık en az bir seri/set'inin sağına ya da soluna tam oturuyorsa
 // (bkz. canTackTile) o taş işlektir. Okey/Sahte Okey taşı da HER ZAMAN işlek
 // sayılır (kendisi zaten her yere işlenebilir bir taştır). Bu, "işlek ya da
-// Okey bir taş atan oyuncuya -101 ceza yazılır" kuralını uygulamak için
+// Okey bir taş atan oyuncuya +101 ceza yazılır" kuralını uygulamak için
 // kullanılır (bkz. handleDiscardTile).
 export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
   if (!tile) return false;

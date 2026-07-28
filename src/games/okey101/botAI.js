@@ -212,7 +212,7 @@ function tileConnectionScore(tile, handTiles, okeyInfo) {
 }
 
 // Elindeki taşlar arasından, masada AÇIK duran perlere "işlek" (uyan) olanları
-// eler — atılırsa -101 ceza yer (bkz. gameLogic.js#isTileTackable). Güvenli
+// eler — atılırsa +101 ceza yer (bkz. gameLogic.js#isTileTackable). Güvenli
 // (işlek olmayan) hiç taş yoksa orijinal listeyi olduğu gibi döndürür (ceza
 // yemek kaçınılmazsa en azından atma kararı yine de verilebilsin diye).
 function excludeTackable(candidates, openedHandsAllPlayers, okeyInfo) {
@@ -223,7 +223,7 @@ function excludeTackable(candidates, openedHandsAllPlayers, okeyInfo) {
 
 // Atılacak taşı seçer. Öncelik sırası:
 //   1. KESİNLİKLE Okey taşı atmaz (elde başka taş kalmadığı durum hariç).
-//   2. Mümkünse "işlek" (masadaki bir pere uyan, atılırsa -101 yenen) taş atmaz.
+//   2. Mümkünse "işlek" (masadaki bir pere uyan, atılırsa +101 yenen) taş atmaz.
 //   3. Kalanlar arasında elindeki diğer taşlarla en az "bağlantısı" olan
 //      (bir per'e dönüşme ihtimali en düşük) taşı seçer.
 //   4. Eşitlikte EN DÜŞÜK sayılı olanı atar: hem yandan alınıp açılırsa yenecek
