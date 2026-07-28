@@ -8,6 +8,7 @@ const GAMES = [
   { id: 'dama', name: 'Dama', available: true, icon: '⚪⚫' },
   { id: 'okey101', name: '101 Okey', available: true, icon: '🀄' },
   { id: 'connect4', name: 'Connect 4', available: true, icon: '🔴🔵' },
+  { id: 'amiralbatti', name: 'Amiral Battı', available: true, icon: '🚢' },
 ];
 
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4'];
@@ -44,7 +45,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       <h2 className="text-2xl font-semibold mb-6 flex items-center gap-2"><Users className="w-6 h-6 text-slate-400" /> Oda Kur & Oyun Seç</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {GAMES.map(game => {
-          const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama' || game.id === 'okey101' || game.id === 'connect4');
+          const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama' || game.id === 'okey101' || game.id === 'connect4' || game.id === 'amiralbatti');
           const isBotSupported = BOT_SUPPORTED_GAMES.includes(game.id);
           const showingBotSelect = botSelectGameId === game.id;
           return (
@@ -53,6 +54,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                 ${isPremium && game.id !== 'dama' && game.id !== 'connect4' ? 'bg-slate-800 border-indigo-500/40 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.id === 'dama' ? 'bg-slate-900 border-slate-700 hover:border-slate-400 shadow-[0_0_20px_rgba(255,255,255,0.07)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.id === 'connect4' ? 'bg-slate-900 border-blue-600/40 hover:border-blue-400 shadow-[0_0_20px_rgba(37,99,235,0.15)] cursor-pointer hover:-translate-y-1' : ''}
+                ${game.id === 'amiralbatti' ? 'bg-slate-900 border-sky-600/40 hover:border-sky-400 shadow-[0_0_20px_rgba(2,132,199,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}`}>
 
               {game.id === 'xox' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
@@ -61,6 +63,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
               {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-white/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'okey101' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-rose-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-cyan-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'connect4' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-red-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-blue-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
+              {game.id === 'amiralbatti' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-sky-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
 
               <div className="flex-grow flex flex-col items-center justify-center text-center py-4 relative z-10">
                 <div className="text-6xl mb-3 drop-shadow-md">{game.icon}</div>
@@ -92,6 +95,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                         ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
                         ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
                         ${game.id === 'connect4' ? 'bg-blue-600/20 text-blue-300 border-blue-500/50 hover:bg-blue-600 hover:text-white' : ''}
+                        ${game.id === 'amiralbatti' ? 'bg-sky-600/20 text-sky-300 border-sky-500/50 hover:bg-sky-600 hover:text-white' : ''}
                       `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>
                     <button
                       disabled={!isBotSupported}

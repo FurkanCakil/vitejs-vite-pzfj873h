@@ -24,6 +24,7 @@ import ChessGame from './games/chess/ChessGame.jsx';
 import CheckersGame from './games/checkers/CheckersGame.jsx';
 import Okey101Game from './games/okey101/Okey101Game.jsx';
 import Connect4Game from './games/connect4/Connect4Game.jsx';
+import BattleshipGame from './games/battleship/BattleshipGame.jsx';
 
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
@@ -383,6 +384,21 @@ export default function App() {
           countdownStartedAt: null,
         });
       }
+      else if (gameId === 'amiralbatti') {
+        // FAZ 1: yerleştirme aşaması. `ships.{uid}` her oyuncu "Hazır"a
+        // bastığında BattleshipGame tarafından yazılır. FAZ 2: her iki
+        // oyuncu da hazır olunca setupPhase kapanır, sıra Host'a geçer;
+        // `shots.{uid}` o oyuncunun rakibe yaptığı atışların listesidir
+        // (bkz. BattleshipGame#handleShoot / computeRoundEnd benzeri
+        // batırma/kazanma kontrolü doğrudan bileşende yapılır).
+        Object.assign(initialState, {
+          setupPhase: true,
+          ships: {},
+          readyPlayers: {},
+          shots: {},
+          turn: null,
+        });
+      }
 
        try {
          await setDoc(roomRef, initialState);
@@ -449,6 +465,10 @@ export default function App() {
             } else if (data.gameId === 'okey101') {
               // Yeni oyuncu takımsız (Bekleyenler havuzunda) katılır; status zaten yukarıda
               // 'waiting' tutuldu — Okey101Lobby'nin geri sayım efekti eşiğe ulaşınca 'playing'e çevirecek.
+            } else if (data.gameId === 'amiralbatti') {
+              // FAZ 1: katılışta yapılacak bir şey yok — sıra/tur ataması,
+              // her iki oyuncu da gemilerini yerleştirip "Hazır" olduktan
+              // sonra FAZ 2'de belirlenecek.
             } else {
               const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
               updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
@@ -666,6 +686,7 @@ export default function App() {
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                   {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                  </ErrorBoundary>
               </div>
             )}
