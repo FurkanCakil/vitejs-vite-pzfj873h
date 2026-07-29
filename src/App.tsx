@@ -77,6 +77,10 @@ export default function App() {
   const restoredRoomRef = useRef(null);
   const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
   roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown, isBotGame };
+  // Sekme/uygulama kısa bir an gizlenip (telefon bildirimi, ekran kilidi,
+  // hızlı uygulama değişimi) hemen geri gelirse odayı "abandoned" yapmayı
+  // İPTAL edebilmek için bekleyen zamanlayıcı — bkz. handleVisibility.
+  const visibilityAbandonTimerRef = useRef(null);
 
   // Yakalanmamış hataları sessizce yutmak yerine ekranda göster. Telefonda
   // (özellikle normal sekmede) çıkan hataların ne olduğunu görebilmek için
@@ -272,15 +276,36 @@ export default function App() {
       if (isBot || isOkeyRoom()) return;
       if (code && u && data && data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code), { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
     };
+    // GÖRÜNÜRLÜK GECİKMESİ (kısa süreliğine sekmeden ayrılmanın odayı yanlışlıkla
+    // "terk edilmiş" yapması): `visibilitychange` telefonlarda son derece
+    // gürültülü bir sinyaldir — ekran kilidi, bildirim çubuğunu açmak, hızlı bir
+    // uygulama değişimi bile `hidden` tetikler. Eskiden bu ANINDA odayı
+    // `abandoned` yapıyordu; rakip ekranında "Bağlantı koptu" sayacı/örtüşü bir
+    // anlığına beliriyor, sıra kimde olursa olsun kafa karıştırıyordu (bkz.
+    // kullanıcı raporu: telefonda sıra kendisindeyken bile rakip tarafında bu
+    // görünüyordu). Artık `hidden` olduğunda ANINDA yazmak yerine kısa bir
+    // (5sn) bekleme süresi başlatılır; kullanıcı bu süre İÇİNDE sekmeye geri
+    // dönerse (gerçek bir "bırakma" değil, sadece anlık bir bakışsa) zamanlayıcı
+    // iptal edilir ve HİÇBİR ŞEY yazılmaz. Gerçekten uzun süre uzakta kalırsa
+    // (ör. uygulamayı tamamen kapatmak) süre dolar ve oda normal şekilde
+    // `abandoned` işaretlenir — asıl "biri gerçekten ayrıldı" tespiti bozulmaz.
+    const VISIBILITY_ABANDON_GRACE_MS = 5000;
     const handleVisibility = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
       if (isBot || isOkeyRoom()) return;
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
-      if (document.visibilityState === 'hidden') { 
-         if (data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); } 
-      } 
-      else if (document.visibilityState === 'visible') { 
+      if (document.visibilityState === 'hidden') {
+         if (data.status === 'playing' && data.players?.includes(u.uid)) {
+            if (visibilityAbandonTimerRef.current) clearTimeout(visibilityAbandonTimerRef.current);
+            visibilityAbandonTimerRef.current = setTimeout(() => {
+               visibilityAbandonTimerRef.current = null;
+               updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {});
+            }, VISIBILITY_ABANDON_GRACE_MS);
+         }
+      }
+      else if (document.visibilityState === 'visible') {
+         if (visibilityAbandonTimerRef.current) { clearTimeout(visibilityAbandonTimerRef.current); visibilityAbandonTimerRef.current = null; }
          getDoc(roomRef).then(snap => {
             if (snap.exists() && snap.data().status === 'abandoned' && snap.data().abandonedBy === u.uid && snap.data().abandonReason !== 'left') {
                 updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {});
@@ -288,8 +313,11 @@ export default function App() {
          }).catch(()=>{});
       }
     };
-    window.addEventListener('beforeunload', handleDisconnect); window.addEventListener('pagehide', handleDisconnect); window.addEventListener('visibilitychange', handleVisibility); 
-    return () => { window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility); };
+    window.addEventListener('beforeunload', handleDisconnect); window.addEventListener('pagehide', handleDisconnect); window.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility);
+      if (visibilityAbandonTimerRef.current) { clearTimeout(visibilityAbandonTimerRef.current); visibilityAbandonTimerRef.current = null; }
+    };
   }, []);
 
   const startBotGame = (gameId, difficulty) => {

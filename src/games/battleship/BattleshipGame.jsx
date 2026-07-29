@@ -447,7 +447,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
           setupPhase: false,
           turn: Math.random() < 0.5 ? user.uid : BOT_UID,
         });
-        playSound('check');
+        // KULLANICI İSTEĞİ: jenerik `playSound('check')` (sert/yüksek sesli)
+      // yerine bu oyuna özel, kısık ve yumuşak bir onay sesi (bkz.
+      // battleshipSound.js#readyChime).
+      playBattleshipSound('ready');
         return;
       }
       // İki oyuncu da neredeyse aynı anda "Hazır"a basarsa, client'taki
@@ -473,7 +476,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         }
         t.update(roomRef, update);
       });
-      playSound('check');
+      // KULLANICI İSTEĞİ: jenerik `playSound('check')` (sert/yüksek sesli)
+      // yerine bu oyuna özel, kısık ve yumuşak bir onay sesi (bkz.
+      // battleshipSound.js#readyChime).
+      playBattleshipSound('ready');
     } catch (err) { console.error('Amiral Battı hazır kaydı hatası:', err); }
     finally { setIsSaving(false); }
   };
@@ -526,8 +532,13 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // gelince) doğru sesi duymalı — eskiden SADECE atan taraf ses duyuyordu, bu
   // hiç gerçekçi değildi. `opponentShots` (rakibin BANA attığı atışlar) uzunluğu
   // arttığında (ve ilk yüklemede DEĞİL — bkz. `prev === null` koruması, aksi
-  // halde odaya girildiğinde geçmiş atışların sesi topluca çalınırdı) top sesi
-  // + kısa bir gecikmeyle isabet/ıska sesi çalınır.
+  // halde odaya girildiğinde geçmiş atışların sesi topluca çalınırdı) doğrudan
+  // isabet/ıska sesi çalınır.
+  //
+  // KULLANICI İSTEĞİ: eskiden önce kısa bir "dı" (top/tüfek) sesi çalınıp
+  // ardından "tuf" (isabet/ıska) geliyordu; baştaki "dı" hem ıskada hem
+  // isabette RAHATSIZ EDİCİ bulunduğu için kaldırıldı — artık SADECE isabet/
+  // ıska sesi (tek başına) çalıyor.
   const prevOpponentShotsLenRef = useRef(null);
   useEffect(() => {
     if (!isPlaying) { prevOpponentShotsLenRef.current = null; return; }
@@ -535,8 +546,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     prevOpponentShotsLenRef.current = opponentShots.length;
     if (prev === null || opponentShots.length <= prev) return;
     const lastShot = opponentShots[opponentShots.length - 1];
-    playBattleshipSound('shoot');
-    setTimeout(() => playBattleshipSound(lastShot?.hit ? 'hit' : 'miss'), 160);
+    playBattleshipSound(lastShot?.hit ? 'hit' : 'miss');
   }, [opponentShots.length, isPlaying]);
 
   const prevWinnerRef = useRef(null);
@@ -570,11 +580,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       update.turn = opponentUid;
     }
 
-    // Gerçekçi ses akışı: ÖNCE top/tüfek sesi (atış anı), kısa bir gecikmeyle
-    // (mermi/güllenin hedefe ulaşma hissi) İSABET (patlama) ya da IŞKA (su
-    // sıçraması) sesi. Sunucu yazımı beklenmeden ANINDA çalınır (iyimser ses).
-    playBattleshipSound('shoot');
-    setTimeout(() => playBattleshipSound(isHit ? 'hit' : 'miss'), 160);
+    // Gerçekçi ses: doğrudan İSABET (patlama) ya da IŞKA (su sıçraması) sesi —
+    // eskiden önce bir "dı" (top/tüfek) sesi çalınıyordu, kullanıcı isteğiyle
+    // kaldırıldı. Sunucu yazımı beklenmeden ANINDA çalınır (iyimser ses).
+    playBattleshipSound(isHit ? 'hit' : 'miss');
     try { await updateRoom(update); } catch (err) { console.error('Amiral Battı atış hatası:', err); }
   };
 
@@ -781,23 +790,35 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // FAZ 2 — "Hedef Tahtası": SADECE bu tahtaya atış yapılabilir. Kendi
   // atışlarımın sonucunu (isabet/ıska) gösterir.
   //
-  // KULLANICI İSTEĞİ: Bir rakip gemisi TAMAMEN battığında bunu belli eden
-  // HİÇBİR ŞEY yoktur — ne tam gemi hattının açığa çıkması (eskiden
-  // `sunkOpponentSegments` ile burada çiziliyordu), ne "X battı!" ipucu, ne
-  // farklı bir patlama sesi (bkz. battleshipSound.js). Her isabet TAMAMEN AYNI
-  // görünür/duyulur — geminin son parçası mı yoksa ilk parçası mı olduğunu
-  // ayırt edemezsiniz, bu yüzden emin olmak için etrafına da atış yapmanız
-  // gerekir.
+  // KULLANICI İSTEĞİ: Bir rakip gemisi TAMAMEN battığında (oyun HÂLÂ
+  // SÜRERKEN) bunu belli eden HİÇBİR ŞEY yoktur — ne tam gemi hattının açığa
+  // çıkması, ne "X battı!" ipucu, ne farklı bir patlama sesi (bkz.
+  // battleshipSound.js). Her isabet TAMAMEN AYNI görünür/duyulur — geminin
+  // son parçası mı yoksa ilk parçası mı olduğunu ayırt edemezsiniz, bu yüzden
+  // emin olmak için etrafına da atış yapmanız gerekir.
+  //
+  // OYUN BİTTİĞİNDE (bir kazanan belirlendiğinde) İSE artık gizlenecek bir
+  // şey kalmaz — rakibin TÜM filosu (kaçırdığınız/hiç ateş etmediğiniz
+  // hücreler DAHİL) radar üzerinde açığa çıkar, böylece "gemiler nerede
+  // duruyormuş" görebilirsiniz.
+  const revealedOpponentSegments = roomData.winner ? buildSegmentMap(opponentShips) : null;
+  const revealedSunkIds = roomData.winner
+    ? new Set(opponentShips.filter((s) => isShipSunk(s, myShotMap)).map((s) => s.id))
+    : null;
+
   const renderBattleTargetCell = (r, c) => {
     const key = cellKey(r, c);
     const shot = myShotMap[key];
     const clickable = isMyTurn && !shot;
+    const revealSeg = revealedOpponentSegments?.[key];
+    const revealState = revealSeg ? (revealedSunkIds.has(revealSeg.shipId) ? 'sunk' : (shot?.hit ? 'hit' : 'intact')) : null;
     return (
       <div
         key={c}
         onClick={() => handleShoot(r, c)}
         className={`${CELL} bs-cell flex items-center justify-center transition-colors ${clickable ? 'bs-cell-live bs-crosshair cursor-pointer' : 'cursor-default'}`}
       >
+        {revealSeg && <ShipHull seg={revealSeg} state={revealState} />}
         {shot && <ShotMarker hit={!!shot.hit} />}
       </div>
     );

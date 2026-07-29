@@ -96,18 +96,6 @@ function thump(ac, t0, { freq = 90, vol = 0.7, dur = 0.18 } = {}) {
   osc.start(t0); osc.stop(t0 + dur);
 }
 
-// --- ATIŞ: top/tüfek sesi ("bang") ------------------------------------------
-// Gerçek bir silah sesi genelde İKİ katmandan oluşur: anlık YÜKSEK FREKANSLI
-// bir "crack" (patlama anının keskin tıngırtısı) + hemen ardından alçak
-// frekansta kısa bir namlu/gövde darbesi. Saf sinüs yerine gürültü kullanmak
-// elektronik/dijital değil GERÇEK bir silah izlenimi verir.
-function gunshot(ac) {
-  const t0 = ac.currentTime;
-  noiseBurst(ac, t0, { type: 'bandpass', freq: 3200, freqEnd: 900, q: 0.7, vol: 0.9, dur: 0.05 });
-  noiseBurst(ac, t0, { type: 'lowpass', freq: 1100, freqEnd: 220, q: 0.8, vol: 0.55, dur: 0.14 });
-  thump(ac, t0, { freq: 130, vol: 0.5, dur: 0.14 });
-}
-
 // Alt-bas "whoomp" — bir osilatör hızla yukarıdan aşağı çekilerek patlamanın
 // göğüste hissedilen ağırlığını verir (saf gürültü tek başına bunu asla
 // veremez; bu katman olmadan patlama "ince" ve yapay kalıyordu).
@@ -164,7 +152,27 @@ function ownShipSunk(ac) {
   thump(ac, t0, { freq: 60, vol: 0.75, dur: 0.55 });
 }
 
-const SOUNDS = { shoot: gunshot, hit: explosionHit, miss: splashMiss, ownShipSunk };
+// --- HAZIR: gemiler yerleştirildi / savaş başlıyor --------------------------
+// KULLANICI İSTEĞİ: eskiden burada jenerik (tüm oyunlarda paylaşılan)
+// `playSound('check')` çalınıyordu — sert bir testere dalgası (sawtooth) ve
+// yüksek kazançla (0.5) oldukça GÜRÜLTÜLÜ/RAHATSIZ EDİCİ geliyordu. Bunun
+// yerine kısık sesli, yumuşak (sine) iki notalı kısa bir onay "ding"i.
+function readyChime(ac) {
+  const t0 = ac.currentTime;
+  [{ freq: 520, at: 0, dur: 0.14 }, { freq: 780, at: 0.08, dur: 0.16 }].forEach(({ freq, at, dur }) => {
+    const osc = ac.createOscillator();
+    const g = ac.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, t0 + at);
+    g.gain.setValueAtTime(0.0001, t0 + at);
+    g.gain.exponentialRampToValueAtTime(0.2, t0 + at + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + at + dur);
+    osc.connect(g); g.connect(ac.destination);
+    osc.start(t0 + at); osc.stop(t0 + at + dur + 0.02);
+  });
+}
+
+const SOUNDS = { hit: explosionHit, miss: splashMiss, ownShipSunk, ready: readyChime };
 
 export function playBattleshipSound(type) {
   try {
