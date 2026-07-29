@@ -11,7 +11,12 @@ const GAMES = [
   { id: 'amiralbatti', name: 'Amiral Battı', available: true, icon: '🚢' },
 ];
 
-const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4'];
+const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4', 'amiralbatti'];
+
+// Amiral Battı ZORLUK SEVİYESİ SUNMAZ (oyun tamamen şansa dayalı) — tek,
+// standart bir bot. Bu yüzden diğer oyunlardaki gibi bir "Kolay/Orta/Zor"
+// seçim ekranı GÖSTERİLMEZ, "Botla Oyna" butonu doğrudan oyunu başlatır.
+const NO_DIFFICULTY_BOT_GAMES = ['amiralbatti'];
 
 const DIFFICULTIES = [
   { id: 'easy', label: 'Kolay' },
@@ -100,7 +105,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                     <button
                       disabled={!isBotSupported}
                       title={!isBotSupported ? 'Yakında' : undefined}
-                      onClick={() => setBotSelectGameId(game.id)}
+                      onClick={() => (NO_DIFFICULTY_BOT_GAMES.includes(game.id) ? startBotGame(game.id, null) : setBotSelectGameId(game.id))}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
                     ><Bot className="w-4 h-4" /> Botla Oyna</button>
                   </div>

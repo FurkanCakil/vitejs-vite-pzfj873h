@@ -4,6 +4,7 @@ import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { playBattleshipSound } from './battleshipSound.js';
 import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey } from './logic.js';
+import { BOT_UID, generateBotFleet, chooseBotShot } from './bot.js';
 
 // ============================================================
 // FAZ 1: 10x10 tahta + gemi yerleştirme aşaması.
@@ -125,10 +126,25 @@ const LONG_PRESS_MS = 300;
 // eşiğine göre yapılır.
 const DRAG_MOVE_THRESHOLD = 6;
 
-export default function BattleshipGame({ roomData, roomCode, user, db, appId }) {
+// FAZ 3: Tek oyunculu "Bota Karşı" modu (bkz. bot.js). Bot yerleşimi/atışları
+// tamamen ŞANSA dayalı standart (zorluk seviyesiz) bir Hunt & Target
+// algoritmasıyla çalışır. `isBot` true iken TÜM Firestore yazımları
+// `setLocalRoomData` üzerinden tamamen YEREL state güncellemesine döner
+// (bkz. `updateRoom`) — gerçek çok oyunculu (Firestore) akışa HİÇ dokunulmaz.
+export default function BattleshipGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, setLocalRoomData }) {
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
-  const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+  const roomRef = isBot ? null : doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+
+  // Diğer bot-destekli oyunlarla (connect4/Connect4Game.jsx) AYNI desen:
+  // bot modunda hiçbir Firestore yazımı/transaction'ı GERÇEKLEŞMEZ, sadece
+  // App.tsx'in tuttuğu yerel `roomData` state'i güncellenir — bu sayede
+  // gerçek odalardaki (host/misafir) eşzamanlılık/transaction mantığına HİÇ
+  // dokunulmamış olur.
+  const updateRoom = async (patch) => {
+    if (isBot) { setLocalRoomData((prev) => ({ ...prev, ...patch })); return; }
+    await updateDoc(roomRef, patch);
+  };
 
   const isPlayer1 = roomData.players[0] === user.uid;
   const isPlayer2 = roomData.players?.[1] === user.uid;
@@ -162,6 +178,22 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   const [hoverOrigin, setHoverOrigin] = useState(null);
   const [shakeShipId, setShakeShipId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Bir sonraki el (rematch — hem bot hem gerçek çok oyunculu modda) sunucuda
+  // `ships`'i sıfırlar, ama `placedShips`'in `useState` başlangıç değeri
+  // SADECE bileşen mount olurken okunur — `setupPhase` false'tan true'ya HER
+  // geçtiğinde (yeni bir el başladığında) bu yerel yerleştirme state'i de
+  // burada senkron sıfırlanır. Aksi halde bir önceki elden kalma gemiler yeni
+  // yerleştirme ekranında "zaten yerleştirilmiş" gibi hayalet olarak kalırdı.
+  const prevSetupPhaseRef = useRef(roomData.setupPhase);
+  useEffect(() => {
+    if (roomData.setupPhase && !prevSetupPhaseRef.current) {
+      setPlacedShips(roomData.ships?.[user.uid] || []);
+      setSelectedShipId(null);
+      setHoverOrigin(null);
+    }
+    prevSetupPhaseRef.current = roomData.setupPhase;
+  }, [roomData.setupPhase, roomData.ships, user.uid]);
 
   const setupLocked = amIReady || isSaving;
 
@@ -372,6 +404,21 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     if (setupLocked || !readyToConfirm) return;
     setIsSaving(true);
     try {
+      if (isBot) {
+        // Bot MODU: bot filosu zaten oda kurulurken (App.tsx#startBotGame)
+        // yerleştirilip "hazır" işaretlenmiş durumda — tek bir yerel oyuncu
+        // olduğu için yarış durumu YOK, transaction'a gerek DUYULMAZ. İnsan
+        // hazır olduğu an savaş doğrudan başlar; başlangıç sırası (kim ilk
+        // ateş eder) rastgele belirlenir.
+        await updateRoom({
+          [`ships.${user.uid}`]: placedShips,
+          [`readyPlayers.${user.uid}`]: true,
+          setupPhase: false,
+          turn: Math.random() < 0.5 ? user.uid : BOT_UID,
+        });
+        playSound('check');
+        return;
+      }
       // İki oyuncu da neredeyse aynı anda "Hazır"a basarsa, client'taki
       // (henüz senkronlanmamış olabilecek) roomData'ya güvenmek yarışı
       // KAÇIRABİLİR — ikisi de rakibi "hazır değil" görüp setupPhase hiç
@@ -497,23 +544,72 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     // sıçraması) sesi. Sunucu yazımı beklenmeden ANINDA çalınır (iyimser ses).
     playBattleshipSound('shoot');
     setTimeout(() => playBattleshipSound(isHit ? 'hit' : 'miss'), 160);
-    try { await updateDoc(roomRef, update); } catch (err) { console.error('Amiral Battı atış hatası:', err); }
+    try { await updateRoom(update); } catch (err) { console.error('Amiral Battı atış hatası:', err); }
   };
+
+  // FAZ 3 (Bot Yapay Zekası): sıra bota (`BOT_UID`) geçtiğinde ANINDA ateş
+  // etmez — İNSANSI GECİKME olarak 1.5-2.5sn rastgele bir "düşünüyor"
+  // bekleyişinden sonra Hunt & Target algoritmasıyla (bkz. bot.js#chooseBotShot)
+  // bir hücre seçip ateş eder. İnsanın `handleShoot`'u ile AYNI board/turn/
+  // winner/score güncellemesini üretir — TEK fark, atış/isabet SESİNİN burada
+  // ÇALINMAMASI: bu ses zaten `opponentShots` büyüdüğünde (bkz. yukarıdaki
+  // reaktif useEffect) otomatik tetikleniyor; burada da çalınsaydı ses İKİ KEZ
+  // duyulurdu (bot modu tamamen yerel/tek istemci olduğu için).
+  useEffect(() => {
+    if (!isBot || isSpectator || !isPlaying || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    const timer = setTimeout(() => {
+      const botShots = roomData.shots?.[BOT_UID] || [];
+      const humanShips = roomData.ships?.[user.uid] || [];
+      const shot = chooseBotShot(botShots, humanShips);
+      if (!shot) return; // güvenlik: teorik olarak tahta tamamen dolamaz
+      const { row, col } = shot;
+      const hitShip = humanShips.find((ship) => ship.cells.some((c) => c.row === row && c.col === col));
+      const isHit = !!hitShip;
+      const updatedShots = [...botShots, { row, col, hit: isHit }];
+      const update = { [`shots.${BOT_UID}`]: updatedShots };
+
+      const updatedShotMap = {}; updatedShots.forEach((s) => { updatedShotMap[cellKey(s.row, s.col)] = s; });
+      const sunkCount = humanShips.filter((s) => isShipSunk(s, updatedShotMap)).length;
+      const isWin = sunkCount >= SHIP_DEFS.length;
+
+      if (isWin) {
+        update.winner = BOT_UID;
+        update.turn = null;
+        update.scores = { ...roomData.scores, [BOT_UID]: (roomData.scores?.[BOT_UID] || 0) + 1 };
+      } else {
+        update.turn = user.uid;
+      }
+      updateRoom(update);
+    }, 1500 + Math.random() * 1000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBot, roomData.turn, roomData.winner, roomData.status, isPlaying]);
 
   const requestRematch = async () => {
     if (isSpectator) return;
-    await updateDoc(roomRef, { rematchRequestedBy: user.uid });
+    if (isBot) {
+      // Bot MODU: onay beklemeye gerek yok (karşıda gerçek bir ikinci oyuncu
+      // yok) — yeni el DOĞRUDAN kurulur, bot filosu yeniden rastgele dizilip
+      // otomatik "hazır" işaretlenir.
+      await updateRoom({
+        setupPhase: true, ships: { [BOT_UID]: generateBotFleet() }, readyPlayers: { [BOT_UID]: true }, shots: {},
+        turn: null, winner: null, rematchRequestedBy: null,
+      });
+      return;
+    }
+    await updateRoom({ rematchRequestedBy: user.uid });
   };
   const acceptRematch = async () => {
     if (isSpectator) return;
-    await updateDoc(roomRef, {
+    await updateRoom({
       setupPhase: true, ships: {}, readyPlayers: {}, shots: {},
       turn: null, winner: null, rematchRequestedBy: null,
     });
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
-    await updateDoc(roomRef, { status: 'closed', closedBy: user.uid });
+    if (isBot) { leaveRoom(); return; }
+    await updateRoom({ status: 'closed', closedBy: user.uid });
   };
 
   if (isSpectator) {
@@ -772,6 +868,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
       )}
 
       <h2 className="text-2xl font-bold mb-1 text-slate-200 z-10 tracking-widest drop-shadow-md flex items-center gap-2"><Anchor className="w-6 h-6 text-sky-400" /> Amiral Battı</h2>
+      {/* Oyun tamamen şansa dayalı olduğu için zorluk seviyesi YOKTUR — tek,
+          standart bir bot (bkz. bot.js). */}
+      {isBot && <div className="text-xs font-bold text-sky-300 tracking-widest uppercase mb-1 z-10">BOTA KARŞI</div>}
       <p className="text-sm text-slate-400 mb-6 z-10">
         {roomData.setupPhase ? 'Gemilerini Yerleştirme Aşaması' : (roomData.winner ? 'Savaş Bitti' : 'Savaş Başladı!')}
       </p>

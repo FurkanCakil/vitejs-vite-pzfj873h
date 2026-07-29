@@ -36,6 +36,7 @@ import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS 
 import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
 import { isBotUid as isOkeyBotUid } from './games/okey101/botPlayers.js';
 import { BOT_UID as CONNECT4_BOT_UID, DIFFICULTY_LABELS as CONNECT4_DIFFICULTY_LABELS } from './games/connect4/bot.js';
+import { BOT_UID as BATTLESHIP_BOT_UID, generateBotFleet as generateBattleshipBotFleet } from './games/battleship/bot.js';
 
 // Bazı telefon tarayıcılarında (çerez/site verisi tamamen engelliyken ya da
 // depolama kotası dolduğunda) localStorage'a ERİŞMEK BİLE istisna fırlatır.
@@ -292,7 +293,7 @@ export default function App() {
   }, []);
 
   const startBotGame = (gameId, difficulty) => {
-    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla' && gameId !== 'connect4')) return;
+    if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla' && gameId !== 'connect4' && gameId !== 'amiralbatti')) return;
     let initialState;
 
     if (gameId === 'tavla') {
@@ -341,6 +342,22 @@ export default function App() {
         playerNames: { [user.uid]: nickname || 'Sen', [CONNECT4_BOT_UID]: `Bot (${CONNECT4_DIFFICULTY_LABELS[difficulty] || difficulty})` },
         scores: { [user.uid]: 0, [CONNECT4_BOT_UID]: 0 }, status: 'playing', board: createInitialConnect4Board(),
         turn: user.uid, startingPlayer: user.uid, winner: null, winningLine: null, lastMove: null, rematchRequestedBy: null,
+        abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+      };
+    } else if (gameId === 'amiralbatti') {
+      // Amiral Battı'da ZORLUK SEVİYESİ YOKTUR (oyun şansa dayalı) — tek,
+      // standart bir bot (bkz. battleship/bot.js). Bot filosu ODA KURULUR
+      // KURULMAZ (yerleştirme ekranı açılmadan ÖNCE) anında ve rastgele
+      // yerleştirilip otomatik "hazır" işaretlenir; insan "Hazır"a basınca
+      // (bkz. BattleshipGame.jsx#handleConfirmReady) savaş doğrudan başlar.
+      initialState = {
+        gameId, host: user.uid, players: [user.uid, BATTLESHIP_BOT_UID], spectators: [],
+        playerNames: { [user.uid]: nickname || 'Sen', [BATTLESHIP_BOT_UID]: 'Bot' },
+        scores: { [user.uid]: 0, [BATTLESHIP_BOT_UID]: 0 }, status: 'playing',
+        setupPhase: true,
+        ships: { [BATTLESHIP_BOT_UID]: generateBattleshipBotFleet() },
+        readyPlayers: { [BATTLESHIP_BOT_UID]: true },
+        shots: {}, turn: null, winner: null, rematchRequestedBy: null,
         abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
       };
     } else {
@@ -728,7 +745,7 @@ export default function App() {
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
               </div>
             )}
