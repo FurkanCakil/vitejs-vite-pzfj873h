@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X } from 'lucide-react';
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
+import { playBattleshipSound } from './battleshipSound.js';
 import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey } from './logic.js';
 
 // ============================================================
@@ -413,40 +414,52 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   const opponentShotMap = {}; opponentShots.forEach((s) => { opponentShotMap[cellKey(s.row, s.col)] = s; });
 
   const isShipSunk = (ship, shotMap) => ship.cells.every((c) => shotMap[cellKey(c.row, c.col)]?.hit);
-  const opponentSunkShipIds = new Set(opponentShips.filter((s) => isShipSunk(s, myShotMap)).map((s) => s.id));
+  // KULLANICI İSTEĞİ: Bir gemi tamamen battığında SALDIRAN oyuncuya bunu
+  // belli eden hiçbir şey (bildirim/ses/görsel dökülme) YOKTUR — tam olarak
+  // emin olabilmek için fazladan atış yapması gerekir. Bu yüzden
+  // `opponentShips` için ARTIK "kaçı battı" hesaplanıp REACT STATE'e/render'a
+  // yansıtılmıyor; sadece `handleShoot` içinde (aşağıda) KAZANMA koşulunu
+  // (tüm gemiler battı mı?) kontrol etmek için YEREL ve GEÇİCİ olarak
+  // hesaplanıyor, hiçbir görsel/ses tetiklemiyor.
+  //
+  // Kendi (mySunkShipIds) gemilerim İÇİN bu kısıtlama YOKTUR: kendi tahtamda
+  // zaten tüm hücrelerim (isabet/sağlam) her zaman görünür durumda — "hangi
+  // gemim battı" bilgisi zaten oradan okunabiliyor, ayrıca gizlenecek bir şey
+  // yok. Bu yüzden kendi batan gemim için toast/ses (bkz. aşağıdaki useEffect)
+  // KORUNUYOR.
   const mySunkShipIds = new Set(myShips.filter((s) => isShipSunk(s, opponentShotMap)).map((s) => s.id));
-
-  // Yeni batan gemi tespiti: her render'da sette olan gemileri önceki bilinen
-  // sete göre karşılaştırıp SADECE yeni battığı anda toast/ses tetikler
-  // (bkz. aşağıdaki bağımlılık dizisinde stabil string anahtarlar).
-  const opponentSunkKey = Array.from(opponentSunkShipIds).sort().join(',');
   const mySunkKey = Array.from(mySunkShipIds).sort().join(',');
-  const prevOpponentSunkRef = useRef(new Set());
   const prevMySunkRef = useRef(new Set());
-  useEffect(() => {
-    if (!isPlaying) return;
-    opponentSunkShipIds.forEach((id) => {
-      if (!prevOpponentSunkRef.current.has(id)) {
-        const ship = opponentShips.find((s) => s.id === id);
-        showToast(`Rakibin ${ship?.name || 'gemisi'} battı!`, 'emerald');
-        playSound('check');
-      }
-    });
-    prevOpponentSunkRef.current = opponentSunkShipIds;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opponentSunkKey, isPlaying]);
   useEffect(() => {
     if (!isPlaying) return;
     mySunkShipIds.forEach((id) => {
       if (!prevMySunkRef.current.has(id)) {
         const ship = myShips.find((s) => s.id === id);
         showToast(`Bir geminiz battı: ${ship?.name || ''}!`, 'red');
-        playSound('error');
+        playBattleshipSound('ownShipSunk');
       }
     });
     prevMySunkRef.current = mySunkShipIds;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mySunkKey, isPlaying]);
+
+  // Atış/vuruş sesleri: HEM atan (kendi tıklamasında ANINDA, bkz. handleShoot)
+  // HEM DE atılan oyuncu (kendi ekranında rakibin attığı taş Firestore'dan
+  // gelince) doğru sesi duymalı — eskiden SADECE atan taraf ses duyuyordu, bu
+  // hiç gerçekçi değildi. `opponentShots` (rakibin BANA attığı atışlar) uzunluğu
+  // arttığında (ve ilk yüklemede DEĞİL — bkz. `prev === null` koruması, aksi
+  // halde odaya girildiğinde geçmiş atışların sesi topluca çalınırdı) top sesi
+  // + kısa bir gecikmeyle isabet/ıska sesi çalınır.
+  const prevOpponentShotsLenRef = useRef(null);
+  useEffect(() => {
+    if (!isPlaying) { prevOpponentShotsLenRef.current = null; return; }
+    const prev = prevOpponentShotsLenRef.current;
+    prevOpponentShotsLenRef.current = opponentShots.length;
+    if (prev === null || opponentShots.length <= prev) return;
+    const lastShot = opponentShots[opponentShots.length - 1];
+    playBattleshipSound('shoot');
+    setTimeout(() => playBattleshipSound(lastShot?.hit ? 'hit' : 'miss'), 160);
+  }, [opponentShots.length, isPlaying]);
 
   const prevWinnerRef = useRef(null);
   useEffect(() => {
@@ -479,7 +492,11 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
       update.turn = opponentUid;
     }
 
-    playSound(isHit ? 'capture' : 'move');
+    // Gerçekçi ses akışı: ÖNCE top/tüfek sesi (atış anı), kısa bir gecikmeyle
+    // (mermi/güllenin hedefe ulaşma hissi) İSABET (patlama) ya da IŞKA (su
+    // sıçraması) sesi. Sunucu yazımı beklenmeden ANINDA çalınır (iyimser ses).
+    playBattleshipSound('shoot');
+    setTimeout(() => playBattleshipSound(isHit ? 'hit' : 'miss'), 160);
     try { await updateDoc(roomRef, update); } catch (err) { console.error('Amiral Battı atış hatası:', err); }
   };
 
@@ -635,26 +652,26 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   };
 
   // FAZ 2 — "Hedef Tahtası": SADECE bu tahtaya atış yapılabilir. Kendi
-  // atışlarımın sonucu + batırdığım gemilerin tam hatları burada belirginleşir.
-  // Batırılan rakip gemilerin TAM hatları radar üzerinde açığa çıkar; bunun
-  // için sadece batmış gemilerden bir segment haritası kurulur.
-  const sunkOpponentSegments = buildSegmentMap(opponentShips.filter((s) => opponentSunkShipIds.has(s.id)));
-
+  // atışlarımın sonucunu (isabet/ıska) gösterir.
+  //
+  // KULLANICI İSTEĞİ: Bir rakip gemisi TAMAMEN battığında bunu belli eden
+  // HİÇBİR ŞEY yoktur — ne tam gemi hattının açığa çıkması (eskiden
+  // `sunkOpponentSegments` ile burada çiziliyordu), ne "X battı!" ipucu, ne
+  // farklı bir patlama sesi (bkz. battleshipSound.js). Her isabet TAMAMEN AYNI
+  // görünür/duyulur — geminin son parçası mı yoksa ilk parçası mı olduğunu
+  // ayırt edemezsiniz, bu yüzden emin olmak için etrafına da atış yapmanız
+  // gerekir.
   const renderBattleTargetCell = (r, c) => {
     const key = cellKey(r, c);
     const shot = myShotMap[key];
-    const sunkSeg = sunkOpponentSegments[key];
     const clickable = isMyTurn && !shot;
     return (
       <div
         key={c}
         onClick={() => handleShoot(r, c)}
         className={`${CELL} bs-cell flex items-center justify-center transition-colors ${clickable ? 'bs-cell-live bs-crosshair cursor-pointer' : 'cursor-default'}`}
-        title={sunkSeg ? `${sunkSeg.name} battı!` : undefined}
       >
-        {/* Batan gemi radar üzerinde hurda gövdesiyle görünür hale gelir. */}
-        {sunkSeg && <ShipHull seg={sunkSeg} state="sunk" />}
-        {shot && <ShotMarker hit={!!shot.hit} sunk={!!sunkSeg} />}
+        {shot && <ShotMarker hit={!!shot.hit} />}
       </div>
     );
   };
