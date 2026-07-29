@@ -126,6 +126,37 @@ const LONG_PRESS_MS = 300;
 // eşiğine göre yapılır.
 const DRAG_MOVE_THRESHOLD = 6;
 
+// KÖK NEDEN DÜZELTMESİ (bota karşı oynarken atışların/gemilerin hiç
+// görünmemesi): Bu dosyadaki `handleShoot`/`handleConfirmReady` gibi
+// fonksiyonlar Firestore'un "alan yolu" (field path) sözdizimini kullanır —
+// ör. `{ 'ships.<uid>': [...] }`, gerçek bir odada `updateDoc` bunu otomatik
+// olarak `roomData.ships.<uid>`'e YAZAR (iç içe alanı günceller). Bot modunda
+// ise `updateRoom` bu patch'i SADECE `{...prev, ...patch}` ile YÜZEYSEL
+// birleştiriyordu — bu da `roomData`'ya "ships.<uid>" adında, İÇİNDE NOKTA
+// OLAN, tamamen AYRI/ÇÖP bir üst-seviye alan ekliyordu; gerçek `ships`/`shots`/
+// `readyPlayers` nesneleri HİÇ değişmiyordu. Sonuç: insanın gemileri
+// `roomData.ships[insan]`'a hiç yazılmıyordu (bot her zaman "ıska" sayıyordu)
+// ve HER İKİ tarafın da atışları (`roomData.shots[...]`) hiç kalıcı olmuyordu
+// — yani ne kendi vuruşlarınız ne de botun vuruşları ekranda görünüyordu.
+// Bu yardımcı, Firestore'un nokta-yolu davranışını YEREL nesnede DOĞRU
+// şekilde (iç içe alanı gerçekten güncelleyerek) taklit eder.
+function applyDotPathPatch(prev, patch) {
+  const next = { ...prev };
+  Object.entries(patch).forEach(([key, value]) => {
+    if (!key.includes('.')) { next[key] = value; return; }
+    const parts = key.split('.');
+    const rootKey = parts[0];
+    next[rootKey] = { ...(next[rootKey] || {}) };
+    let cursor = next[rootKey];
+    for (let i = 1; i < parts.length - 1; i++) {
+      cursor[parts[i]] = { ...(cursor[parts[i]] || {}) };
+      cursor = cursor[parts[i]];
+    }
+    cursor[parts[parts.length - 1]] = value;
+  });
+  return next;
+}
+
 // FAZ 3: Tek oyunculu "Bota Karşı" modu (bkz. bot.js). Bot yerleşimi/atışları
 // tamamen ŞANSA dayalı standart (zorluk seviyesiz) bir Hunt & Target
 // algoritmasıyla çalışır. `isBot` true iken TÜM Firestore yazımları
@@ -142,7 +173,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // gerçek odalardaki (host/misafir) eşzamanlılık/transaction mantığına HİÇ
   // dokunulmamış olur.
   const updateRoom = async (patch) => {
-    if (isBot) { setLocalRoomData((prev) => ({ ...prev, ...patch })); return; }
+    if (isBot) { setLocalRoomData((prev) => applyDotPathPatch(prev, patch)); return; }
     await updateDoc(roomRef, patch);
   };
 
@@ -1025,7 +1056,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
             {roomData.setupPhase && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/50 rounded-xl">
                 <Lock className="w-8 h-8 text-slate-500" />
-                <p className="text-xs font-bold text-slate-400 text-center px-4">Faz 2'de (Atış Aşaması) Aktif Olacak</p>
+                <p className="text-xs font-bold text-slate-400 text-center px-4">
+                  {isOpponentReady ? 'Rakibiniz gemilerini yerleştirdi' : 'Rakibiniz gemilerini yerleştiriyor'}
+                </p>
               </div>
             )}
           </div>

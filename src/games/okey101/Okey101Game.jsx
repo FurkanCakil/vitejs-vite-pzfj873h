@@ -1825,7 +1825,6 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const isTackFlashing = (uid, groupIndex) => !!activeTackHint?.spots.some((s) => s.uid === uid && s.groupIndex === groupIndex);
 
   // 5. madde kuralları — arayüz butonlarının açık/kapalı olmasını belirler.
-  const iOpenedWithPairs = !!roomData.openedWithPairs?.[user.uid];
   const myCanLayPairs = canPlayerLayPairs(user.uid, roomData.hasOpened, roomData.openedWithPairs);
   const myCanLayMelds = canPlayerLayMelds(user.uid, roomData.openedWithPairs);
   const pairsButtonLabel = myHasOpened ? 'Çift İşle' : 'Çift Aç';
@@ -2200,15 +2199,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           yatay) modda eskisi gibi ayrı ve tam genişlikte kalır. */}
       {isCompact && openedHandsPanel}
 
-      {/* NOT: "Masada çift açan bir oyuncu var…" bilgilendirmesi kullanıcı
-          isteğiyle kaldırıldı (kural zaten "Çift İşle" butonunun açık
-          olmasından anlaşılıyordu). Sadece KENDİ elini çiftle açan oyuncuya
-          gösterilen, ceza sonucunu da içeren uyarı kaldı. */}
-      {myHasOpened && iOpenedWithPairs && !isCompact && (
-        <div className="text-[10px] sm:text-[11px] text-slate-500 text-center px-2">
-          Çift açtın: per (seri/set) açamazsın, sadece kalan çiftlerini sürebilir ve tek tek taş işleyebilirsin. Tur sonunda elinde kalan taşların 2 KATI ceza yazılır.
-        </div>
-      )}
+      {/* NOT: "Masada çift açan bir oyuncu var…" bilgilendirmesi VE "Çift
+          açtın: per açamazsın..." ipucu kullanıcı isteğiyle kaldırıldı —
+          kural zaten butonların açık/kapalı olmasından (Seri Aç/Çift İşle)
+          anlaşılıyor, ayrıca bir metin ipucuna gerek yok. */}
 
       {!isCompact && (
         <button onClick={leaveRoom} className="text-xs text-red-400 hover:text-red-300 border border-red-500/40 hover:bg-red-500/10 px-4 py-2 rounded-lg font-medium transition-colors">Odadan Çık</button>
