@@ -48,6 +48,22 @@ const safeStorage = {
   remove(key) { try { localStorage.removeItem(key); } catch { /* yok say */ } },
 };
 
+// KULLANICI İSTEĞİ: "aktif oda" kaydı eskiden `localStorage`'daydı — bu,
+// TARAYICI KAPANIP AÇILSA/yeni bir sekmede site linkine TEKRAR tıklansa BİLE
+// kalıcı kaldığı için, kullanıcı paylaşım linkine (ya da ana sayfa
+// kısayoluna) sıfırdan her tıkladığında doğrudan lobiye değil, bu cihazda
+// EN SON oynanan (bitmiş olsa bile) odaya geri düşürüyordu. `sessionStorage`
+// ise sekme/oturum kapanınca kendiliğinden temizlenir ama AYNI sekmede
+// (ör. kazara F5 ile) sayfa yenilendiğinde hâlâ hayatta kalır — yani "kazara
+// yenilemede kaldığın odaya dön" (bağlantı kopması koruması) davranışı
+// KORUNUR, sadece "linke/kısayola sıfırdan tıklayınca eski odaya düş" hatası
+// giderilir.
+const sessionRoomStorage = {
+  get() { try { return sessionStorage.getItem('activeRoom'); } catch { return null; } },
+  set(value) { try { sessionStorage.setItem('activeRoom', value); } catch { /* yok say */ } },
+  remove() { try { sessionStorage.removeItem('activeRoom'); } catch { /* yok say */ } },
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -72,7 +88,7 @@ export default function App() {
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
-  // localStorage'dan geri yüklenen (yani kullanıcının bu oturumda bilerek
+  // sessionStorage'dan geri yüklenen (yani kullanıcının bu oturumda bilerek
   // girmediği) oda kodu. Bkz. aşağıdaki onSnapshot içindeki "bayat oda" koruması.
   const restoredRoomRef = useRef(null);
   const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
@@ -164,7 +180,7 @@ export default function App() {
       setUser(currentUser);
       setLoadingAuth(false);
       let savedCode = null;
-      savedCode = safeStorage.get('activeRoom');
+      savedCode = sessionRoomStorage.get();
       if (savedCode && currentUser) { restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
 
       // Firestore BAĞLANTISINI ERKENDEN ISITIR: SDK'nın gerçek ağ kanalını
@@ -186,7 +202,7 @@ export default function App() {
 
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
-    setDisconnectCountdown(null); setSpectatePrompt(null); safeStorage.remove('activeRoom');
+    setDisconnectCountdown(null); setSpectatePrompt(null); sessionRoomStorage.remove();
     setIsBotGame(false);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
@@ -241,7 +257,7 @@ export default function App() {
           }
           restoredRoomRef.current = null;
           if (data.status === 'waiting' && data.gameId !== 'okey101' && data.players?.length === 2 && data.host === user.uid) { updateDoc(roomRef, { status: 'playing' }).catch(()=>{}); }
-          setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); safeStorage.set('activeRoom', roomCode);
+          setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); sessionRoomStorage.set(roomCode);
         }
       } else { leaveRoomLocal(); }
     });
@@ -402,7 +418,7 @@ export default function App() {
     // kalmış eski bir oda kodu, bot masası açılırken devreye girip oyunu
     // ezmesin diye burada kesin olarak temizlenir.
     restoredRoomRef.current = null;
-    safeStorage.remove('activeRoom');
+    sessionRoomStorage.remove();
 
     setBotDifficulty(difficulty);
     setIsBotGame(true);
@@ -473,7 +489,7 @@ export default function App() {
          // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
          // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
          setRoomData(initialState); setCurrentView('room');
-         setRoomCode(newCode); safeStorage.set('activeRoom', newCode); setDisconnectCountdown(null);
+         setRoomCode(newCode); sessionRoomStorage.set(newCode); setDisconnectCountdown(null);
        } catch (err) {
          setErrorMsg("Oda kurulamadı.");
        }
@@ -560,13 +576,13 @@ export default function App() {
       // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
       // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
       if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
-      setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
+      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
       
     } catch (err) { 
       if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
       else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
       else if (err.message === "full") setSpectatePrompt(cleanCode);
-      else if (err.message === "already-spectator") { setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); setJoinCodeInput(''); }
+      else if (err.message === "already-spectator") { setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); }
       else setErrorMsg("Odaya katılırken bir hata oluştu.");
     }
   };
@@ -583,7 +599,7 @@ export default function App() {
         const newSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
         transaction.update(roomRef, { spectators: newSpectators });
       });
-      setRoomCode(cleanCode); safeStorage.set('activeRoom', cleanCode); 
+      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); 
       setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
     } catch (err) { setErrorMsg("Seyirci olarak bağlanılamadı."); }
   };
@@ -640,6 +656,47 @@ export default function App() {
     }
     leaveRoomLocal();
   };
+
+  // KULLANICI İSTEĞİ: lobiden bir oyuna/odaya girildiğinde tarayıcının GERİ
+  // tuşu hiçbir şey yapmıyordu — bu sadece bir React state değişimi
+  // (`currentView`), gerçek bir sayfa/URL geçişi (history girdisi) DEĞİL.
+  // Aşağıdaki üç parça bunu düzeltir: odaya girilince tarayıcı geçmişine BİR
+  // girdi eklenir (pushState); GERİ tuşuna basılınca (popstate) bu girdi
+  // "Odadan Çık" butonuyla AYNI şekilde ele alınır (leaveRoom — sadece lobiyi
+  // göstermek yetmez, rakibe/sunucuya doğru bildirim gitmesi gerekir);
+  // odadan BUTONLA/otomatik (rakip odayı kapattı vb.) çıkıldığında ise geride
+  // kalan o "oda" geçmiş girdisi kendiliğinden geri alınır — yoksa geri tuşu
+  // kullanıcıyı zaten geçersiz/boş bir oda durumuna götürürdü.
+  const leaveRoomRef = useRef(null);
+  leaveRoomRef.current = leaveRoom;
+  const historyRoomPushedRef = useRef(false);
+
+  useEffect(() => {
+    window.history.replaceState({ view: 'lobby' }, '');
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (roomStateRef.current.currentView === 'room') {
+        historyRoomPushedRef.current = false;
+        leaveRoomRef.current?.();
+      } else {
+        historyRoomPushedRef.current = false;
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (currentView === 'room' && !historyRoomPushedRef.current) {
+      window.history.pushState({ view: 'room' }, '');
+      historyRoomPushedRef.current = true;
+    } else if (currentView === 'lobby' && historyRoomPushedRef.current) {
+      historyRoomPushedRef.current = false;
+      window.history.back();
+    }
+  }, [currentView]);
 
   const copyToClipboard = async () => {
     try {

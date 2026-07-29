@@ -172,7 +172,20 @@ function readyChime(ac) {
   });
 }
 
-const SOUNDS = { hit: explosionHit, miss: splashMiss, ownShipSunk, ready: readyChime };
+// --- YERLEŞTİRME/TAŞIMA/ÇEVİRME: gemi tahtaya oturuyor ----------------------
+// KULLANICI İSTEĞİ: eskiden gemi yerleştirirken/taşırken/çevirirken jenerik
+// (tüm oyunlarda paylaşılan) `playSound('move')` çalınıyordu — 400Hz'den
+// 100Hz'e inen sivri bir sinüs "blip"i, kullanıcıya rahatsız edici geldi. Bunun
+// yerine gemi teması ile uyumlu, kısa ve yumuşak bir "metal gövde tahtaya
+// oturuyor" sesi: hafif bir tık (kısa bant geçişli gürültü) + alçak/yumuşak
+// bir "tok" (thump). explosionHit/splashMiss'e göre HACİMCE çok daha kısık.
+function placeThud(ac) {
+  const t0 = ac.currentTime;
+  noiseBurst(ac, t0, { type: 'bandpass', freq: 2000, freqEnd: 850, q: 2.4, vol: 0.16, dur: 0.045 });
+  thump(ac, t0 + 0.006, { freq: 150, vol: 0.32, dur: 0.11 });
+}
+
+const SOUNDS = { hit: explosionHit, miss: splashMiss, ownShipSunk, ready: readyChime, place: placeThud };
 
 export function playBattleshipSound(type) {
   try {

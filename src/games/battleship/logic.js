@@ -53,3 +53,25 @@ export function canPlaceShip(existingShips, candidateCells, excludeShipId = null
 export function allShipsPlaced(placedShips) {
   return SHIP_DEFS.every((def) => placedShips.some((s) => s.id === def.id));
 }
+
+// KULLANICI İSTEĞİ: Gemiyi tıklanan/bırakılan hücreye göre nereye
+// "çıpalayacağımızı" (origin) hesaplar. TEK sayılı uzunluktaki gemilerde
+// (5, 3, 3) tam bir orta hücre olduğu için tıklanan hücre geminin ORTASI
+// sayılır. ÇİFT sayılı gemilerde (4, 2) tam ortaya denk gelen tek bir hücre
+// olmadığından eskiden olduğu gibi tıklanan hücre geminin SOL/ÜST UCU olarak
+// kullanılmaya devam eder.
+export function anchorOrigin(anchorCell, orientation, length) {
+  if (length % 2 === 0) return anchorCell;
+  const half = (length - 1) / 2;
+  return orientation === 'H'
+    ? { row: anchorCell.row, col: anchorCell.col - half }
+    : { row: anchorCell.row - half, col: anchorCell.col };
+}
+
+// Bir geminin hücre dizisindeki "merkez" indeksi — döndürme sırasında bu
+// hücreyi SABİT tutarak gemiyi "ortasına göre" çevirmek için kullanılır
+// (bkz. BattleshipGame.jsx#rotateInPlace). Çift uzunluklarda tam ortadaki
+// hücre olmadığından bir hücre sola/üste yuvarlanır.
+export function centerCellIndex(length) {
+  return Math.floor((length - 1) / 2);
+}

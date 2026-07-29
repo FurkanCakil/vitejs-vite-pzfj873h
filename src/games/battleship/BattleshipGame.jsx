@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X } from 'lucide-react';
+import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X, Trash2 } from 'lucide-react';
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { playBattleshipSound } from './battleshipSound.js';
-import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey } from './logic.js';
+import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey, anchorOrigin, centerCellIndex } from './logic.js';
 import { BOT_UID, generateBotFleet, chooseBotShot } from './bot.js';
 
 // ============================================================
@@ -122,9 +122,14 @@ const ShotMarker = ({ hit, sunk = false }) => (hit ? (
 // gecikme SADECE dokunmatik girişte uygulanır.
 const LONG_PRESS_MS = 300;
 // Basılı tutulan bir gemiyi SÜRÜKLEYEREK TAŞIMA ile sadece TIKLAYIP (hareket
-// etmeden) yerleşimini İPTAL ETME (ele alma) arasındaki ayrım bu piksel
-// eşiğine göre yapılır.
-const DRAG_MOVE_THRESHOLD = 6;
+// etmeden) Döndür/Kaldır menüsünü AÇMA arasındaki ayrım bu piksel eşiğine
+// göre yapılır. KULLANICI RAPORU: özellikle 2 hücreli küçük gemilerde tıklama
+// "bazen çalışmıyordu" — kök neden, dokunmatik ekranda parmağın basılı
+// tutulurken kaçınılmaz ufak titreşiminin (birkaç piksel) eski eşiği (4px)
+// aşıp tıklamayı sessizce bir "sürükleme"ye çevirmesiydi; sürükleme de hücre
+// değiştirmediği için (bkz. handleCellPointerUp'taki `!d.origin` düşüşü)
+// hiçbir şey olmuyordu. Eşik büyütülerek bu yanlış sınıflandırma azaltılır.
+const DRAG_MOVE_THRESHOLD = 10;
 
 // KÖK NEDEN DÜZELTMESİ (bota karşı oynarken atışların/gemilerin hiç
 // görünmemesi): Bu dosyadaki `handleShoot`/`handleConfirmReady` gibi
@@ -209,6 +214,13 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   const [hoverOrigin, setHoverOrigin] = useState(null);
   const [shakeShipId, setShakeShipId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  // KULLANICI İSTEĞİ: yerleştirilmiş bir gemiye (hareket etmeden) tıklandığında
+  // artık DOĞRUDAN ele alınmıyor — bunun yerine "Döndür"/"Kaldır" seçeneklerini
+  // sunan küçük bir menü açılır (bkz. openShipMenu / handleCellPointerUp).
+  const [shipMenu, setShipMenu] = useState(null); // { shipId, x, y }
+  // Yerleştirilmiş bir gemi sürüklenip alt taraftaki gemi ENVANTERİ üzerine
+  // getirildiğinde (bkz. handleCellPointerMove) görsel geri bildirim için.
+  const [dragOverInventory, setDragOverInventory] = useState(false);
 
   // Bir sonraki el (rematch — hem bot hem gerçek çok oyunculu modda) sunucuda
   // `ships`'i sıfırlar, ama `placedShips`'in `useState` başlangıç değeri
@@ -222,6 +234,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       setPlacedShips(roomData.ships?.[user.uid] || []);
       setSelectedShipId(null);
       setHoverOrigin(null);
+      setShipMenu(null);
     }
     prevSetupPhaseRef.current = roomData.setupPhase;
   }, [roomData.setupPhase, roomData.ships, user.uid]);
@@ -240,7 +253,11 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     if (setupLocked || !selectedShipId || !hoverOrigin) return null;
     const def = SHIP_DEFS.find((d) => d.id === selectedShipId);
     if (!def) return null;
-    const cells = getShipCells(hoverOrigin, pendingOrientation, def.length);
+    // KULLANICI İSTEĞİ: imlecin/parmağın altındaki hücre artık geminin SOL
+    // UCU değil — tek sayılı gemilerde (5,3,3) ORTASI sayılır (bkz.
+    // logic.js#anchorOrigin); çift sayılı gemilerde (4,2) eskisi gibi sol uç.
+    const origin = anchorOrigin(hoverOrigin, pendingOrientation, def.length);
+    const cells = getShipCells(origin, pendingOrientation, def.length);
     const { valid } = canPlaceShip(placedShips, cells);
     return { cells, valid };
   }, [setupLocked, selectedShipId, hoverOrigin, pendingOrientation, placedShips]);
@@ -265,14 +282,17 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   }, [dragMove, placedShips]);
   const dragPreviewSet = useMemo(() => new Set((dragPreviewInfo?.cells || []).map((c) => cellKey(c.row, c.col))), [dragPreviewInfo]);
 
+  const openShipMenu = (shipId, x, y) => setShipMenu({ shipId, x, y });
+
   // Bir hücreye basıldığında: üzerinde YERLEŞTİRİLMİŞ bir gemi varsa taşıma
   // sürüklemesini başlatır (hareket etmeden bırakılırsa `handleCellPointerUp`
-  // bunu basit bir TIKLAMA sayıp gemiyi eski usul ele alır/iptal eder — bkz.
-  // pickUpShip). Hücre BOŞSA ve elde seçili bir gemi varsa (yerleştirme akışı)
-  // SADECE dokunmatik girişte, kısa bir gecikmeyle önizlemeyi (`hoverOrigin`)
-  // açar — masaüstünde fareyle zaten anında (mouseenter) açılıyor.
+  // bunu basit bir TIKLAMA sayıp Döndür/Kaldır menüsünü açar — bkz.
+  // openShipMenu). Hücre BOŞSA ve elde seçili bir gemi varsa (yerleştirme
+  // akışı) SADECE dokunmatik girişte, kısa bir gecikmeyle önizlemeyi
+  // (`hoverOrigin`) açar — masaüstünde fareyle zaten anında (mouseenter) açılıyor.
   const handleCellPointerDown = (e, row, col) => {
     if (setupLocked) return;
+    setShipMenu(null);
     const occupantId = occupancy[cellKey(row, col)];
     if (occupantId) {
       // Sağ tık (contextmenu) SADECE çevirmeye ayrılmıştır — bkz.
@@ -283,7 +303,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       const grabIndex = ship.cells.findIndex((cell) => cell.row === row && cell.col === col);
       shipDragRef.current = {
         kind: 'move', shipId: ship.id, orientation: ship.orientation, length: ship.length, grabIndex,
-        startX: e.clientX, startY: e.clientY, moved: false, origin: null,
+        startX: e.clientX, startY: e.clientY, moved: false, origin: null, overInventory: false,
       };
       e.preventDefault();
       window.getSelection?.()?.removeAllRanges?.();
@@ -311,6 +331,17 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       if (!d.moved && movedNow) d.moved = true;
       if (!d.moved) return;
       const el = document.elementFromPoint(e.clientX, e.clientY);
+      // KULLANICI İSTEĞİ: yerleştirilmiş bir gemi sürüklenip alt taraftaki
+      // gemi ENVANTERİ üzerine getirilirse (bkz. render'daki
+      // `data-ship-inventory`) tahtadan kaldırılabilsin — bırakıldığında
+      // (handleCellPointerUp) filodan silinir.
+      const overInv = !!el?.closest('[data-ship-inventory]');
+      if (overInv !== d.overInventory) {
+        d.overInventory = overInv;
+        setDragOverInventory(overInv);
+        if (overInv) { d.origin = null; setDragMove(null); }
+      }
+      if (overInv) return;
       const cellEl = el?.closest('[data-row]');
       if (!cellEl) return;
       const hr = Number(cellEl.dataset.row); const hc = Number(cellEl.dataset.col);
@@ -332,12 +363,19 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     if (!d) return;
     if (d.kind === 'longPressPreview') { if (d.timer) clearTimeout(d.timer); return; }
     setDragMove(null);
-    if (!d.moved) { pickUpShip(d.shipId); return; } // basit tıklama: eski davranış (ele al/iptal et)
-    if (!d.origin) return;
+    setDragOverInventory(false);
+    if (d.overInventory) { setPlacedShips((prev) => prev.filter((s) => s.id !== d.shipId)); return; } // envantere bırakıldı: kaldır
+    // KÖK NEDEN DÜZELTMESİ: eskiden sadece `!d.moved` iken menü/ele alma
+    // tetiklenirdi; küçük (2 hücreli) gemilerde dokunmatik titreşim genelde
+    // eşiği aşıp `d.moved = true` yapıyordu AMA parmak asla farklı bir
+    // hücreye geçmediği (`d.origin` hiç set edilmediği) için tıklama sessizce
+    // hiçbir şey yapmadan kayboluyordu. Artık `d.origin` hâlâ boşsa (gerçek
+    // bir hücre değişikliği hiç olmadıysa) bu da bir TIKLAMA sayılır.
+    if (!d.moved || !d.origin) { openShipMenu(d.shipId, d.startX, d.startY); return; }
     const cells = getShipCells(d.origin, d.orientation, d.length);
     const { valid } = canPlaceShip(placedShips, cells, d.shipId);
     if (!valid) { flashInvalid(d.shipId); return; } // geçersizse gemi eski yerinde kalır
-    playSound('move');
+    playBattleshipSound('place');
     setPlacedShips((prev) => prev.map((s) => (s.id === d.shipId ? { ...s, origin: d.origin, cells } : s)));
   };
 
@@ -346,6 +384,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     if (d?.timer) clearTimeout(d.timer);
     shipDragRef.current = null;
     setDragMove(null);
+    setDragOverInventory(false);
   };
 
   const flashInvalid = (shipId) => {
@@ -354,19 +393,27 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setTimeout(() => setShakeShipId(null), 350);
   };
 
-  const attemptPlace = (shipId, origin, orientation) => {
+  // `anchorCell`: kullanıcının tıkladığı/bıraktığı hücre. KULLANICI İSTEĞİ:
+  // tek sayılı uzunluktaki gemilerde (5,3,3) bu hücre geminin ORTASI, çift
+  // sayılı gemilerde (4,2) eskisi gibi SOL/ÜST UCU sayılır (bkz.
+  // logic.js#anchorOrigin).
+  const attemptPlace = (shipId, anchorCell, orientation) => {
     if (setupLocked) return;
     const def = SHIP_DEFS.find((d) => d.id === shipId);
     if (!def) return;
+    const origin = anchorOrigin(anchorCell, orientation, def.length);
     const cells = getShipCells(origin, orientation, def.length);
     const { valid } = canPlaceShip(placedShips, cells);
     if (!valid) { flashInvalid(shipId); return; }
-    playSound('move');
+    playBattleshipSound('place');
     setPlacedShips((prev) => [...prev, { id: def.id, name: def.name, length: def.length, orientation, origin, cells }]);
     setSelectedShipId(null);
     setHoverOrigin(null);
   };
 
+  // "Kaldır" (bkz. şipMenu): gemiyi tahtadan söker ve elde tutulan (seçili)
+  // gemi olarak geri verir — kullanıcı hemen başka bir hücreye tıklayıp
+  // yeniden yerleştirebilir.
   const pickUpShip = (shipId) => {
     if (setupLocked) return;
     const ship = placedShips.find((s) => s.id === shipId);
@@ -376,24 +423,30 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setPendingOrientation(ship.orientation);
   };
 
+  // "Döndür" (bkz. shipMenu / çift-tık / sağ-tık): KULLANICI İSTEĞİ — gemi
+  // artık bir UCUNDAN değil ORTASINDAN döner: döndürmeden önceki/sonraki
+  // hücre dizisinde `centerCellIndex` ile bulunan "merkez" hücre SABİT kalır.
   const rotateInPlace = (shipId) => {
     if (setupLocked) return;
     const ship = placedShips.find((s) => s.id === shipId);
     if (!ship) return;
     const newOrientation = ship.orientation === 'H' ? 'V' : 'H';
-    const newCells = getShipCells(ship.origin, newOrientation, ship.length);
+    const idx = centerCellIndex(ship.length);
+    const pivot = ship.cells[idx];
+    const newOrigin = newOrientation === 'H' ? { row: pivot.row, col: pivot.col - idx } : { row: pivot.row - idx, col: pivot.col };
+    const newCells = getShipCells(newOrigin, newOrientation, ship.length);
     const { valid } = canPlaceShip(placedShips, newCells, ship.id);
     if (!valid) { flashInvalid(shipId); return; }
-    playSound('move');
-    setPlacedShips((prev) => prev.map((s) => (s.id === ship.id ? { ...s, orientation: newOrientation, cells: newCells } : s)));
+    playBattleshipSound('place');
+    setPlacedShips((prev) => prev.map((s) => (s.id === ship.id ? { ...s, orientation: newOrientation, origin: newOrigin, cells: newCells } : s)));
   };
 
   const handleCellClick = (row, col) => {
     if (setupLocked) return;
     const occupantId = occupancy[cellKey(row, col)];
     // Dolu hücreler artık basılı-tutma/sürükleme (pointer) akışı tarafından
-    // yönetiliyor — bkz. handleCellPointerDown/Up (tıklama = ele al/iptal,
-    // sürükleme = taşı). Buradan hiçbir şey tetiklenmemeli.
+    // yönetiliyor — bkz. handleCellPointerDown/Up (tıklama = Döndür/Kaldır
+    // menüsünü aç, sürükleme = taşı). Buradan hiçbir şey tetiklenmemeli.
     if (occupantId) return;
     if (selectedShipId) attemptPlace(selectedShipId, { row, col }, pendingOrientation);
   };
@@ -429,10 +482,12 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setPlacedShips([]);
     setSelectedShipId(null);
     setHoverOrigin(null);
+    setShipMenu(null);
   };
 
   const handleConfirmReady = async () => {
     if (setupLocked || !readyToConfirm) return;
+    setShipMenu(null);
     setIsSaving(true);
     try {
       if (isBot) {
@@ -758,7 +813,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         onPointerUp={handleCellPointerUp}
         onPointerCancel={handleCellPointerCancel}
         className={`${CELL} bs-cell ${!setupLocked && !occupantId ? 'bs-cell-live' : ''} ${occupantId ? 'touch-none' : ''} transition-colors ${previewCls} ${setupLocked ? 'cursor-default' : (occupantId ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')} ${shaking ? 'animate-[shake_0.35s_ease-in-out] z-20' : ''}`}
-        title={occupantId ? 'Taşımak için basılı tutup sürükle — çevirmek için çift tıkla / sağ tıkla' : undefined}
+        title={occupantId ? 'Tıkla: döndür/kaldır seçenekleri — taşımak için basılı tutup sürükle' : undefined}
       >
         {seg && !hiddenForDrag && <ShipHull seg={seg} state="intact" placing />}
       </div>
@@ -919,6 +974,34 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         </div>
       )}
 
+      {/* KULLANICI İSTEĞİ: Yerleştirilmiş bir gemiye (hareket etmeden) tıklanınca
+          eskiden doğrudan ele alınıyordu — artık "Döndür"/"Kaldır" seçeneklerini
+          sunan bu küçük menü açılır. Arka plandaki tam-ekran şeffaf katman,
+          menü dışına yapılan HERHANGİ bir dokunuşta menüyü kapatır. */}
+      {shipMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={() => setShipMenu(null)} />
+          <div
+            className="fixed z-50 flex items-center gap-1 bg-slate-800 border border-cyan-500/60 rounded-xl shadow-2xl p-1.5"
+            style={{ left: shipMenu.x, top: shipMenu.y, transform: 'translate(-50%, -115%)' }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => { rotateInPlace(shipMenu.shipId); setShipMenu(null); }}
+              className="flex items-center gap-1.5 text-xs font-bold bg-slate-700 hover:bg-cyan-600/40 border border-slate-600 hover:border-cyan-400 px-3 py-2 rounded-lg text-slate-100 transition-colors"
+            >
+              <RotateCw className="w-4 h-4" /> Döndür
+            </button>
+            <button
+              onClick={() => { pickUpShip(shipMenu.shipId); setShipMenu(null); }}
+              className="flex items-center gap-1.5 text-xs font-bold bg-slate-700 hover:bg-rose-600/40 border border-slate-600 hover:border-rose-400 px-3 py-2 rounded-lg text-slate-100 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" /> Kaldır
+            </button>
+          </div>
+        </>
+      )}
+
       <h2 className="text-2xl font-bold mb-1 text-slate-200 z-10 tracking-widest drop-shadow-md flex items-center gap-2"><Anchor className="w-6 h-6 text-sky-400" /> Amiral Battı</h2>
       {/* Oyun tamamen şansa dayalı olduğu için zorluk seviyesi YOKTUR — tek,
           standart bir bot (bkz. bot.js). */}
@@ -994,9 +1077,19 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
             </div>
           )}
 
-          {/* GEMİ ENVANTERİ — sadece yerleştirme aşamasında */}
+          {/* GEMİ ENVANTERİ — sadece yerleştirme aşamasında. `data-ship-inventory`
+              ile işaretlenir: yerleştirilmiş bir gemi sürüklenip buraya
+              bırakılırsa (bkz. handleCellPointerMove/Up) tahtadan kaldırılır. */}
           {roomData.setupPhase && (
-            <div className="w-full flex flex-col gap-2">
+            <div
+              data-ship-inventory
+              className={`w-full flex flex-col gap-2 rounded-xl transition-all ${dragOverInventory ? 'ring-2 ring-rose-400 bg-rose-500/10 p-1.5 -m-1.5' : ''}`}
+            >
+              {dragOverInventory && (
+                <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-rose-300 py-1">
+                  <Trash2 className="w-3.5 h-3.5" /> Bırak, kaldırılsın
+                </div>
+              )}
               {SHIP_DEFS.map((def) => {
                 const isPlaced = placedShips.some((s) => s.id === def.id);
                 const isSelected = selectedShipId === def.id;
