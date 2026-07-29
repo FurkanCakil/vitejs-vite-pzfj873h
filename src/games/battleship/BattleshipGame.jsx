@@ -20,6 +20,110 @@ import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShips
 // için Cloud Functions / güvenlik kuralları ile ayrı bir alt-koleksiyon
 // gerekir; bu projede hiçbir oyun (şu ana kadar) böyle bir arka uca sahip
 // değil.
+// Tek bir gemi parçası: yukarıdan bakılan METALİK savaş gemisi gövdesi.
+// Hücre kenarlarını (inset -1px) örterek yan parçayla dikişsiz birleşir.
+//   state: 'intact' | 'hit' | 'sunk'
+//
+// PERFORMANS/GÖRSEL HATA DÜZELTMESİ: Bu bileşen eskiden BattleshipGame'in
+// İÇİNDE tanımlıydı — yani BattleshipGame her yeniden render olduğunda
+// (ör. yeni bir gemi yerleştirildiğinde) `ShipHull` YENİDEN OLUŞTURULAN bir
+// fonksiyondu. React, bir bileşenin "tipini" (function referansını) önceki
+// render'la KARŞILAŞTIRIR; tip değiştiyse eski DOM düğümünü SÖKÜP YENİDEN
+// TAKAR (unmount+mount). Sonuç: yeni bir gemi yerleştirildiğinde DAHA ÖNCE
+// yerleştirilmiş TÜM gemiler de yeniden mount ediliyor, bu da her birinin
+// "yerleşme" (bs-place) animasyonunu BAŞTAN oynatıyordu — kullanıcının tarif
+// ettiği "kareler açılıp kapanıyor" (flicker) tam olarak buydu. Modül
+// seviyesine taşınınca fonksiyon referansı HER RENDER'DA SABİT kalır, React
+// aynı DOM düğümünü korur, animasyon sadece GERÇEKTEN yeni yerleştirilen
+// gemide bir kez oynar.
+const ShipHull = ({ seg, state = 'intact', placing = false }) => {
+  const horiz = seg.orientation === 'H';
+  // Gövde gradyanı gemi EKSENİNE DİK uygulanır: üstte güverte ışığı, altta
+  // gölge -> yuvarlak/hacimli bir gövde izlenimi.
+  const steel = horiz
+    ? 'linear-gradient(to bottom, #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)'
+    : 'linear-gradient(to right,  #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)';
+  const burnt = horiz
+    ? 'linear-gradient(to bottom, #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)'
+    : 'linear-gradient(to right,  #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)';
+  // Baş/kıç yuvarlatma: sadece geminin DIŞ uçları.
+  const R = '46%';
+  const radius = horiz
+    ? { borderTopLeftRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 }
+    : { borderTopLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 };
+
+  return (
+    <div
+      className={`absolute pointer-events-none transition-[background,filter] duration-500 ${placing ? 'bs-place' : ''}`}
+      style={{
+        inset: '-1px',
+        background: state === 'sunk' ? burnt : steel,
+        ...radius,
+        boxShadow: state === 'sunk'
+          ? 'inset 0 0 6px rgba(0,0,0,0.85)'
+          : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -2px 3px rgba(0,0,0,0.45)',
+        filter: state === 'hit' ? 'saturate(0.5) brightness(0.72)' : undefined,
+      }}
+    >
+      {/* Güverte orta hattı — gövdeye "gemi" karakteri veren ince çizgi. */}
+      <div
+        className="absolute bg-slate-900/25"
+        style={horiz
+          ? { left: 0, right: 0, top: '50%', height: 1, transform: 'translateY(-0.5px)' }
+          : { top: 0, bottom: 0, left: '50%', width: 1, transform: 'translateX(-0.5px)' }}
+      />
+      {/* Taret/baca detayı: her parçanın ortasında küçük bir kule. */}
+      <div
+        className={`absolute rounded-[1px] ${state === 'sunk' ? 'bg-black/50' : 'bg-slate-700/70'}`}
+        style={{ left: '34%', top: '34%', width: '32%', height: '32%' }}
+      />
+      {/* Batan gemide sürekli duman/alev nabzı. */}
+      {state === 'sunk' && (
+        <div
+          className="bs-sunk-glow absolute rounded-full"
+          style={{ inset: '10%', background: 'radial-gradient(circle, rgba(251,146,60,0.85) 0%, rgba(239,68,68,0.4) 45%, rgba(0,0,0,0) 72%)' }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Bir atış hücresinin ÜSTÜNE binen efekt katmanı: isabet -> patlama,
+// karavana -> su halkası. Gemi gövdesinin üzerine çizilir (gövdeyi silmez).
+//   sunk: gemi TAMAMEN battıysa patlama topu küçülüp saydamlaşır — böylece
+//   altındaki KÖMÜRLEŞMİŞ gövde (ve onun duman/alev nabzı) görünür kalır.
+//   Aksi halde opak ateş topu gövdeyi tamamen örtüyordu.
+// (Bu bileşen de ShipHull ile AYNI sebepten modül seviyesine taşındı —
+// bkz. yukarıdaki yorum.)
+const ShotMarker = ({ hit, sunk = false }) => (hit ? (
+  <>
+    <div
+      className={`bs-burst absolute rounded-full ${sunk ? 'opacity-50' : ''}`}
+      style={{
+        inset: sunk ? '26%' : '13%',
+        background: 'radial-gradient(circle at 50% 45%, #fff7ed 0%, #fbbf24 26%, #f97316 48%, #dc2626 70%, rgba(127,29,29,0) 88%)',
+      }}
+    />
+    <Flame className={`bs-ember relative z-[1] text-amber-50 drop-shadow-[0_0_3px_rgba(239,68,68,0.9)] ${sunk ? 'w-2.5 h-2.5 opacity-80' : 'w-3 h-3 sm:w-3.5 sm:h-3.5'}`} />
+  </>
+) : (
+  <>
+    <div className="bs-ripple absolute inset-0" />
+    <div className="absolute rounded-full bg-sky-300/80" style={{ width: '18%', height: '18%' }} />
+  </>
+));
+
+// Basılı tutma (long-press) eşiği: dokunmatik ekranda henüz bir gemisi
+// olmayan bir hücreye (yerleştirme akışında) parmakla basılı tutulduğunda
+// önizlemenin (geminin boyutu) ne kadar sonra belirmesi gerektiği. Masaüstünde
+// fare zaten hücreye değince (mouseenter) anında önizleme gösterdiği için bu
+// gecikme SADECE dokunmatik girişte uygulanır.
+const LONG_PRESS_MS = 300;
+// Basılı tutulan bir gemiyi SÜRÜKLEYEREK TAŞIMA ile sadece TIKLAYIP (hareket
+// etmeden) yerleşimini İPTAL ETME (ele alma) arasındaki ayrım bu piksel
+// eşiğine göre yapılır.
+const DRAG_MOVE_THRESHOLD = 6;
+
 export default function BattleshipGame({ roomData, roomCode, user, db, appId }) {
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
@@ -78,6 +182,108 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   }, [setupLocked, selectedShipId, hoverOrigin, pendingOrientation, placedShips]);
   const previewSet = useMemo(() => new Set((previewInfo?.cells || []).map((c) => cellKey(c.row, c.col))), [previewInfo]);
 
+  // ============================================================
+  // Yerleştirilmiş bir gemiyi BASILI TUTUP SÜRÜKLEYEREK taşıma.
+  // ============================================================
+  // `dragMove`: sürükleme SIRASINDA gösterilen aday yeni konum (ekranda hem
+  // önizleme rengi hem de geminin ESKİ hücrelerdeki görüntüsünün gizlenmesi
+  // için kullanılır — bkz. renderSetupMyCell). Kalıcı karar (taşı/iptal et)
+  // `shipDragRef` (senkron, render'a bağlı olmayan) üzerinden verilir.
+  const [dragMove, setDragMove] = useState(null); // { shipId, orientation, length, origin }
+  const shipDragRef = useRef(null);
+  useEffect(() => () => { if (shipDragRef.current?.timer) clearTimeout(shipDragRef.current.timer); }, []);
+
+  const dragPreviewInfo = useMemo(() => {
+    if (!dragMove?.origin) return null;
+    const cells = getShipCells(dragMove.origin, dragMove.orientation, dragMove.length);
+    const { valid } = canPlaceShip(placedShips, cells, dragMove.shipId);
+    return { cells, valid };
+  }, [dragMove, placedShips]);
+  const dragPreviewSet = useMemo(() => new Set((dragPreviewInfo?.cells || []).map((c) => cellKey(c.row, c.col))), [dragPreviewInfo]);
+
+  // Bir hücreye basıldığında: üzerinde YERLEŞTİRİLMİŞ bir gemi varsa taşıma
+  // sürüklemesini başlatır (hareket etmeden bırakılırsa `handleCellPointerUp`
+  // bunu basit bir TIKLAMA sayıp gemiyi eski usul ele alır/iptal eder — bkz.
+  // pickUpShip). Hücre BOŞSA ve elde seçili bir gemi varsa (yerleştirme akışı)
+  // SADECE dokunmatik girişte, kısa bir gecikmeyle önizlemeyi (`hoverOrigin`)
+  // açar — masaüstünde fareyle zaten anında (mouseenter) açılıyor.
+  const handleCellPointerDown = (e, row, col) => {
+    if (setupLocked) return;
+    const occupantId = occupancy[cellKey(row, col)];
+    if (occupantId) {
+      // Sağ tık (contextmenu) SADECE çevirmeye ayrılmıştır — bkz.
+      // handleCellRotateGesture; burada devreye girmemeli.
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const ship = placedShips.find((s) => s.id === occupantId);
+      if (!ship) return;
+      const grabIndex = ship.cells.findIndex((cell) => cell.row === row && cell.col === col);
+      shipDragRef.current = {
+        kind: 'move', shipId: ship.id, orientation: ship.orientation, length: ship.length, grabIndex,
+        startX: e.clientX, startY: e.clientY, moved: false, origin: null,
+      };
+      e.preventDefault();
+      window.getSelection?.()?.removeAllRanges?.();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
+    if (selectedShipId && e.pointerType !== 'mouse') {
+      shipDragRef.current = {
+        kind: 'longPressPreview', startX: e.clientX, startY: e.clientY, moved: false,
+        timer: setTimeout(() => {
+          const d = shipDragRef.current;
+          if (d && d.kind === 'longPressPreview') setHoverOrigin({ row, col });
+        }, LONG_PRESS_MS),
+      };
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+  };
+
+  const handleCellPointerMove = (e) => {
+    const d = shipDragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX; const dy = e.clientY - d.startY;
+    const movedNow = Math.hypot(dx, dy) > DRAG_MOVE_THRESHOLD;
+    if (d.kind === 'move') {
+      if (!d.moved && movedNow) d.moved = true;
+      if (!d.moved) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const cellEl = el?.closest('[data-row]');
+      if (!cellEl) return;
+      const hr = Number(cellEl.dataset.row); const hc = Number(cellEl.dataset.col);
+      // `grabIndex` hücresi imlecin/parmağın altında kalacak şekilde,
+      // geminin yeni başlangıç (origin) hücresi geriye doğru hesaplanır.
+      const origin = d.orientation === 'H' ? { row: hr, col: hc - d.grabIndex } : { row: hr - d.grabIndex, col: hc };
+      d.origin = origin;
+      setDragMove({ shipId: d.shipId, orientation: d.orientation, length: d.length, origin });
+    } else if (d.kind === 'longPressPreview') {
+      // Zamanlayıcı henüz ateşlenmeden önemli bir hareket olduysa (ör. sayfa
+      // kaydırma niyeti) uzun-basma iptal edilir.
+      if (movedNow && d.timer) { clearTimeout(d.timer); d.timer = null; }
+    }
+  };
+
+  const handleCellPointerUp = () => {
+    const d = shipDragRef.current;
+    shipDragRef.current = null;
+    if (!d) return;
+    if (d.kind === 'longPressPreview') { if (d.timer) clearTimeout(d.timer); return; }
+    setDragMove(null);
+    if (!d.moved) { pickUpShip(d.shipId); return; } // basit tıklama: eski davranış (ele al/iptal et)
+    if (!d.origin) return;
+    const cells = getShipCells(d.origin, d.orientation, d.length);
+    const { valid } = canPlaceShip(placedShips, cells, d.shipId);
+    if (!valid) { flashInvalid(d.shipId); return; } // geçersizse gemi eski yerinde kalır
+    playSound('move');
+    setPlacedShips((prev) => prev.map((s) => (s.id === d.shipId ? { ...s, origin: d.origin, cells } : s)));
+  };
+
+  const handleCellPointerCancel = () => {
+    const d = shipDragRef.current;
+    if (d?.timer) clearTimeout(d.timer);
+    shipDragRef.current = null;
+    setDragMove(null);
+  };
+
   const flashInvalid = (shipId) => {
     playSound('error');
     setShakeShipId(shipId || 'preview');
@@ -121,7 +327,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   const handleCellClick = (row, col) => {
     if (setupLocked) return;
     const occupantId = occupancy[cellKey(row, col)];
-    if (occupantId) { if (!selectedShipId) pickUpShip(occupantId); return; }
+    // Dolu hücreler artık basılı-tutma/sürükleme (pointer) akışı tarafından
+    // yönetiliyor — bkz. handleCellPointerDown/Up (tıklama = ele al/iptal,
+    // sürükleme = taşı). Buradan hiçbir şey tetiklenmemeli.
+    if (occupantId) return;
     if (selectedShipId) attemptPlace(selectedShipId, { row, col }, pendingOrientation);
   };
 
@@ -129,6 +338,26 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     e.preventDefault();
     const occupantId = occupancy[cellKey(row, col)];
     if (occupantId) rotateInPlace(occupantId);
+  };
+
+  // Envanterdeki bir gemiyi (masaüstü) native sürükle-bırak ile tahtaya
+  // taşımaya başlarken: tarayıcının varsayılan "izin verilmiyor" (çarpı/⊘)
+  // imlecini önlemek için `effectAllowed`/`dropEffect` açıkça 'move' yapılır.
+  // Ayrıca tarayıcının kendi soluk hayalet-resmi, tahtadaki YEŞİL/KIRMIZI
+  // önizlememizle ÇAKIŞIP imleçle "ayrı bir resim" olarak taşınıyormuş gibi
+  // görünüyordu; boş/şeffaf bir görüntü verilerek bu varsayılan hayalet
+  // gizlenir, sadece bizim tahta-üstü önizlememiz görünür kalır.
+  const handleShipInventoryDragStart = (e, def) => {
+    e.dataTransfer.setData('text/plain', def.id);
+    e.dataTransfer.effectAllowed = 'move';
+    if (typeof document !== 'undefined') {
+      const empty = document.createElement('div');
+      empty.style.width = '1px'; empty.style.height = '1px'; empty.style.opacity = '0';
+      document.body.appendChild(empty);
+      e.dataTransfer.setDragImage(empty, 0, 0);
+      requestAnimationFrame(() => { if (empty.parentNode) empty.parentNode.removeChild(empty); });
+    }
+    setSelectedShipId(def.id);
   };
 
   const handleResetAll = () => {
@@ -300,61 +529,6 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     return map;
   };
 
-  // Tek bir gemi parçası: yukarıdan bakılan METALİK savaş gemisi gövdesi.
-  // Hücre kenarlarını (inset -1px) örterek yan parçayla dikişsiz birleşir.
-  //   state: 'intact' | 'hit' | 'sunk'
-  const ShipHull = ({ seg, state = 'intact', placing = false }) => {
-    const horiz = seg.orientation === 'H';
-    // Gövde gradyanı gemi EKSENİNE DİK uygulanır: üstte güverte ışığı, altta
-    // gölge -> yuvarlak/hacimli bir gövde izlenimi.
-    const steel = horiz
-      ? 'linear-gradient(to bottom, #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)'
-      : 'linear-gradient(to right,  #e2e8f0 0%, #a8b6c8 30%, #6b7c93 62%, #3d4a5c 100%)';
-    const burnt = horiz
-      ? 'linear-gradient(to bottom, #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)'
-      : 'linear-gradient(to right,  #5b3a30 0%, #3a201b 38%, #23100d 70%, #150809 100%)';
-    // Baş/kıç yuvarlatma: sadece geminin DIŞ uçları.
-    const R = '46%';
-    const radius = horiz
-      ? { borderTopLeftRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 }
-      : { borderTopLeftRadius: seg.isFirst ? R : 0, borderTopRightRadius: seg.isFirst ? R : 0, borderBottomLeftRadius: seg.isLast ? R : 0, borderBottomRightRadius: seg.isLast ? R : 0 };
-
-    return (
-      <div
-        className={`absolute pointer-events-none transition-[background,filter] duration-500 ${placing ? 'bs-place' : ''}`}
-        style={{
-          inset: '-1px',
-          background: state === 'sunk' ? burnt : steel,
-          ...radius,
-          boxShadow: state === 'sunk'
-            ? 'inset 0 0 6px rgba(0,0,0,0.85)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -2px 3px rgba(0,0,0,0.45)',
-          filter: state === 'hit' ? 'saturate(0.5) brightness(0.72)' : undefined,
-        }}
-      >
-        {/* Güverte orta hattı — gövdeye "gemi" karakteri veren ince çizgi. */}
-        <div
-          className="absolute bg-slate-900/25"
-          style={horiz
-            ? { left: 0, right: 0, top: '50%', height: 1, transform: 'translateY(-0.5px)' }
-            : { top: 0, bottom: 0, left: '50%', width: 1, transform: 'translateX(-0.5px)' }}
-        />
-        {/* Taret/baca detayı: her parçanın ortasında küçük bir kule. */}
-        <div
-          className={`absolute rounded-[1px] ${state === 'sunk' ? 'bg-black/50' : 'bg-slate-700/70'}`}
-          style={{ left: '34%', top: '34%', width: '32%', height: '32%' }}
-        />
-        {/* Batan gemide sürekli duman/alev nabzı. */}
-        {state === 'sunk' && (
-          <div
-            className="bs-sunk-glow absolute rounded-full"
-            style={{ inset: '10%', background: 'radial-gradient(circle, rgba(251,146,60,0.85) 0%, rgba(239,68,68,0.4) 45%, rgba(0,0,0,0) 72%)' }}
-          />
-        )}
-      </div>
-    );
-  };
-
   // Ortak tahta iskeleti: sütun/satır etiketleri + verilen hücre üretici
   // fonksiyonuna göre 10x10 gövde. Yerleştirme (Faz 1) ve savaş (Faz 2)
   // tahtaları aynı iskeleti, farklı hücre görünümleriyle kullanır.
@@ -395,29 +569,45 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
     const key = cellKey(r, c);
     const occupantId = occupancy[key];
     const seg = setupSegments[key];
-    const inPreview = previewSet.has(key);
+    // Bu hücredeki gemi ŞU AN basılı-tutup-sürüklenerek taşınıyorsa, ESKİ
+    // konumundaki gövde gizlenir — aksi halde hem eski hem yeni (önizleme)
+    // konumda aynı anda görünüp kafa karıştırırdı.
+    const hiddenForDrag = !!(dragMove && seg && seg.shipId === dragMove.shipId);
+    // İki AYRI önizleme kaynağı olabilir (aynı anda sadece biri aktiftir):
+    // envanterden yeni gemi yerleştirme (previewSet) ya da yerleştirilmiş bir
+    // gemiyi sürükleyerek taşıma (dragPreviewSet).
+    const inInventoryPreview = previewSet.has(key);
+    const inDragPreview = dragPreviewSet.has(key);
+    const inPreview = inInventoryPreview || inDragPreview;
+    const previewValid = inInventoryPreview ? previewInfo.valid : (inDragPreview ? dragPreviewInfo.valid : true);
     const shaking = occupantId && shakeShipId === occupantId;
     // Önizleme (sürüklerken/hedeflerken) hücrenin ÜSTÜNE bindirilen renk.
     const previewCls = inPreview
-      ? (previewInfo.valid ? 'bg-emerald-400/45 border-emerald-300/80' : 'bg-rose-500/45 border-rose-300/80')
+      ? (previewValid ? 'bg-emerald-400/45 border-emerald-300/80' : 'bg-rose-500/45 border-rose-300/80')
       : '';
     return (
       <div
         key={c}
+        data-row={r}
+        data-col={c}
         onClick={() => handleCellClick(r, c)}
         onDoubleClick={(e) => handleCellRotateGesture(e, r, c)}
         onContextMenu={(e) => handleCellRotateGesture(e, r, c)}
         onMouseEnter={() => { if (!setupLocked && selectedShipId) setHoverOrigin({ row: r, col: c }); }}
-        onDragOver={(e) => { e.preventDefault(); if (!setupLocked) setHoverOrigin({ row: r, col: c }); }}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (!setupLocked) setHoverOrigin({ row: r, col: c }); }}
         onDrop={(e) => {
           e.preventDefault();
           const shipId = e.dataTransfer.getData('text/plain') || selectedShipId;
           if (shipId) attemptPlace(shipId, { row: r, col: c }, pendingOrientation);
         }}
-        className={`${CELL} bs-cell ${!setupLocked && !occupantId ? 'bs-cell-live' : ''} transition-colors ${previewCls} ${setupLocked ? 'cursor-default' : 'cursor-pointer'} ${shaking ? 'animate-[shake_0.35s_ease-in-out] z-20' : ''}`}
-        title={occupantId ? 'Çevirmek için çift tıkla / sağ tıkla' : undefined}
+        onPointerDown={(e) => handleCellPointerDown(e, r, c)}
+        onPointerMove={handleCellPointerMove}
+        onPointerUp={handleCellPointerUp}
+        onPointerCancel={handleCellPointerCancel}
+        className={`${CELL} bs-cell ${!setupLocked && !occupantId ? 'bs-cell-live' : ''} ${occupantId ? 'touch-none' : ''} transition-colors ${previewCls} ${setupLocked ? 'cursor-default' : (occupantId ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')} ${shaking ? 'animate-[shake_0.35s_ease-in-out] z-20' : ''}`}
+        title={occupantId ? 'Taşımak için basılı tutup sürükle — çevirmek için çift tıkla / sağ tıkla' : undefined}
       >
-        {seg && <ShipHull seg={seg} state="intact" placing />}
+        {seg && !hiddenForDrag && <ShipHull seg={seg} state="intact" placing />}
       </div>
     );
   };
@@ -429,29 +619,6 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
   // FAZ 2 — "Kendi Filom": kendi gemilerim (sabit) + rakibin bana yaptığı
   // atışların üstten gösterimi (isabet: alev/kızıl, ıska: damla/mavi).
   const myBattleSegments = buildSegmentMap(myShips);
-
-  // Bir atış hücresinin ÜSTÜNE binen efekt katmanı: isabet -> patlama,
-  // karavana -> su halkası. Gemi gövdesinin üzerine çizilir (gövdeyi silmez).
-  //   sunk: gemi TAMAMEN battıysa patlama topu küçülüp saydamlaşır — böylece
-  //   altındaki KÖMÜRLEŞMİŞ gövde (ve onun duman/alev nabzı) görünür kalır.
-  //   Aksi halde opak ateş topu gövdeyi tamamen örtüyordu.
-  const ShotMarker = ({ hit, sunk = false }) => (hit ? (
-    <>
-      <div
-        className={`bs-burst absolute rounded-full ${sunk ? 'opacity-50' : ''}`}
-        style={{
-          inset: sunk ? '26%' : '13%',
-          background: 'radial-gradient(circle at 50% 45%, #fff7ed 0%, #fbbf24 26%, #f97316 48%, #dc2626 70%, rgba(127,29,29,0) 88%)',
-        }}
-      />
-      <Flame className={`bs-ember relative z-[1] text-amber-50 drop-shadow-[0_0_3px_rgba(239,68,68,0.9)] ${sunk ? 'w-2.5 h-2.5 opacity-80' : 'w-3 h-3 sm:w-3.5 sm:h-3.5'}`} />
-    </>
-  ) : (
-    <>
-      <div className="bs-ripple absolute inset-0" />
-      <div className="absolute rounded-full bg-sky-300/80" style={{ width: '18%', height: '18%' }} />
-    </>
-  ));
 
   const renderBattleMyCell = (r, c) => {
     const key = cellKey(r, c);
@@ -628,7 +795,17 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
         </div>
       )}
 
-      <div className="w-full flex flex-col lg:flex-row gap-8 z-10 items-start justify-center">
+      {/* GÖRSEL HATA DÜZELTMESİ (telefonda tahtanın hafif sağa/sola kaymış
+          görünmesi): mobilde (lg altı) bu kap dikey (flex-col) dizilir; cross
+          eksen (yatay) hizalaması `items-start` idi, yani her bölüm (Kendi
+          Filom / Hedef Tahtası) MEVCUT GENİŞLİĞE göre SOLA yaslanıyordu —
+          gemi envanteri/butonlar gibi tam genişlikte alt bileşenler yüzünden
+          bölümün toplam genişliği tahtanın kendisinden daha geniş olduğunda,
+          tahta (dar içerik) o genişlik içinde ortalanmak yerine sola/kenara
+          yapışık kalıp SAYFANIN gerçek ortasına göre kaymış görünüyordu.
+          `lg:` öncesinde `items-center` ile düzeltilir; masaüstünde (lg+, iki
+          sütun yan yana) `items-start` (üst hizalama) korunur. */}
+      <div className="w-full flex flex-col lg:flex-row gap-8 z-10 items-center lg:items-start justify-center">
         {/* KENDİ FİLOM */}
         <div className="flex flex-col items-center gap-4">
           <h3 className="text-sm font-bold uppercase tracking-widest text-indigo-300">Kendi Filom</h3>
@@ -659,7 +836,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId }) 
                   <div
                     key={def.id}
                     draggable={!setupLocked && !isPlaced}
-                    onDragStart={(e) => { e.dataTransfer.setData('text/plain', def.id); setSelectedShipId(def.id); }}
+                    onDragStart={(e) => handleShipInventoryDragStart(e, def)}
                     onClick={() => { if (!setupLocked && !isPlaced) setSelectedShipId((id) => (id === def.id ? null : def.id)); }}
                     className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-all duration-150 ${
                       isPlaced ? 'bg-slate-800/40 border-slate-700 opacity-50' :
