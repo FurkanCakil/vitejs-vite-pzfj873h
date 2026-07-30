@@ -56,6 +56,17 @@ export function formatFoldBarrier(total) {
   return rem === 0 ? `${total} (${div})` : `${total} (${div} yan ${rem})`;
 }
 
+// `formatFoldBarrier`'ın SADECE parantez içindeki "tek" (lira/kat) kısmı —
+// önündeki ham sayı ve dış parantez OLMADAN. KULLANICI İSTEĞİ: Yardımlı
+// modda "42/101 (14 / 33 yan 2)" gibi bir ilerleme rozetinde HEM mevcut
+// toplamın HEM DE hedefin "tek" değeri yan yana gösterilir — `formatFoldBarrier`
+// ise her çağrıda kendi sayısını da tekrar yazdığı için o biçime uymuyordu.
+export function tekLabel(total) {
+  const div = Math.floor(total / 3);
+  const rem = total % 3;
+  return rem === 0 ? `${div}` : `${div} yan ${rem}`;
+}
+
 // 5. madde: Katlama SADECE seri/set açılışına değil, ÇİFT açılışına da
 // uygulanır — ama para/puan yerine ÇİFT SAYISI üzerinden. İlk çift açan 5
 // çiftle açtıysa, ondan sonra çiftle açacak (ve muaf olmayan) herkesin EN AZ

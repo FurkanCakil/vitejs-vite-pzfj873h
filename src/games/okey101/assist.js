@@ -91,6 +91,14 @@ function placeMelds(melds, leftovers, rowLength, { separator, rowAware }) {
   const rack = Array(RACK_SLOTS).fill(null);
   const groups = {};
   const rows = Math.max(1, Math.floor(RACK_SLOTS / rowLength));
+  // KÖK NEDEN DÜZELTMESİ ("perler arasında boşluk yok" / "diğer taşlardan
+  // ayrılmıyor"): perin taşlarından SONRA bırakılan tek-slotluk ayırıcı boş
+  // kalıyordu AMA aşağıdaki "leftovers" (perlere girmeyen taşlar) döngüsü
+  // "İLK BOŞ SLOTU" arayarak dolduruyordu — yani tam da bu ayırıcı boşluklar
+  // leftover taşlarla anında dolduruluyor, perler arasındaki görsel ayrım
+  // hiç oluşmuyordu. Ayırıcı olarak bırakılan slotlar artık `reserved`e
+  // eklenir; leftover doldurma bunları KESİNLİKLE atlar.
+  const reserved = new Set();
 
   // `next`: perin yerleşeceği ilk slot (düz/flat indeks).
   let next = 0;
@@ -105,15 +113,18 @@ function placeMelds(melds, leftovers, rowLength, { separator, rowAware }) {
       next = row * rowLength + col;
     }
     if (next + len > RACK_SLOTS) return null;
-    meld.tiles.forEach((tile, i) => { rack[next + i] = tile; });
+    meld.tiles.forEach((tile, i) => { rack[next + i] = tile; reserved.add(next + i); });
     groups[nextGid()] = meld.tiles.map((t) => t.id);
-    next += len + (separator ? 1 : 0);
+    const meldEnd = next + len;
+    if (separator && meldEnd < RACK_SLOTS) reserved.add(meldEnd); // ayırıcı boşluk KORUNUR
+    next = meldEnd + (separator ? 1 : 0);
   }
 
-  // Perlere girmeyen taşlar kalan ilk boş slotlara sırayla konur.
+  // Perlere girmeyen taşlar, perlerin/ayırıcıların HİÇ dokunmadığı ilk boş
+  // slottan başlayarak sırayla konur.
   let cursor = 0;
   for (const tile of leftovers) {
-    while (cursor < RACK_SLOTS && rack[cursor] !== null) cursor += 1;
+    while (cursor < RACK_SLOTS && (rack[cursor] !== null || reserved.has(cursor))) cursor += 1;
     if (cursor >= RACK_SLOTS) return null;
     rack[cursor] = tile;
   }

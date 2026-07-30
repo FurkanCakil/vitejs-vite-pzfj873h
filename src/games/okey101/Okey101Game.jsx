@@ -497,14 +497,45 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           }
         };
 
-        const pendingSideTake = data.sideTake?.uid === turnUid && !data.hasOpened?.[turnUid];
+        // 3) İşleme: elini açtıysa, ıstakada en az 1 taş (zorunlu atma için)
+        // kalacak şekilde, masadaki (kendi/rakip) perlere uyan taşları işler.
+        // YANDAN ALDIĞI (bekleyen bir sideTake varsa) taş ÖNCELİKLİDİR — bu
+        // taşı işlemek, "kullan ya da geri koy" zorunluluğunu (bkz. aşağıdaki
+        // kurtarma bloğu) doğrudan çözebilir, gereksiz bir iptal+yeniden
+        // çekmeden kaçınılmış olur.
+        const attemptTacking = async () => {
+          for (let i = 0; i < 22; i++) {
+            if (isStale()) return;
+            const rackNow = (data.racks?.[turnUid] || []).filter(Boolean);
+            if (rackNow.length <= 1) break;
+            const opportunities = findTackOpportunities(rackNow, data.openedHands || {}, data.okey || null);
+            if (opportunities.length === 0) break;
+            const pendingTileId = data.sideTake?.uid === turnUid ? data.sideTake.tileId : null;
+            const opp = (pendingTileId && opportunities.find((o) => o.tile.id === pendingTileId)) || opportunities[0];
+            await randomTurnDelay();
+            if (isStale()) return;
+            const tackResult = await handleTackTile(opp.tile, { uid: opp.targetUid, groupIndex: opp.groupIndex, side: opp.side }, turnUid);
+            if (!apply(tackResult)) return;
+          }
+        };
 
+        // KULLANICI İSTEĞİ: elini ÖNCEDEN AÇMIŞ bir bot da yandan aldığı
+        // taşı bu turda kullanmak (bir açılışa dahil etmek YA DA işlemek)
+        // ZORUNDADIR — kullanamazsa (insanla aynı kural) taşı geri koyup
+        // SADECE desteden çekmeye zorlanır. Bu yüzden kurtarma kontrolü artık
+        // `!hasOpened` ile SINIRLI değil; hem açma HEM DE işleme denendikten
+        // SONRA `data.sideTake` hâlâ botta duruyorsa devreye girer.
         await randomTurnDelay();
         if (isStale()) return;
         await attemptOpen();
         if (isStale() || data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
 
-        if (pendingSideTake && !data.hasOpened?.[turnUid]) {
+        if (data.hasOpened?.[turnUid]) {
+          await attemptTacking();
+          if (isStale() || data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
+        }
+
+        if (data.sideTake?.uid === turnUid) {
           if (!apply(await handleCancelSideTake(turnUid))) return;
           if (isStale()) return;
           await randomTurnDelay();
@@ -514,22 +545,9 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           if (isStale()) return;
           await attemptOpen();
           if (isStale() || data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
-        }
-
-        // 3) İşleme: elini açtıysa, ıstakada en az 1 taş (zorunlu atma için)
-        // kalacak şekilde, masadaki (kendi/rakip) perlere uyan taşları işler.
-        if (data.hasOpened?.[turnUid]) {
-          for (let i = 0; i < 22; i++) {
-            if (isStale()) return;
-            const rackNow = (data.racks?.[turnUid] || []).filter(Boolean);
-            if (rackNow.length <= 1) break;
-            const opportunities = findTackOpportunities(rackNow, data.openedHands || {}, data.okey || null);
-            if (opportunities.length === 0) break;
-            const opp = opportunities[0];
-            await randomTurnDelay();
-            if (isStale()) return;
-            const tackResult = await handleTackTile(opp.tile, { uid: opp.targetUid, groupIndex: opp.groupIndex, side: opp.side }, turnUid);
-            if (!apply(tackResult)) return;
+          if (data.hasOpened?.[turnUid]) {
+            await attemptTacking();
+            if (isStale() || data.setupPhase || data.roundEnded || data.turn !== turnUid) return;
           }
         }
 
@@ -808,7 +826,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // Oyuncunun kendisi için burası kendi ıstakasıdır, koltuk çizilmez.
   const bottomSeat = isPlayer ? null : buildSeat(seatAnchorUid);
 
-  const mySideTakePending = roomData.sideTake?.uid === user.uid && !myHasOpened;
+  // KULLANICI İSTEĞİ: elini önceden AÇMIŞ bir oyuncu da yandan aldığı taşı bu
+  // turda kullanmak zorundadır (bkz. handleDrawDiscard/handleCancelSideTake
+  // yorumları) — bu yüzden artık `!myHasOpened` ile SINIRLI değildir.
+  const mySideTakePending = roomData.sideTake?.uid === user.uid;
+  const mySideTakeTileId = mySideTakePending ? roomData.sideTake.tileId : null;
 
   // Istaka düzenlemesi artık transaction içinde ve SUNUCUDAKİ taş kümesiyle
   // birleştirilerek yazılır (bkz. mergeRackLayout). Böylece bir düzenleme,
@@ -890,13 +912,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     return outcome;
   };
 
-  // Yandan (soldan) taş alma: oyuncu henüz elini açmamışsa, ceza HEMEN
-  // yazılmaz — bunun yerine oyuncu "sideTake" ile işaretlenir ve bu turu ya
-  // BAŞARILI bir açma (Seri/Çift Aç) ile ya da taşı geri koyup
-  // (handleCancelSideTake) desteden çekerek sürdürmek ZORUNDADIR (koşulsuz
-  // kural — bir "Ceza Kuralı" ayarına bağlı DEĞİLDİR). Ceza, ancak açma
-  // başarılı olduğunda (bkz. handleOpenSeries/handleOpenPairs/
-  // handleBotOpenMelds) taşı atan kişiye yazılır.
+  // Yandan (soldan) taş alma: alan oyuncu bu taşı BU TURDA bir per olarak
+  // masaya koymak (yeni bir Seri/Çift Aç İÇİNDE ya da doğrudan işleyerek —
+  // bkz. handleTackTile) ZORUNDADIR, aksi halde elinde TUTAMAZ — ya kullanır
+  // ya taşı geri koyar (handleCancelSideTake). Bu KOŞULSUZ kuraldır (bir
+  // "Ceza Kuralı" ayarına bağlı DEĞİLDİR) ve elini önceden AÇMIŞ oyunculara
+  // da uygulanır (kullanıcı isteği).
+  //
+  // TEK FARK: CEZA (çekilen taşın 10/20 katı, taşı atan kişiye) sadece
+  // oyuncu bu taşla İLK KEZ açılış yaparsa yazılır — zaten açmış bir oyuncu
+  // aynı zorunluluğa tabidir ama üzerine ceza binmez. `penalized` bayrağı bu
+  // ayrımı taşıyarak handleOpenSeries/handleOpenPairs/handleTackTile/
+  // handleBotOpenMelds'e kadar gider.
   const handleDrawDiscard = async (explicitUid, targetIndex = null) => {
     const actingUid = explicitUid || user.uid;
     const fromUid = actingUid === user.uid ? prevUid : getPrevTurnUid(roomData.players || [], actingUid);
@@ -917,11 +944,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const emptyIdx = hasTarget ? targetIndex : rack.findIndex((s) => s === null);
       if (emptyIdx === -1) return;
       rack[emptyIdx] = drawn;
-      const update = { [`discardPiles.${fromUid}`]: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true };
-      const sideTake = data.hasOpened?.[actingUid]
-        ? (data.sideTake ?? null)
-        : { uid: actingUid, fromUid, tileId: drawn.id, tileValue: sideTakeTileValue(drawn, data.okey || null) };
-      if (!data.hasOpened?.[actingUid]) update.sideTake = sideTake;
+      const sideTake = {
+        uid: actingUid, fromUid, tileId: drawn.id,
+        tileValue: sideTakeTileValue(drawn, data.okey || null),
+        penalized: !data.hasOpened?.[actingUid],
+      };
+      const update = { [`discardPiles.${fromUid}`]: pile, [`racks.${actingUid}`]: rack, hasDrawnThisTurn: true, sideTake };
       t.update(roomRef, update);
       outcome = {
         success: true,
@@ -971,9 +999,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   };
   performDrawRef.current = performDraw;
 
-  // "Taşı Geri Koy / İptal": yandan aldığı taşla elini açamayan oyuncu, taşı
-  // sahibinin atış yığınına geri koyar ve bu tur artık SADECE ortadaki kapalı
-  // desteden çekebilir (forcedPileDraw).
+  // "Taşı Geri Koy / İptal": yandan aldığı taşı BU TURDA kullanamayan (ya da
+  // kullanmak istemeyen) oyuncu taşı sahibinin atış yığınına geri koyar ve bu
+  // tur artık SADECE ortadaki kapalı desteden çekebilir (forcedPileDraw). Bu
+  // artık hem henüz açmamış HEM DE zaten açmış oyuncular için geçerlidir
+  // (kullanıcı isteği) — `sideTake.penalized` ayrımı zaten CEZA tarafında
+  // (bkz. handleOpenSeries/handleOpenPairs/handleTackTile), burada değil.
   const handleCancelSideTake = async (actingUid = user.uid) => {
     let outcome = { success: false };
     await runTransaction(db, async (t) => {
@@ -981,7 +1012,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       const st = data.sideTake;
-      if (!st || st.uid !== actingUid || data.turn !== actingUid || !data.hasDrawnThisTurn || data.hasOpened?.[actingUid]) return;
+      if (!st || st.uid !== actingUid || data.turn !== actingUid || !data.hasDrawnThisTurn) return;
       const rack = [...(data.racks?.[actingUid] || [])];
       const idx = rack.findIndex((s) => s && s.id === st.tileId);
       if (idx === -1) {
@@ -1081,7 +1112,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.turn !== actingUid || !data.hasDrawnThisTurn) return;
-      if (data.sideTake?.uid === actingUid && !data.hasOpened?.[actingUid]) return; // önce açmalı ya da geri koymalı
+      if (data.sideTake?.uid === actingUid) return; // önce o taşı kullanmalı (per/işleme) ya da geri koymalı
       const rack = [...(data.racks?.[actingUid] || [])];
       const idx = rack.findIndex((s) => s && s.id === tile.id);
       if (idx === -1) return;
@@ -1339,18 +1370,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!alreadyOpened && foldingActive && (!barrier || total > barrier.total)) {
         update.foldBarrier = { total, uid: user.uid };
       }
-      // Yandan taş alıp bu açılışla elini açan oyuncu varsa (ve az önce o taşı
-      // BU açılışta kullandığı doğrulandıysa), ceza ŞİMDİ o taşı atan kişiye
-      // (Eşli modda onun TAKIMINA) yazılır: çekilen taşın değerinin 10 katı.
+      // Yandan taş alıp bu açılışta kullanan oyuncu için taş serbest kalır
+      // (bkz. handleDrawDiscard). Ceza ŞİMDİ o taşı atan kişiye (Eşli modda
+      // onun TAKIMINA) yazılır — ÇEKİLEN TAŞIN DEĞERİNİN 10 katı — AMA SADECE
+      // bu, oyuncunun bu taşla İLK KEZ açılışıysa (`st.penalized`). Zaten
+      // açmış bir oyuncu aynı "kullanma zorunluluğuna" tabidir ama üzerine
+      // ceza binmez (kullanıcı isteği).
       let runningScores = data.scores || {};
       let penalizedName = null; let penaltyAmount = 0;
       if (st && st.uid === user.uid) {
-        penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_SERIES_MULTIPLIER;
-        const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, runningScores);
-        Object.assign(update, updates);
-        runningScores = scores;
         update.sideTake = null;
-        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        if (st.penalized) {
+          penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_SERIES_MULTIPLIER;
+          const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, runningScores);
+          Object.assign(update, updates);
+          runningScores = scores;
+          penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        }
       }
 
       // BÜYÜK AÇILIŞ ÖDÜLÜ: "tek" (toplam/3) 50'yi geçerse -101, 60'ı geçerse
@@ -1481,16 +1517,20 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         update.foldPairsBarrier = { count: validGroupIds.length, uid: user.uid };
       }
 
-      // Çift ile açma: çekilen taşın değerinin 20 katı ceza (Eşli modda takıma).
+      // Çift ile açma: çekilen taşın değerinin 20 katı ceza (Eşli modda takıma)
+      // — SADECE bu taşla İLK KEZ açılıyorsa (bkz. handleOpenSeries'teki aynı
+      // gerekçe, `st.penalized`).
       let runningScores = data.scores || {};
       let penalizedName = null; let penaltyAmount = 0;
       if (st && st.uid === user.uid) {
-        penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_PAIRS_MULTIPLIER;
-        const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, runningScores);
-        Object.assign(update, updates);
-        runningScores = scores;
         update.sideTake = null;
-        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        if (st.penalized) {
+          penaltyAmount = (st.tileValue || 0) * SIDE_TAKE_PAIRS_MULTIPLIER;
+          const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, runningScores);
+          Object.assign(update, updates);
+          runningScores = scores;
+          penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        }
       }
 
       // BÜYÜK AÇILIŞ ÖDÜLÜ: 7 çift -> -101, 9 çift -> -202 (bkz. pairsOpenBonus).
@@ -1639,17 +1679,23 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         nextFoldPairsBarrier = { count: melds.length, uid: actingUid };
         update.foldPairsBarrier = nextFoldPairsBarrier;
       }
+      // bkz. handleOpenSeries/handleOpenPairs'teki aynı gerekçe: bot da CEZAYI
+      // sadece bu taşla İLK KEZ açıyorsa (`st.penalized`) öder; zaten açmış
+      // bir bot aynı "kullan ya da geri koy" zorunluluğuna tabidir ama
+      // üzerine ceza binmez.
       const st = data.sideTake;
       let penalizedName = null; let penaltyAmount = 0;
       let nextScores = { ...(data.scores || {}) };
       if (st && st.uid === actingUid) {
-        const multiplier = isPairs ? SIDE_TAKE_PAIRS_MULTIPLIER : SIDE_TAKE_SERIES_MULTIPLIER;
-        penaltyAmount = (st.tileValue || 0) * multiplier;
-        const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, nextScores);
-        Object.assign(update, updates);
-        nextScores = scores;
         update.sideTake = null;
-        penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        if (st.penalized) {
+          const multiplier = isPairs ? SIDE_TAKE_PAIRS_MULTIPLIER : SIDE_TAKE_SERIES_MULTIPLIER;
+          penaltyAmount = (st.tileValue || 0) * multiplier;
+          const { updates, scores } = addScoreDelta(data, st.fromUid, penaltyAmount, nextScores);
+          Object.assign(update, updates);
+          nextScores = scores;
+          penalizedName = players.find((p) => p.uid === st.fromUid)?.name || 'Rakip';
+        }
       }
 
       // Bot da insanla AYNI büyük açılış ödülünü alır (bkz. handleOpenSeries/
@@ -1678,7 +1724,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           hasOpened: { ...(data.hasOpened || {}), [actingUid]: true },
           openedWithPairs: nextOpenedWithPairs,
           scores: nextScores,
-          sideTake: penalizedName ? null : (data.sideTake ?? null),
+          // `st` az önceki blokta (varsa) TÜKETİLMİŞ olabilir — ceza yazılıp
+          // yazılmadığından (penalizedName) BAĞIMSIZ olarak, o bloğun
+          // `update.sideTake = null` yazıp yazmadığıyla birebir aynı karar.
+          sideTake: (st && st.uid === actingUid) ? null : (data.sideTake ?? null),
           foldBarrier: nextFoldBarrier,
           foldPairsBarrier: nextFoldPairsBarrier,
         },
@@ -1765,6 +1814,18 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         outcome = { success: true };
       }
 
+      // KULLANICI İSTEĞİ: yandan alınan taş masaya bir Seri/Çift Aç İÇİNDE
+      // açılmadan, doğrudan İŞLENEREK (tacking) de "kullanılmış" sayılır —
+      // per açmak ZORUNLU değildir. CEZA burada asla söz konusu değildir:
+      // tacking sadece elini ÖNCEDEN açmış oyunculara açıktır (yukarıdaki
+      // `hasOpened` şartı), yani bu noktaya ulaşan bir sideTake ASLA
+      // `penalized: true` olamaz — aksi olsaydı oyuncu bu taşı bir açılışa
+      // dahil etmeden `hasOpened` true olamazdı (bkz. handleOpenSeries/
+      // handleOpenPairs'teki "usedTileIds.has(st.tileId)" reddi).
+      if (data.sideTake?.uid === actingUid && data.sideTake.tileId === tile.id) {
+        update.sideTake = null;
+      }
+
       // Eli bitirme: TAŞ ATMADAN, elindeki son taşı da işleyerek (tacking)
       // ıstakayı tamamen boşaltmak da GEÇERLİ bir bitiriştir (gerçek 101 Okey
       // kuralı). Bu kontrol eskiden SADECE handleDiscardTile'da vardı; bu
@@ -1818,6 +1879,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         racks: { ...(data.racks || {}), [actingUid]: newRack },
         openedHands: { ...(data.openedHands || {}), [target.uid]: targetOpened },
         scores: nextScores,
+        sideTake: 'sideTake' in update ? update.sideTake : data.sideTake,
       };
     }).catch((err) => { console.error('Okey101 işleme hatası:', err); outcome = null; });
 
@@ -1968,6 +2030,16 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     myPairsBarrier,
     isExemptFromFoldBarrier(user.uid, myPairsBarrier, roomData.rules, roomData.teams),
   );
+  // KULLANICI İSTEĞİ (Yardımlı Mod ilerleme rozeti): seri/set (per) ile
+  // açmak için ulaşılması gereken hedef toplam. Katlamasızsa (ya da baraj
+  // yoksa/muafsa) sabit 101'dir; katlamalı modda masada bir baraj varsa (ve
+  // muaf değilsem) barajı KESİN OLARAK GEÇMEM gerektiği için hedef
+  // `barrier.total + 1`'dir (bkz. handleOpenSeries'teki `total <= barrier.total`
+  // reddi — eşitlik bile yetmez).
+  const mySeriesBarrier = roomData.rules?.foldingEnabled ? (roomData.foldBarrier || null) : null;
+  const mySeriesTarget = (mySeriesBarrier && !isExemptFromFoldBarrier(user.uid, mySeriesBarrier, roomData.rules, roomData.teams))
+    ? mySeriesBarrier.total + 1
+    : OPEN_THRESHOLD;
 
   const hasAnyOpenedHand = Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0);
 
@@ -2321,7 +2393,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
       {mySideTakePending && (
         <div className="w-full max-w-md flex items-center justify-between gap-2 bg-amber-500/10 border border-amber-500/50 rounded-xl px-3 py-2">
-          <span className="text-[11px] sm:text-sm font-bold text-amber-300">Yandan taş aldın! Şimdi elini açmalısın (Seri/Çift Aç) ya da taşı geri koymalısın.</span>
+          <span className="text-[11px] sm:text-sm font-bold text-amber-300">
+            {myHasOpened
+              ? 'Yandan taş aldın! Bu taşı bir pere işlemeli ya da yeni bir per olarak masaya sürmelisin — yoksa atamazsın (bu taş için ceza YOK).'
+              : 'Yandan taş aldın! Şimdi elini açmalısın (Seri/Çift Aç) ya da taşı geri koymalısın.'}
+          </span>
           <button
             type="button"
             onClick={() => handleCancelSideTake()}
@@ -2389,8 +2465,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             canOpenMeldsRule={myCanLayMelds}
             pairsButtonLabel={pairsButtonLabel}
             minPairsToOpen={myMinPairsToOpen}
+            seriesTarget={mySeriesTarget}
             assisted={assisted}
             tackableTileIds={tackableTileIds}
+            sideTakeTileId={mySideTakeTileId}
+            onCancelSideTake={handleCancelSideTake}
             pendingDraw={pendingDraw}
             flipTileId={drawFlipId}
             hasOpenedAlready={myHasOpened}

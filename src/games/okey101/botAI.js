@@ -83,33 +83,78 @@ function findBestSeriesForColor(remaining, color, okeyInfo) {
   return best;
 }
 
-// Greedy: elindeki taşlardan, üst üste binmeyen mümkün olduğunca değerli/çok
-// per bulur. Önce yüksek sayılı setleri, sonra her renk için en uzun seriyi
-// dener; bulduğunu eldeki havuzdan çıkarıp tekrar dener (aynı renkte/sayıda
-// ikinci bir per kalmışsa onu da yakalamak için).
-export function pickBotMelds(handTiles, okeyInfo) {
+// Verilen taş havuzundan, verilen SIRAYA göre (kategori kategori) açgözlü
+// per toplar: her kategori TAMAMEN tüketilir, sonra bir sonrakine geçilir.
+function greedyByOrder(handTiles, okeyInfo, order) {
   let remaining = [...handTiles];
   const melds = [];
-
-  for (let num = 13; num >= 1; num--) {
-    let found = findBestSetForNumber(remaining, num, okeyInfo);
-    while (found) {
-      melds.push(found);
-      remaining = removeTiles(remaining, found.tiles);
-      found = findBestSetForNumber(remaining, num, okeyInfo);
+  const takeSets = () => {
+    for (let num = 13; num >= 1; num--) {
+      let found = findBestSetForNumber(remaining, num, okeyInfo);
+      while (found) { melds.push(found); remaining = removeTiles(remaining, found.tiles); found = findBestSetForNumber(remaining, num, okeyInfo); }
     }
-  }
-
-  for (const color of COLORS) {
-    let found = findBestSeriesForColor(remaining, color, okeyInfo);
-    while (found) {
-      melds.push(found);
-      remaining = removeTiles(remaining, found.tiles);
-      found = findBestSeriesForColor(remaining, color, okeyInfo);
+  };
+  const takeSeries = () => {
+    for (const color of COLORS) {
+      let found = findBestSeriesForColor(remaining, color, okeyInfo);
+      while (found) { melds.push(found); remaining = removeTiles(remaining, found.tiles); found = findBestSeriesForColor(remaining, color, okeyInfo); }
     }
-  }
-
+  };
+  if (order === 'sets-first') { takeSets(); takeSeries(); } else { takeSeries(); takeSets(); }
   return melds;
+}
+
+// Her adımda o an mevcut TÜM olası perler arasından (set YA DA seri fark
+// etmeksizin) en DEĞERLİ olanı seçer, onu havuzdan çıkarıp tekrar dener.
+// Kategori-sıralı açgözlünün aksine, "sırf önce denendiği için" düşük
+// değerli bir per, çok daha değerli rakip bir peri BLOKE edemez.
+function greedyByValue(handTiles, okeyInfo) {
+  let remaining = [...handTiles];
+  const melds = [];
+  for (;;) {
+    let best = null;
+    for (let num = 1; num <= 13; num++) {
+      const found = findBestSetForNumber(remaining, num, okeyInfo);
+      if (found && (!best || found.value > best.value)) best = found;
+    }
+    for (const color of COLORS) {
+      const found = findBestSeriesForColor(remaining, color, okeyInfo);
+      if (found && (!best || found.value > best.value)) best = found;
+    }
+    if (!best) break;
+    melds.push(best);
+    remaining = removeTiles(remaining, best.tiles);
+  }
+  return melds;
+}
+
+const meldsTotalValue = (melds) => melds.reduce((s, m) => s + m.value, 0);
+
+// KULLANICI RAPORU: "Seri Diz" (ve bot açılışları) bazen elde çok daha
+// yüksek puanlı bir dizilim mümkünken düşük bir tanesini üretiyordu. Kök
+// neden, eski sürümün KATEGORİ SIRALI açgözlü olmasıydı (önce TÜM setleri
+// tüketip ANCAK SONRA serilere bakıyordu) — bu, düşük değerli bir seti,
+// tam da onun kullandığı bir taşa muhtaç olan ÇOK DAHA DEĞERLİ bir seriyi
+// bilmeden bloke edebiliyordu (ör. mavi 5'i bir "5 seti"ne kilitleyip
+// mavi 5-6-7-8 serisini 6-7-8'e düşürmek gibi).
+//
+// En yüksek toplam değeri veren kombinasyonu bulmak genel halde NP-zor bir
+// "ağırlıklı küme paketleme" problemidir; burada PRATİKTE çok güçlü sonuç
+// veren üç bağımsız stratejiyi (değer-açgözlü, set-önce, seri-önce) dener
+// ve TOPLAM DEĞERİ en yüksek olanı seçer. Üçü de zaten `validateGroup`'tan
+// geçmiş GEÇERLİ perler ürettiği için hangisi seçilirse seçilsin sonuç
+// oynanabilir kalır — sadece aralarından en iyisi seçilir. Bu fonksiyon HEM
+// botların açılış kararında HEM DE Yardımlı Mod'un "Seri Diz" butonunda
+// (bkz. assist.js#buildSeriesArrangement) kullanılır — zorluk seviyesi fark
+// etmeksizin TÜM botlar (Okey101'de zorluk sadece bot ismini etkiler, karar
+// mantığını değil) bu iyileştirmeden otomatik yararlanır.
+export function pickBotMelds(handTiles, okeyInfo) {
+  const strategies = [
+    greedyByValue(handTiles, okeyInfo),
+    greedyByOrder(handTiles, okeyInfo, 'sets-first'),
+    greedyByOrder(handTiles, okeyInfo, 'series-first'),
+  ];
+  return strategies.reduce((best, cur) => (meldsTotalValue(cur) > meldsTotalValue(best) ? cur : best));
 }
 
 // Elindeki TÜM geçerli çiftleri bulur (aynı renk+sayı ikilisi; sadece gerçek

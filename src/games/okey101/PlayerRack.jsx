@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Check, X, Layers, Rows3, RefreshCw, Wand2 } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, formatFoldBarrier, OPEN_THRESHOLD } from './gameLogic.js';
+import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, formatFoldBarrier, tekLabel, OPEN_THRESHOLD } from './gameLogic.js';
 import { buildSeriesArrangement, buildPairsArrangement, confirmedMeldTotal } from './assist.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
@@ -169,7 +169,8 @@ export default function PlayerRack({
   canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true, minPairsToOpen = 5,
-  assisted = false, tackableTileIds = null,
+  seriesTarget = OPEN_THRESHOLD,
+  assisted = false, tackableTileIds = null, sideTakeTileId = null, onCancelSideTake = null,
   pendingDraw = null, flipTileId = null, compact = false,
   flippedTileIds = null, onToggleFlippedTile = null, indicator = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
@@ -260,6 +261,7 @@ export default function PlayerRack({
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
   const centerFinishHoverElRef = useRef(null);
+  const returnHoverElRef = useRef(null);
   // Sürükleme hedefinin (slot indeksi / atma bölmesi) en güncel hâli. bkz.
   // updateDropTarget — hedef tespiti animasyon karesine ertelendiği için
   // bırakma anında state yerine bu ref okunur.
@@ -713,6 +715,34 @@ export default function PlayerRack({
     'Elinde çift yapılabilecek taş yok.',
   );
 
+  // KULLANICI İSTEĞİ: "Seri Aç"/"Çift Aç" — manuel seçim gerektiren
+  // (allSelectedAreCompleteGroups'a bağlı) genel butonların aksine, bunlar
+  // ONAYLI (baseGroups) perlerin/tam çiftlerin HEPSİNİ tek tıkla sunucuya
+  // gönderir. Sınırı geçip geçmediği yine SUNUCUDA (handleOpenSeries/
+  // handleOpenPairs) doğrulanır — burada sadece "gönderilecek bir şey var
+  // mı" ve mevcut buton kuralları (sıra/kural) kontrol edilir.
+  const assistedMeldGroupIds = useMemo(
+    () => Object.keys(baseGroups).filter((gid) => (baseGroups[gid] || []).length >= 3),
+    [baseGroups],
+  );
+  const assistedPairGroupIds = useMemo(
+    () => Object.keys(baseGroups).filter((gid) => (baseGroups[gid] || []).length === 2),
+    [baseGroups],
+  );
+  const assistedPairsRequired = hasOpenedAlready ? 1 : minPairsToOpen;
+
+  const assistedOpenSeries = async () => {
+    if (assistedMeldGroupIds.length === 0 || !canAct || !canOpenMeldsRule || !onOpenSeries) return;
+    await flushRackWrite();
+    await onOpenSeries(assistedMeldGroupIds);
+  };
+
+  const assistedOpenPairs = async () => {
+    if (assistedPairGroupIds.length === 0 || !canAct || !canOpenPairsRule || !onOpenPairs) return;
+    await flushRackWrite();
+    await onOpenPairs(assistedPairGroupIds);
+  };
+
   // NOT: `onOpenSeries`/`onOpenPairs`, sunucudaki (debounce'lanmış olabilecek)
   // `groups` alanını okuyup seçili grup id'lerini ORADA arar. Debounce henüz
   // gönderilmemiş bir per varsa, açmadan ÖNCE `flushRackWrite` ile hemen (ve
@@ -741,6 +771,14 @@ export default function PlayerRack({
       centerFinishHoverElRef.current.style.transform = '';
       centerFinishHoverElRef.current.style.filter = '';
       centerFinishHoverElRef.current = null;
+    }
+  };
+
+  const clearReturnHover = () => {
+    if (returnHoverElRef.current) {
+      returnHoverElRef.current.style.transform = '';
+      returnHoverElRef.current.style.filter = '';
+      returnHoverElRef.current = null;
     }
   };
 
@@ -832,15 +870,25 @@ export default function PlayerRack({
     // jestiyle yakalayabiliyoruz.
     const centerFinishEl = canDiscard ? el?.closest('[data-center-finish-zone]') : null;
     const tackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
+    // KULLANICI İSTEĞİ: yandan alınan (henüz kullanılmamış) taş, ortadaki
+    // "Taşı Geri Koy" butonuna ek olarak SOLDAN ÇEK bölmesine sürüklenerek de
+    // iade edilebilsin. Sadece TAM O taş (tek başına, gruplanmamış) sürüklenirken
+    // ve o taş gerçekten bekleyen sideTake ise geçerlidir.
+    const returnEl = (sideTakeTileId && d.tileIds.length === 1 && d.tile.id === sideTakeTileId)
+      ? el?.closest('[data-return-zone]') : null;
 
     if (tackEl !== tackHoverElRef.current) { clearTackHover(); if (tackEl) { tackEl.style.backgroundColor = TACK_HOVER_COLOR; tackHoverElRef.current = tackEl; } }
     if (centerFinishEl !== centerFinishHoverElRef.current) {
       clearCenterFinishHover();
       if (centerFinishEl) { centerFinishEl.style.transform = 'scale(1.15)'; centerFinishEl.style.filter = 'brightness(1.3)'; centerFinishHoverElRef.current = centerFinishEl; }
     }
+    if (returnEl !== returnHoverElRef.current) {
+      clearReturnHover();
+      if (returnEl) { returnEl.style.transform = 'scale(1.15)'; returnEl.style.filter = 'brightness(1.3)'; returnHoverElRef.current = returnEl; }
+    }
 
     let index = null; let discard = false;
-    if (tackEl || centerFinishEl) { /* hedef zaten işleme/bitirme alanı */ }
+    if (tackEl || centerFinishEl || returnEl) { /* hedef zaten işleme/bitirme/iade alanı */ }
     else if (slotEl) index = Number(slotEl.dataset.slotIndex);
     else if (discardEl) discard = true;
 
@@ -893,8 +941,10 @@ export default function PlayerRack({
     dropTargetRef.current = { index: null, discard: false };
     const tackEl = tackHoverElRef.current;
     const centerFinishEl = centerFinishHoverElRef.current;
+    const returnEl = returnHoverElRef.current;
     clearTackHover();
     clearCenterFinishHover();
+    clearReturnHover();
     setHoverIndex(null);
     setHoverDiscard(false);
     if (!d) return;
@@ -902,6 +952,11 @@ export default function PlayerRack({
     if (!d.moved) {
       // Uzun basma zaten taşı ters çevirdi; ayrıca seçim yapılmaz.
       if (!d.longPressed) handleTileTap(d.tile);
+      return;
+    }
+
+    if (returnEl) {
+      if (onCancelSideTake) optimisticallyRemoveTile(d.tile.id, () => onCancelSideTake());
       return;
     }
 
@@ -1021,14 +1076,34 @@ export default function PlayerRack({
   const sideSlotH = Math.round(sideSlotW * TILE_ASPECT);
   const sideTileW = Math.round(tileW * 1.05);
 
+  // KULLANICI İSTEĞİ: yandan aldığın (henüz kullanmadığın) taşı iade etmek
+  // için ortadaki "Taşı Geri Koy" butonu tek yol OLMASIN — aynı bölme
+  // (taşın buradan geldiği yer) bu taşı GERİ SÜRÜKLEYİP bırakmak için de bir
+  // hedef olur. `sideTakeTileId` doluyken bu bölme normal "yandan çek"
+  // rolünden ayrılır — görünümü (kırmızımsı) ve davranışı buna göre değişir.
+  // KÖK NEDEN DÜZELTMESİ: `onPointerMove`/`onPointerUp` gibi JSX prop'ları
+  // `sideTakeTileId` yokken `undefined` DEĞERİYLE veriliyordu — spread'den
+  // SONRA geldikleri için (JSX'te sonraki prop kazanır) `incomingDragHandlers`
+  // içindeki GERÇEK işleyicileri `undefined` ile EZİP normal "yandan çek"
+  // akışını komple bozuyordu (tıklama/sürükleme hiçbir şey yapmıyordu). İki
+  // mod KARŞILIKLI DIŞLAYICI olduğu için (`canTakeIncoming` ve
+  // `sideTakeTileId` asla aynı anda doğru olmaz) artık aktif OLMAYAN taraf
+  // BOŞ bir nesne ({}), `undefined` değerli anahtarlar İÇEREN bir nesne
+  // DEĞİL — böylece hangisi aktifse onun işleyicileri ayakta kalır.
+  const takeHandlers = (canTakeIncoming && incomingDragHandlers) ? incomingDragHandlers : {};
+  const returnHandlers = sideTakeTileId ? { onPointerMove: handlePointerMove, onPointerUp: finishDrag, onPointerCancel: finishDrag } : {};
   const incomingSlot = (
     <div className="flex flex-col items-center gap-1">
       <div
-        {...(canTakeIncoming && incomingDragHandlers ? incomingDragHandlers : {})}
-        title={canTakeIncoming ? 'Solundaki oyuncunun attığı taşı çek (tıkla ya da ıstakaya sürükle)' : 'Solundaki oyuncunun son attığı taş'}
+        {...takeHandlers}
+        {...returnHandlers}
+        data-return-zone={sideTakeTileId ? 'true' : undefined}
+        title={sideTakeTileId
+          ? 'Yandan aldığın taşı geri koymak için buraya sürükle'
+          : (canTakeIncoming ? 'Solundaki oyuncunun attığı taşı çek (tıkla ya da ıstakaya sürükle)' : 'Solundaki oyuncunun son attığı taş')}
         style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
         className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
-          ${canTakeIncoming ? 'border-amber-400 bg-amber-400/10 animate-pulse cursor-grab active:cursor-grabbing' : 'border-slate-600/70 bg-slate-900/40'}`}
+          ${sideTakeTileId ? 'border-rose-400 bg-rose-500/10 animate-pulse' : (canTakeIncoming ? 'border-amber-400 bg-amber-400/10 animate-pulse cursor-grab active:cursor-grabbing' : 'border-slate-600/70 bg-slate-900/40')}`}
       >
         {incomingDiscard
           ? <Tile tile={incomingDiscard} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canTakeIncoming} />
@@ -1104,20 +1179,37 @@ export default function PlayerRack({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            {/* YARDIMLI MOD: onaylanmış per toplamı + otomatik dizme butonları.
-                Toplam, 101 barajını GEÇTİĞİNDE yeşile döner — öğrenen oyuncu
-                "açabilir miyim?" sorusunu kafadan toplamadan görür. */}
+            {/* YARDIMLI MOD: onaylanmış per toplamı (+ hedefi), çift ilerlemesi
+                ve otomatik dizme/açma butonları. Rozetler, ilgili eşiğe
+                ULAŞILDIĞINDA yeşile döner — öğrenen oyuncu "açabilir miyim?"
+                sorusunu kafadan toplamadan görür. */}
             {assisted && (
               <>
                 <span
-                  title="Onayladığın perlerin toplam değeri (çiftler bu toplama girmez)"
-                  className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border ${
-                    assistedTotal >= OPEN_THRESHOLD
+                  title={hasOpenedAlready
+                    ? 'Onayladığın (seri/set) perlerin toplam değeri'
+                    : `Seri/Set ile açman için ulaşman GEREKEN toplam ${seriesTarget}${seriesTarget !== OPEN_THRESHOLD ? ' (masadaki baraj nedeniyle 101\'den yüksek)' : ''}`}
+                  className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
+                    assistedTotal > 0 && (hasOpenedAlready || assistedTotal >= seriesTarget)
                       ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
                       : 'bg-slate-900/60 text-slate-300 border-slate-600'
                   }`}
                 >
-                  {assistedTotal > 0 ? formatFoldBarrier(assistedTotal) : '—'}
+                  {assistedTotal === 0
+                    ? '—'
+                    : hasOpenedAlready
+                      ? formatFoldBarrier(assistedTotal)
+                      : `${assistedTotal}/${seriesTarget} (${tekLabel(assistedTotal)} / ${tekLabel(seriesTarget)})`}
+                </span>
+                <span
+                  title={`Çift ile açman için gereken çift sayısı: ${assistedPairsRequired}`}
+                  className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
+                    assistedPairGroupIds.length > 0 && assistedPairGroupIds.length >= assistedPairsRequired
+                      ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
+                      : 'bg-slate-900/60 text-slate-300 border-slate-600'
+                  }`}
+                >
+                  {assistedPairGroupIds.length}/{assistedPairsRequired}
                 </span>
                 <button
                   type="button"
@@ -1134,6 +1226,24 @@ export default function PlayerRack({
                   className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 px-2.5 py-1 rounded-lg transition-colors"
                 >
                   <Wand2 className="w-3.5 h-3.5" /> Çift Diz
+                </button>
+                <button
+                  type="button"
+                  onClick={assistedOpenSeries}
+                  disabled={!canAct || !canOpenMeldsRule || assistedMeldGroupIds.length === 0}
+                  title="Onayladığın TÜM seri/setleri (sınırı geçiyorsa) masaya indir"
+                  className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Rows3 className="w-3.5 h-3.5" /> Seri Aç
+                </button>
+                <button
+                  type="button"
+                  onClick={assistedOpenPairs}
+                  disabled={!canAct || !canOpenPairsRule || assistedPairGroupIds.length === 0}
+                  title="Onayladığın TÜM çiftleri (yeterliyse) masaya indir"
+                  className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Layers className="w-3.5 h-3.5" /> {pairsButtonLabel}
                 </button>
               </>
             )}
