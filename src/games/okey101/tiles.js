@@ -37,7 +37,19 @@ export function normalizeRack(rack) {
   return next;
 }
 
-export const SETUP_DURATION_MS = 40000;
+// El dağıtıldıktan sonra, ilk oyuncu oynamaya başlamadan ÖNCE herkese verilen
+// "elini düzenle/perlerini diz" süresi. KULLANICI İSTEĞİ: 40sn -> 25sn
+// (hamle süresi 45sn'ye çıktığı için bu ek hazırlık payı kısaltıldı).
+// NOT: "Yardımlı" modda el zaten OTOMATİK dizilmiş geldiği için bu süre HİÇ
+// verilmez (bkz. Okey101Game#assisted).
+export const SETUP_DURATION_MS = 25000;
+
+// Bir oyuncunun tek bir hamle (çek + at) için süresi. KULLANICI İSTEĞİ:
+// 30sn -> 45sn. Burada (tiles.js'te) durur çünkü hem Okey101Game hem de
+// gameLogic (koltuk devri sırasında hamle süresini tazelerken) aynı değeri
+// kullanmak zorundadır — eskiden gameLogic'te 30000 SABİT KODLUYDU ve bu
+// değer değiştiğinde sessizce tutarsız kalıyordu.
+export const TURN_DURATION_MS = 45000;
 
 // 4 renk x (1-13) x 2 kopya = 104 + 2 Sahte Okey = 106 taş.
 export function createTileSet() {

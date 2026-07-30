@@ -53,7 +53,7 @@ function ToggleSwitch({ checked, onChange, onLabel, offLabel, disabled }) {
   );
 }
 
-// `rules`: { gameType: 'ffa'|'2v2', foldingEnabled, foldToPartnerEnabled, botDifficulty }
+// `rules`: { gameType: 'ffa'|'2v2', assistedEnabled, foldingEnabled, foldToPartnerEnabled, botDifficulty }
 // NOT: "yandan taş alma -> elini aç ya da geri koy" kuralı ve buna bağlı ceza
 // (çekilen taşın 10/20 katı) artık koşulsuz uygulanır, bu yüzden burada ayrı
 // bir "Ceza Kuralı" ayarı YOKTUR.
@@ -79,6 +79,16 @@ export default function RulesPanel({ rules, isHost, onChange }) {
             options={[{ value: 'ffa', label: 'Tekli' }, { value: '2v2', label: 'Eşli' }]}
             onChange={(v) => onChange('gameType', v)}
           />
+        </RuleRow>
+
+        {/* KULLANICI İSTEĞİ: "Yardımlı" mod — yeni/öğrenen oyuncular için
+            arayüz destekleri (işlek taş işareti, per toplamı, otomatik
+            seri/çift dizme, Okey'in otomatik ters çevrilmesi). Oyun
+            KURALLARINI hiç değiştirmez, sadece bilgiyi görünür kılar; bu
+            yüzden el de OTOMATİK dizili geldiği için ayrıca hazırlık süresi
+            verilmez (bkz. Okey101Game). */}
+        <RuleRow label="Yardımlı Mod" hint="İşlek taş işareti, per toplamı, otomatik seri/çift dizme ve Okey'in kendiliğinden ters dönmesi. El otomatik dizili geldiği için hazırlık süresi verilmez.">
+          <ToggleSwitch disabled={!isHost} checked={!!rules.assistedEnabled} onChange={(v) => onChange('assistedEnabled', v)} onLabel="Yardımlı" offLabel="Klasik" />
         </RuleRow>
 
         <RuleRow label="Katlama Kuralı">

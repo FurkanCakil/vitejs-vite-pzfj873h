@@ -1,8 +1,9 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, X, Layers, Rows3, RefreshCw } from 'lucide-react';
+import { Check, X, Layers, Rows3, RefreshCw, Wand2 } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup, isValidPairTiles } from './gameLogic.js';
+import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, formatFoldBarrier, OPEN_THRESHOLD } from './gameLogic.js';
+import { buildSeriesArrangement, buildPairsArrangement, confirmedMeldTotal } from './assist.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 
@@ -75,7 +76,7 @@ export const maxRackContentWidth = () => {
 // yeniden ürettiği için taş nesnelerinin referansı sürekli değişir, oysa taşın
 // kendisi aynıdır.
 const RackSlot = React.memo(function RackSlot({
-  index, tile, tileW, tileH, isHover, hidden, isPending, selected, grouped, faceDown, dragging, revealing, okeyInfo, handlers,
+  index, tile, tileW, tileH, isHover, hidden, isPending, selected, grouped, faceDown, dragging, revealing, tackable, okeyInfo, handlers,
 }) {
   return (
     <div
@@ -95,6 +96,7 @@ const RackSlot = React.memo(function RackSlot({
           grouped={grouped}
           faceDown={faceDown}
           dragging={dragging}
+          tackable={tackable}
           className={revealing ? 'okey101-tile-reveal' : ''}
           onPointerDown={isPending ? undefined : (e) => handlers.onPointerDown(e, index, tile)}
         />
@@ -106,7 +108,7 @@ const RackSlot = React.memo(function RackSlot({
   && a.tileW === b.tileW && a.tileH === b.tileH
   && a.isHover === b.isHover && a.hidden === b.hidden && a.isPending === b.isPending
   && a.selected === b.selected && a.grouped === b.grouped && a.faceDown === b.faceDown
-  && a.dragging === b.dragging && a.revealing === b.revealing
+  && a.dragging === b.dragging && a.revealing === b.revealing && a.tackable === b.tackable
   && a.handlers === b.handlers && a.okeyInfo === b.okeyInfo
   && (a.tile?.id ?? null) === (b.tile?.id ?? null)
   && (a.tile?.color ?? null) === (b.tile?.color ?? null)
@@ -167,6 +169,7 @@ export default function PlayerRack({
   canAct = false, canDiscard = false, hasOpenedAlready = false, lastDiscardTile = null,
   incomingDiscard = null, canTakeIncoming = false, incomingDragHandlers = null,
   canOpenPairsRule = true, pairsButtonLabel = 'Çift Aç', canOpenMeldsRule = true, minPairsToOpen = 5,
+  assisted = false, tackableTileIds = null,
   pendingDraw = null, flipTileId = null, compact = false,
   flippedTileIds = null, onToggleFlippedTile = null, indicator = null,
   onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
@@ -631,14 +634,17 @@ export default function PlayerRack({
         return;
       }
     } else if (selectedIds.length >= 3) {
-      // KULLANICI İSTEĞİ: seri, ıstakada TERSTEN (ör. 9-8-7) ya da başka bir
-      // sırayla dizilse bile — sayı kümesi geçerli bir seri/set oluşturuyorsa —
-      // onaylanabilsin. Eskiden burada `isProperlyOrderedGroup` da ZORUNLU
-      // tutulup ters diziliş "Perinizi düzgün diziniz!" ile reddediliyordu.
-      // Görsel sıralama artık burada değil, masaya AÇILIRKEN (bkz.
-      // Okey101Game.jsx#orderGroupTiles çağrıları) otomatik yapılıyor.
+      // KULLANICI İSTEĞİ: seri, ıstakada KÜÇÜKTEN BÜYÜĞE (7-8-9) ya da
+      // BÜYÜKTEN KÜÇÜĞE (9-8-7) dizilmiş olabilir — ikisi de onaylanır. Ama
+      // KARIŞIK bir sıra (ör. 9-7-8) kabul EDİLMEZ (bkz.
+      // gameLogic#isSequentiallyOrderedGroup). Masaya açılırken diziliş her
+      // koşulda artan sıraya normalize edilir (Okey101Game#orderGroupTiles).
       const result = validateGroup(orderedTiles, okeyInfo);
       if (!result.valid) { showToast?.('Geçersiz Per Dizilimi!', 'red'); return; }
+      if (!isSequentiallyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
+        showToast?.('Perinizi sırayla diziniz (küçükten büyüğe ya da büyükten küçüğe)!', 'red');
+        return;
+      }
     }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const ordered = orderedTiles.map((t) => t.id);
@@ -663,6 +669,10 @@ export default function PlayerRack({
     const orderedTiles = baseRack.filter((t) => t && selected.has(t.id));
     const result = validateGroup(orderedTiles, okeyInfo);
     if (!result.valid) { showToast?.('Bu taşla per güncellenemez — geçersiz dizilim!', 'red'); return; }
+    if (!isSequentiallyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
+      showToast?.('Perinizi sırayla diziniz (küçükten büyüğe ya da büyükten küçüğe)!', 'red');
+      return;
+    }
     const oldGid = selectedGroupIds[0];
     const newGid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const nextGroups = { ...baseGroups };
@@ -670,6 +680,38 @@ export default function PlayerRack({
     nextGroups[newGid] = orderedTiles.map((t) => t.id);
     commit(baseRack, nextGroups, { immediate: true });
   };
+
+  // ============================================================
+  // YARDIMLI MOD (rules.assistedEnabled) — otomatik dizme
+  // ============================================================
+  // KULLANICI İSTEĞİ: "Seri Diz" elindeki en değerli seri/set kombinasyonunu,
+  // "Çift Diz" ise elindeki TÜM çiftleri per olarak ONAYLAYIP ıstakayı en sol
+  // üstten sağa doğru yeniden dizer (bkz. assist.js). Perler oyuncunun elle
+  // kurabileceğiyle aynı doğrulayıcılardan geçer — kural avantajı YOKTUR.
+  //
+  // `cols` (ekrandaki gerçek satır uzunluğu) verilir: bir per satır sonunda
+  // BÖLÜNMEZ, sığmıyorsa bütün halinde bir alt satıra iner.
+  const assistedTotal = useMemo(
+    () => (assisted ? confirmedMeldTotal(baseGroups, baseRack, okeyInfo) : 0),
+    [assisted, baseGroups, baseRack, okeyInfo],
+  );
+
+  const applyArrangement = (result, emptyMsg) => {
+    if (!result) { showToast?.(emptyMsg, 'red'); return; }
+    playOkeySound('tile');
+    // `immediate`: kasıtlı bir buton tıklaması — debounce beklenmez.
+    commit(result.rack, result.groups, { immediate: true });
+  };
+
+  const arrangeSeries = () => applyArrangement(
+    buildSeriesArrangement(baseRackRef.current, okeyInfo, cols),
+    'Elinde per yapılabilecek bir seri/set yok.',
+  );
+
+  const arrangePairs = () => applyArrangement(
+    buildPairsArrangement(baseRackRef.current, okeyInfo, indicator, cols),
+    'Elinde çift yapılabilecek taş yok.',
+  );
 
   // NOT: `onOpenSeries`/`onOpenPairs`, sunucudaki (debounce'lanmış olabilecek)
   // `groups` alanını okuyup seçili grup id'lerini ORADA arar. Debounce henüz
@@ -961,6 +1003,7 @@ export default function PlayerRack({
               faceDown={!!tile && flippedIds.has(tile.id)}
               dragging={!!tile && !!draggingIds?.has(tile.id)}
               revealing={!!tile && flipTileId === tile.id}
+              tackable={assisted && !!tile && !!tackableTileIds?.has(tile.id)}
               okeyInfo={stableOkeyInfo}
               handlers={slotHandlers}
             />
@@ -1060,8 +1103,43 @@ export default function PlayerRack({
             )}
           </div>
 
-          {allSelectedAreCompleteGroups && (
-            <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* YARDIMLI MOD: onaylanmış per toplamı + otomatik dizme butonları.
+                Toplam, 101 barajını GEÇTİĞİNDE yeşile döner — öğrenen oyuncu
+                "açabilir miyim?" sorusunu kafadan toplamadan görür. */}
+            {assisted && (
+              <>
+                <span
+                  title="Onayladığın perlerin toplam değeri (çiftler bu toplama girmez)"
+                  className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border ${
+                    assistedTotal >= OPEN_THRESHOLD
+                      ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
+                      : 'bg-slate-900/60 text-slate-300 border-slate-600'
+                  }`}
+                >
+                  {assistedTotal > 0 ? formatFoldBarrier(assistedTotal) : '—'}
+                </span>
+                <button
+                  type="button"
+                  onClick={arrangeSeries}
+                  title="Elindeki en değerli seri/setleri bulup per olarak onayla ve ıstakayı yeniden diz"
+                  className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Wand2 className="w-3.5 h-3.5" /> Seri Diz
+                </button>
+                <button
+                  type="button"
+                  onClick={arrangePairs}
+                  title="Elindeki tüm çiftleri per olarak onayla ve ıstakayı yeniden diz"
+                  className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Wand2 className="w-3.5 h-3.5" /> Çift Diz
+                </button>
+              </>
+            )}
+
+            {allSelectedAreCompleteGroups && (
+              <>
               <button
                 type="button"
                 onClick={openSeries}
@@ -1080,8 +1158,9 @@ export default function PlayerRack({
               >
                 <Layers className="w-3.5 h-3.5" /> {pairsButtonLabel}
               </button>
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
       )}
 

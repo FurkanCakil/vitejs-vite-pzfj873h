@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, getDocFromServer, updateDoc, runTransaction, deleteField } from 'firebase/firestore';
 import { Loader2, Volume2, VolumeX, UserPlus } from 'lucide-react';
 import Okey101Lobby from './Okey101Lobby.jsx';
@@ -11,11 +11,12 @@ import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound, isOkeySoundMuted, setOkeySoundMuted, subscribeOkeySoundMuted } from '../../utils/okeySound.js';
-import { dealTiles, SETUP_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
+import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
+import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
 import {
   getNextTurnUid, getPrevTurnUid, validateGroup, validateGroups, computeSelectedGroupsValue,
-  validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, findJokerReplacements, computeRoundEnd, getGroupOpenEnds, orderGroupTiles,
+  validatePairs, isValidPairTiles, canTackTile, findTackableSpotsForTile, findJokerReplacements, computeRoundEnd, getGroupOpenEnds, orderGroupTiles, isTileTackable,
   formatFoldBarrier, isExemptFromFoldBarrier, requiredPairsToOpen,
   anyPairsOnTable, canPlayerLayPairs, canPlayerLayMelds, pickPairsHostUid,
   addScoreDelta, pairsOpenBonus, seriesOpenBonus, buildSeatSwapUpdate,
@@ -25,14 +26,13 @@ import {
   randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, shouldTakeDiscardToOpen, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from './botAI.js';
 
-const TURN_DURATION_MS = 30000;
 // Istaka panelinin (yeşil çerçeve) kendi iç boşluğu — `sm:p-4`. Panel genişliği
 // üst sınırı hesaplanırken taş alanının üstüne bu pay eklenir.
 const RACK_PANEL_PADDING_PX = 16;
 // 4. madde: Elini AÇAN oyuncuya, açtığı andan itibaren ek süre verilir —
 // hem masaya çıkan perlere taş işlemesi (tacking) hem de elinde kalanları
 // gözden geçirip hangisini atacağına karar vermesi için. Açma anı zaten
-// turun en yoğun/en çok düşünülen anı; normal 30sn buna yetmiyordu.
+// turun en yoğun/en çok düşünülen anı; normal hamle süresi buna yetmiyordu.
 const OPEN_EXTRA_TIME_MS = 15000;
 
 // Elini açan oyuncunun turuna eklenecek yeni son tarih: kalan süresi NE OLURSA
@@ -67,6 +67,48 @@ function seatOrderedPlayers(players, rules, teams) {
   const ordered = [a[0], b[0], a[1], b[1]];
   const sameSet = ordered.length === players.length && ordered.every((uid) => players.includes(uid));
   return sameSet ? ordered : players;
+}
+
+// El dağıtıldıktan sonraki "hazırlık" alanlarını üretir — VE yardımlı modda
+// (rules.assistedEnabled) her İNSAN oyuncunun ıstakasını yerinde otomatik
+// olarak seri/set dizilmiş hâle getirir.
+//
+// KULLANICI İSTEĞİ: "el ilk dağıtıldığında da otomatik olarak seri dizilmiş
+// şekilde gelsin ve dolayısıyla ... oyun başında ekstra per dizmek için
+// verilecek süre olmasın." Yani yardımlı modda `setupPhase` HİÇ açılmaz; ilk
+// oyuncu doğrudan oynamaya başlar.
+//
+// `racks` ve `groups` YERİNDE (in-place) güncellenir — ikisi de çağıranın az
+// önce oluşturduğu YEREL nesnelerdir, paylaşılan bir state değil.
+// Bot ıstakaları BİLEREK dizilmez: kimse görmez ve botlar kararlarını her
+// turda kendi aramasıyla (botAI#pickBotMelds) yeniden üretir; ayrıca süre
+// aşımı atışı onaylı perleri korumaya çalıştığı için (bkz.
+// botAI#pickSmallestSafeDiscard) gereksiz bir yan etki doğardı.
+function buildDealSetup(racks, groups, okey, rules, isBotSeat) {
+  const now = Date.now();
+  if (!rules?.assistedEnabled) {
+    return {
+      setupPhase: true,
+      setupEndsAt: now + SETUP_DURATION_MS,
+      turnDeadline: now + SETUP_DURATION_MS + TURN_DURATION_MS,
+    };
+  }
+  // NOT (satır uzunluğu): Dağıtımı HOST yapar ve her oyuncunun EKRAN
+  // genişliğini bilemez — bu yüzden yerleşim, Firestore'daki kanonik düzene
+  // (RACK_ROW_LENGTH = 15 sütun; buildSeriesArrangement'ın varsayılanı) göre
+  // hesaplanır. Dar telefonlarda ıstaka 10 sütun olarak çizildiği için (bkz.
+  // PlayerRack#rackColumns) bir per satır sonunda GÖRSEL olarak bölünmüş
+  // görünebilir; oyuncu "Seri Diz"e basarsa o hesap istemcide GERÇEK sütun
+  // sayısıyla yapılır ve yerleşim kusursuz olur. Bölünme sadece görseldir —
+  // perin bitişikliği/geçerliliği slot SIRASINA bağlıdır, satıra değil.
+  Object.keys(racks).forEach((uid) => {
+    if (isBotSeat?.(uid)) return;
+    const arranged = buildSeriesArrangement(racks[uid], okey);
+    if (!arranged) return;
+    racks[uid] = arranged.rack;
+    groups[uid] = arranged.groups;
+  });
+  return { setupPhase: false, setupEndsAt: null, turnDeadline: now + TURN_DURATION_MS };
 }
 
 // 4. Faz: Gösterge/Okey belirleme, katı per doğrulaması (sadece toplam yetmez —
@@ -116,7 +158,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // İlk snapshot'ta (ref henüz null) ses ÇALINMAZ — odaya sonradan katılan ya
   // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
   // topluca duymasın diye.
-  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null, drawPileLen: null, tackCount: null, tackSignature: null });
+  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, roundKey: undefined, drawPileLen: null, tackCount: null, tackSignature: null });
 
   // Ses aç/kapa tercihi (tarayıcıda kalıcı — bkz. okeySound#setOkeySoundMuted).
   const [soundMuted, setSoundMuted] = useState(() => isOkeySoundMuted());
@@ -190,15 +232,21 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     if (prev === false && roundEndedNow) playOkeySound('roundEnd');
   }, [roundEndedNow]);
 
-  // Yeni el başladı (kurulum fazına girildi) -> taşların dağıtılma sesi.
-  const setupPhaseNow = !!roomData?.setupPhase;
+  // Yeni el başladı -> taşların dağıtılma sesi.
+  //
+  // Tetikleyici GÖSTERGE'nin kimliğidir (her el yeni bir Gösterge belirlenir),
+  // `setupPhase` DEĞİL: "Yardımlı" modda el otomatik dizili geldiği için
+  // hazırlık fazı HİÇ açılmaz (bkz. buildDealSetup) ve setupPhase'e bağlı eski
+  // tetikleyici o modda dağıtım sesini asla çalmıyordu.
+  const roundKey = roomData?.indicator?.id ?? null;
   useEffect(() => {
-    const prev = soundRefs.current.setupPhase;
-    soundRefs.current.setupPhase = setupPhaseNow;
-    // İlk girişte de çalar (prev === null): oyuna girdiğinde taşlar zaten
+    const prev = soundRefs.current.roundKey;
+    soundRefs.current.roundKey = roundKey;
+    if (!roundKey) return;
+    // İlk girişte de çalar (prev === undefined): oyuna girdiğinde taşlar zaten
     // dağıtılıyor olur, bu ses o anın parçasıdır.
-    if (setupPhaseNow && prev !== true) playOkeySound('deal');
-  }, [setupPhaseNow]);
+    if (prev !== roundKey) playOkeySound('deal');
+  }, [roundKey]);
 
   // Tam ekran modunda ıstaka ve taşlar belirgin şekilde büyür (sadece etrafı
   // izole etmek yetmiyor; asıl fayda daha rahat dokunulabilir taşlar).
@@ -286,10 +334,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const okey = computeOkeyInfo(indicator);
     const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {}; const openedWithPairs = {};
     players.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; openedWithPairs[uid] = false; });
+    const isBotSeat = (uid) => !!roomData.isBotPlayer?.[uid] || isBotUid(uid);
+    const setup = buildDealSetup(racks, groups, okey, roomData.rules, isBotSeat);
     updateDoc(roomRef, {
       players, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened, openedWithPairs,
-      setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
-      turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
+      ...setup,
+      turn: starterUid, starterUid, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
       roundEnded: false, roundResult: null, roundStartScores: { ...(roomData.scores || {}) }, foldMultiplier: 1,
       centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
       takenOkeys: {},
@@ -618,6 +668,58 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       return next;
     });
   };
+
+  // ============================================================
+  // YARDIMLI MOD (rules.assistedEnabled)
+  // ============================================================
+  const assisted = !!roomData.rules?.assistedEnabled;
+
+  // KULLANICI İSTEĞİ: Yardımlı modda elime GERÇEK Okey geldiğinde (dağıtımda ya
+  // da sonradan çekerek) taş KENDİLİĞİNDEN ters çevrilmiş gösterilir — gerçek
+  // masada okeyi fark edip ters koymak gibi. Klasik modda oyuncu bunu 1sn
+  // basılı tutarak KENDİSİ yapar (bkz. PlayerRack#LONG_PRESS_MS).
+  //
+  // `autoFlippedRef`: bir taş SADECE BİR KEZ otomatik çevrilir. Aksi halde
+  // oyuncu okeyi bilerek düz çevirmek istediğinde (toggleFlippedTile) bu efekt
+  // her render'da onu geri çevirip kullanıcıyla savaşırdı.
+  const autoFlippedRef = useRef(new Set());
+  useEffect(() => {
+    if (!assisted) return;
+    const okeyIds = findOkeyTileIds(roomData.racks?.[user.uid], roomData.okey || null);
+    const fresh = okeyIds.filter((id) => !autoFlippedRef.current.has(id));
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => autoFlippedRef.current.add(id));
+    setFlippedTileIds((prev) => {
+      const next = new Set(prev);
+      fresh.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [assisted, roomData.racks, roomData.okey, user.uid]);
+  // Yeni el (yeni Gösterge) -> "bu taşı zaten çevirdim" hafızası da sıfırlanır;
+  // taş id'leri her el yeniden üretildiği için (bkz. tiles.js#createTileSet)
+  // eski kayıtlar yeni elde yanlış taşa yapışırdı.
+  useEffect(() => { autoFlippedRef.current = new Set(); }, [roomData.indicator?.id]);
+
+  // Yardımlı modda "işlek" (masadaki açık bir pere oturan) taşlarımın id'leri —
+  // Tile bunları alt-orta sembolün yerine ★ ile işaretler (bkz.
+  // Tile#TackableMark). Oyuncu hem hangi taşı işleyebileceğini hem de hangisini
+  // atarsa +101 ceza yiyeceğini görür.
+  //
+  // PERFORMANS: `isTileTackable` her taş için masadaki TÜM açık perleri tarar.
+  // Bu yüzden hesap SADECE sunucu verisi (racks/openedHands/okey) değiştiğinde
+  // yenilenir — hamle geri sayımının 250ms'lik YEREL tik'lerinde tekrar
+  // çalışmaz. Hook olduğu için aşağıdaki erken return'lerden ÖNCE durmak
+  // zorundadır (bkz. dosyadaki diğer aynı gerekçeli hook'lar).
+  const tackableTileIds = useMemo(() => {
+    if (!assisted) return null;
+    const okeyNow = roomData.okey || null;
+    const opened = roomData.openedHands || {};
+    const ids = new Set();
+    (roomData.racks?.[user.uid] || []).forEach((t) => {
+      if (t && isTileTackable(t, opened, okeyNow)) ids.add(t.id);
+    });
+    return ids;
+  }, [assisted, roomData.racks, roomData.openedHands, roomData.okey, user.uid]);
 
   // MASA ASLA LOBİYE "DÜŞMEZ": taşlar bir kez dağıtıldıysa (racks var) oda
   // durumu ne olursa olsun (ör. biri sekme değiştirdiğinde eskiden yazılan
@@ -1751,10 +1853,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const okey = computeOkeyInfo(indicator);
       const groups = {}; const discardPiles = {}; const openedHands = {}; const hasOpened = {}; const openedWithPairs = {};
       roundPlayers.forEach((uid) => { groups[uid] = {}; discardPiles[uid] = []; openedHands[uid] = []; hasOpened[uid] = false; openedWithPairs[uid] = false; });
+      const isBotSeat = (uid) => !!data.isBotPlayer?.[uid] || isBotUid(uid);
+      const setup = buildDealSetup(racks, groups, okey, data.rules, isBotSeat);
       t.update(roomRef, {
         players: roundPlayers, racks, drawPile, indicator, okey, groups, discardPiles, openedHands, hasOpened, openedWithPairs,
-        setupPhase: true, setupEndsAt: Date.now() + SETUP_DURATION_MS,
-        turn: starterUid, starterUid, turnDeadline: Date.now() + SETUP_DURATION_MS + TURN_DURATION_MS, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
+        ...setup,
+        turn: starterUid, starterUid, hasDrawnThisTurn: true, sideTake: null, forcedPileDraw: false,
         roundEnded: false, roundResult: null, roundStartScores: { ...(data.scores || {}) },
         centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null, foldBarrier: null, foldPairsBarrier: null,
         takenOkeys: {},
@@ -2019,6 +2123,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             {roomData.rules?.foldToPartnerEnabled ? 'Eşe Katlama Var' : 'Eşe Katlama Yok'}
           </span>
         )}
+        {/* Yardımlı mod açıksa diğer kural rozetleriyle aynı yerde belirtilir —
+            masadaki herkes bu odanın yardımlı olduğunu görür. */}
+        {assisted && (
+          <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full bg-indigo-500/15 border-indigo-500/40 text-indigo-300">
+            Yardımlı
+          </span>
+        )}
         {/* Ses aç/kapa. Sarmalayıcı `pointer-events-none` olduğu için buton
             kendi üzerinde bunu geri açar. Tercih tarayıcıda saklanır. */}
         <button
@@ -2278,6 +2389,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             canOpenMeldsRule={myCanLayMelds}
             pairsButtonLabel={pairsButtonLabel}
             minPairsToOpen={myMinPairsToOpen}
+            assisted={assisted}
+            tackableTileIds={tackableTileIds}
             pendingDraw={pendingDraw}
             flipTileId={drawFlipId}
             hasOpenedAlready={myHasOpened}

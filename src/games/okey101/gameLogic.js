@@ -1,4 +1,4 @@
-import { isOkeyTile, effectiveTile } from './tiles.js';
+import { isOkeyTile, effectiveTile, TURN_DURATION_MS } from './tiles.js';
 
 // Bir per'i "joker (gerçek Okey) sayısı" + "normal taşlar" olarak ayırır.
 // Sahte Okey normal taşlar arasında, temsil ettiği yüz değeriyle (göstergenin
@@ -263,6 +263,20 @@ export function isProperlyOrderedGroup(tiles, type, okeyInfo) {
   if (type !== 'seri' || !tiles || tiles.length < 3) return true;
   const { jokerCount, normals } = splitTiles(tiles, okeyInfo);
   return seriWindows(normals, jokerCount).some((w) => windowMatchesOrder(tiles, w, okeyInfo));
+}
+
+// KULLANICI İSTEĞİ: Bir seri ıstakada KÜÇÜKTEN BÜYÜĞE (7-8-9) ya da BÜYÜKTEN
+// KÜÇÜĞE (9-8-7) dizilmiş olabilir — ikisi de "düzgün dizilmiş" sayılır ve
+// onaylanabilir. Ama KARIŞIK bir sıra (ör. 9-7-8) KABUL EDİLMEZ.
+//
+// `isProperlyOrderedGroup` sadece ARTAN sırayı kabul eder; ters dizilişi de
+// kapsamak için taş dizisi bir de TERS ÇEVRİLEREK denenir. (Masaya açılırken
+// diziliş zaten `orderGroupTiles` ile her koşulda artan sıraya normalize
+// edilir — yani ekranda per her zaman 7-8-9 olarak görünür.)
+export function isSequentiallyOrderedGroup(tiles, type, okeyInfo) {
+  if (type !== 'seri' || !tiles || tiles.length < 3) return true;
+  if (isProperlyOrderedGroup(tiles, type, okeyInfo)) return true;
+  return isProperlyOrderedGroup([...tiles].reverse(), type, okeyInfo);
 }
 
 // Bir per'in taşlarını masaya konmadan önce DOĞRU sıraya dizer (sadece seri
@@ -608,7 +622,7 @@ export function buildSeatSwapUpdate(data, botUid, newUid, newName) {
   }
   // Devralınan bot sırasını oynayabilmesi için hamle süresi tazelenir.
   if (data.turn === botUid && !data.roundEnded && !data.setupPhase) {
-    update.turnDeadline = Date.now() + 30000;
+    update.turnDeadline = Date.now() + TURN_DURATION_MS;
   }
   return update;
 }

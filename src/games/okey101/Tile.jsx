@@ -103,7 +103,28 @@ function FakeOkeyMark({ px }) {
 // çerçeve ne de "O" rozeti. Okey'i Göstergeden çıkarıp fark etmek oyuncunun
 // kendi işidir. Aynı şekilde Sahte Okey'in "S" rozeti de kaldırıldı; onun
 // yerine taşın kendisi iç içe halkalarla çizilir (bkz. FakeOkeyFace).
-const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging, dimmed, faceDown = false, okeyInfo = null, size = 'normal', width = null, className = '', style, ...handlers }, ref) {
+// YARDIMLI MOD (kullanıcı isteği): "işlek" (masadaki açık bir pere oturan)
+// taşlarda, alt-orta renk sembolünün YERİNE bu işaret çizilir — oyuncu hangi
+// taşını masaya işleyebileceğini (ve hangisini atarsa +101 ceza yiyeceğini)
+// bir bakışta görür.
+//
+// Neden renk sembolünün yerine ve neden YEŞİL: taşın dört olası rengi
+// (siyah/kırmızı/mavi/sarı) dışında bir renk seçildiği için bu işaret asla
+// "taşın rengi" sanılmaz; üstteki rakam yerinde durduğu için taşın kimliği de
+// kaybolmaz. Sadece yardımlı mod açıkken görünür.
+function TackableMark({ px }) {
+  return (
+    <span
+      style={{ fontSize: `${Math.max(7, px * 0.36)}px` }}
+      className="leading-none flex items-center justify-center text-emerald-600 drop-shadow-[0_0_2px_rgba(16,185,129,0.8)]"
+      aria-label="İşlek taş"
+    >
+      ★
+    </span>
+  );
+}
+
+const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging, dimmed, faceDown = false, tackable = false, okeyInfo = null, size = 'normal', width = null, className = '', style, ...handlers }, ref) {
   if (!tile) return null;
   const shown = effectiveTile(tile, okeyInfo);
   const colorClass = COLOR_TEXT_CLASS[shown.color] || 'text-slate-700';
@@ -129,12 +150,14 @@ const Tile = React.forwardRef(function Tile({ tile, selected, grouped, dragging,
       ) : tile.isJoker ? (
         <div className="flex flex-col items-center justify-center gap-0.5">
           <FakeOkeyFace px={facePx} />
-          <FakeOkeyMark px={facePx} />
+          {tackable ? <TackableMark px={facePx} /> : <FakeOkeyMark px={facePx} />}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center gap-0.5">
           <span style={px?.number} className={`${px ? '' : NUMBER_TEXT_CLASS[size]} font-black leading-none flex items-center justify-center ${colorClass}`}>{shown.number}</span>
-          <span style={px?.symbol} className={`${px ? '' : SYMBOL_TEXT_CLASS[size]} leading-none flex items-center justify-center ${colorClass}`}>{COLOR_SYMBOLS[shown.color]}</span>
+          {tackable
+            ? <TackableMark px={facePx} />
+            : <span style={px?.symbol} className={`${px ? '' : SYMBOL_TEXT_CLASS[size]} leading-none flex items-center justify-center ${colorClass}`}>{COLOR_SYMBOLS[shown.color]}</span>}
         </div>
       )}
     </div>
