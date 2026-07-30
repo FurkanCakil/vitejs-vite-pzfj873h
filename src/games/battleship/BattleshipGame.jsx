@@ -254,8 +254,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     const def = SHIP_DEFS.find((d) => d.id === selectedShipId);
     if (!def) return null;
     // KULLANICI İSTEĞİ: imlecin/parmağın altındaki hücre artık geminin SOL
-    // UCU değil — tek sayılı gemilerde (5,3,3) ORTASI sayılır (bkz.
-    // logic.js#anchorOrigin); çift sayılı gemilerde (4,2) eskisi gibi sol uç.
+    // UCU değil — merkez hücresi sayılır (bkz. logic.js#anchorOrigin /
+    // centerCellIndex): tek sayılı gemilerde (5,3,3) tam ortası, çift sayılı
+    // gemilerde (4,2) ortadaki iki hücreden SOLDAKİ/ÜSTTEKİ.
     const origin = anchorOrigin(hoverOrigin, pendingOrientation, def.length);
     const cells = getShipCells(origin, pendingOrientation, def.length);
     const { valid } = canPlaceShip(placedShips, cells);
@@ -394,9 +395,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   };
 
   // `anchorCell`: kullanıcının tıkladığı/bıraktığı hücre. KULLANICI İSTEĞİ:
-  // tek sayılı uzunluktaki gemilerde (5,3,3) bu hücre geminin ORTASI, çift
-  // sayılı gemilerde (4,2) eskisi gibi SOL/ÜST UCU sayılır (bkz.
-  // logic.js#anchorOrigin).
+  // bu hücre her zaman geminin MERKEZ hücresi sayılır — tek sayılı gemilerde
+  // (5,3,3) tam ortası, çift sayılı gemilerde (4,2) ortadaki iki hücreden
+  // SOLDAKİ/ÜSTTEKİ (2 uzunlukta bu zaten sol ucun kendisidir) — bkz.
+  // logic.js#anchorOrigin / centerCellIndex.
   const attemptPlace = (shipId, anchorCell, orientation) => {
     if (setupLocked) return;
     const def = SHIP_DEFS.find((d) => d.id === shipId);

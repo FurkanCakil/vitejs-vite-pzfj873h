@@ -150,6 +150,11 @@ export const OKEY_SOUNDS = {
   // yayılma AYNI kaldı: böylece toplam süre uzamadan tıklar arası boşluk
   // belirgin şekilde açıldı (kullanıcı isteği: "biraz yavaşlat ama süreyi uzatma").
   deal: (ac) => clatter(ac, { count: 9, spread: 0.55, freq: 460, vol: 0.3, dur: 0.055 }),
+  // Taş İŞLEME (açık bir pere tek taş ekleme / Okey çalma) — KULLANICI
+  // İSTEĞİ: belirgin bir ses değil, "cılız" (çok dikkat çekmeyen) bir taş
+  // koyma tıkırtısı. `tile`/`draw`/`discard` ile aynı aileden ama en düşük
+  // sesli varyant (flip'ten bile daha kısık).
+  tack: (ac) => woodClick(ac, { freq: 520, vol: 0.11, dur: 0.045 }),
 };
 
 // 101 Okey ses efektlerini çalar. Bilinmeyen bir tür ya da desteklenmeyen /

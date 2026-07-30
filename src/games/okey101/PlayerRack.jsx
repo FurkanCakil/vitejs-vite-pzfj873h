@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Check, X, Layers, Rows3, RefreshCw } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup, isProperlyOrderedGroup, isValidPairTiles } from './gameLogic.js';
+import { validateGroup, isValidPairTiles } from './gameLogic.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 
@@ -222,27 +222,38 @@ export default function PlayerRack({
     return next;
   }));
   const longPressTimerRef = useRef(null);
-  // Atma anında Firestore turu tamamlanana kadar taşı ıstakadan İYİMSER
+  // Bir taş ıstakadan AYRILDIĞINDA (atılırken YA DA bir pere İŞLENİRKEN —
+  // tacking) Firestore turu tamamlanana kadar taşı ıstakadan İYİMSER
   // (optimistic) olarak gizler — algılanan gecikmeyi azaltır.
   //
+  // KULLANICI RAPORU ("taş işleme ... her zaman bi gecikme oluyo, taş
+  // ıstakaya geri dönüp sonra yaptığım işlem sayılıyo"): bu katman eskiden
+  // SADECE ATMADA (performDiscardDrop) vardı — İŞLEMEDE (bkz. finishDrag'in
+  // `tackEl` dalı) HİÇ optimistik gizleme YOKTU. Sonuç: taş işlenirken
+  // sunucu round-trip'i (~1sn+) boyunca taş ıstakada GÖRÜNMEYE DEVAM
+  // EDİYORDU (hiç ayrılmamış gibi), sonra sunucu onayı gelince ANİDEN
+  // kayboluyordu — kullanıcıya "taş ıstakaya geri döndü, sonra işlendi" gibi
+  // hissettiren TAM OLARAK buydu. Aşağıdaki tek mekanizma artık HER İKİ
+  // eylem için de kullanılır (bkz. finishDrag).
+  //
   // ÖNEMLİ: eskiden bu, `rack` PROP REFERANSI her değiştiğinde temizleniyordu
-  // (`useEffect(() => setOptimisticDiscardId(null), [rack])`). Ama Firestore
+  // (`useEffect(() => setOptimisticGoneId(null), [rack])`). Ama Firestore
   // `onSnapshot`, belge içindeki İLGİSİZ bir alan değişse bile (ör. botun
   // sırası, rakibin hamlesi, geri sayım) `data()` çağrısında TÜM iç içe
   // nesneleri (dolayısıyla `racks[user.uid]` dizisini) YENİDEN oluşturur —
   // yani `rack` referansı, taş HÂLÂ ıstakada dururken bile sık sık değişir.
-  // Bu yüzden atılan taş bir anlığına geri (ıstakaya) görünüyor, sonra asıl
-  // onay gelince tekrar kayboluyordu (görünür bir titreme/gecikme) — bazen de
-  // (yavaş/asılı bir transaction'da) taş hiç kaybolmadan ıstakada kalıyordu.
-  // Artık İÇERİĞE bakılır: taş GERÇEKTEN ıstakadan gitmişse temizlenir.
-  const [optimisticDiscardId, setOptimisticDiscardId] = useState(null);
-  const optimisticDiscardTimerRef = useRef(null);
-  useEffect(() => () => { if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current); }, []);
+  // Bu yüzden atılan/işlenen taş bir anlığına geri (ıstakaya) görünüyor, sonra
+  // asıl onay gelince tekrar kayboluyordu (görünür bir titreme/gecikme) —
+  // bazen de (yavaş/asılı bir transaction'da) taş hiç kaybolmadan ıstakada
+  // kalıyordu. Artık İÇERİĞE bakılır: taş GERÇEKTEN ıstakadan gitmişse temizlenir.
+  const [optimisticGoneId, setOptimisticGoneId] = useState(null);
+  const optimisticGoneTimerRef = useRef(null);
+  useEffect(() => () => { if (optimisticGoneTimerRef.current) clearTimeout(optimisticGoneTimerRef.current); }, []);
   useEffect(() => {
-    if (!optimisticDiscardId) return;
-    const stillThere = safeRack.some((t) => t && t.id === optimisticDiscardId);
-    if (!stillThere) setOptimisticDiscardId(null);
-  }, [safeRack, optimisticDiscardId]);
+    if (!optimisticGoneId) return;
+    const stillThere = safeRack.some((t) => t && t.id === optimisticGoneId);
+    if (!stillThere) setOptimisticGoneId(null);
+  }, [safeRack, optimisticGoneId]);
   const dragRef = useRef(null);
   const tackHoverElRef = useRef(null);
   const centerFinishHoverElRef = useRef(null);
@@ -620,12 +631,14 @@ export default function PlayerRack({
         return;
       }
     } else if (selectedIds.length >= 3) {
+      // KULLANICI İSTEĞİ: seri, ıstakada TERSTEN (ör. 9-8-7) ya da başka bir
+      // sırayla dizilse bile — sayı kümesi geçerli bir seri/set oluşturuyorsa —
+      // onaylanabilsin. Eskiden burada `isProperlyOrderedGroup` da ZORUNLU
+      // tutulup ters diziliş "Perinizi düzgün diziniz!" ile reddediliyordu.
+      // Görsel sıralama artık burada değil, masaya AÇILIRKEN (bkz.
+      // Okey101Game.jsx#orderGroupTiles çağrıları) otomatik yapılıyor.
       const result = validateGroup(orderedTiles, okeyInfo);
       if (!result.valid) { showToast?.('Geçersiz Per Dizilimi!', 'red'); return; }
-      if (!isProperlyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
-        showToast?.('Perinizi düzgün diziniz!', 'red');
-        return;
-      }
     }
     const gid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const ordered = orderedTiles.map((t) => t.id);
@@ -650,10 +663,6 @@ export default function PlayerRack({
     const orderedTiles = baseRack.filter((t) => t && selected.has(t.id));
     const result = validateGroup(orderedTiles, okeyInfo);
     if (!result.valid) { showToast?.('Bu taşla per güncellenemez — geçersiz dizilim!', 'red'); return; }
-    if (!isProperlyOrderedGroup(orderedTiles, result.type, okeyInfo)) {
-      showToast?.('Perinizi düzgün diziniz!', 'red');
-      return;
-    }
     const oldGid = selectedGroupIds[0];
     const newGid = `G${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const nextGroups = { ...baseGroups };
@@ -801,21 +810,28 @@ export default function PlayerRack({
     setHoverDiscard(discard);
   };
 
-  // Bir taşı (son bitiriş taşı ya da normal atış) sunucuya atma isteği
-  // gönderir: önce İYİMSER olarak ıstakadan gizler, sonuç başarısızsa (ya da
-  // hiç sonuçlanmazsa — bkz. emniyet zaman aşımı) geri getirir. Hem alt
-  // "Sağa At" bölmesi hem de Gösterge yanındaki "Bitir" hedefi bunu kullanır.
+  // Bir taşı ıstakadan İYİMSER olarak hemen gizler (bkz. optimisticGoneId
+  // yorumu), sonra `action`'ı çağırır; sonuç başarısızsa (ya da hiç
+  // sonuçlanmazsa — bkz. emniyet zaman aşımı) taş geri getirilir. Hem atma
+  // (performDiscardDrop) HEM DE işleme (finishDrag'in `tackEl` dalı) bu ORTAK
+  // mekanizmayı kullanır — ikisi de kullanıcı açısından "bu taş ıstakamdan
+  // AYRILDI" anlamına gelir.
+  const optimisticallyRemoveTile = (tileId, action) => {
+    setOptimisticGoneId(tileId);
+    if (optimisticGoneTimerRef.current) clearTimeout(optimisticGoneTimerRef.current);
+    optimisticGoneTimerRef.current = setTimeout(() => {
+      setOptimisticGoneId((cur) => (cur === tileId ? null : cur));
+    }, 4000);
+    Promise.resolve(action())
+      .then((result) => { if (!result || result.success === false) setOptimisticGoneId((cur) => (cur === tileId ? null : cur)); })
+      .catch(() => setOptimisticGoneId((cur) => (cur === tileId ? null : cur)));
+  };
+
+  // Bir taşı (son bitiriş taşı ya da normal atış) sunucuya atma isteği gönderir.
+  // Hem alt "Sağa At" bölmesi hem de Gösterge yanındaki "Bitir" hedefi bunu kullanır.
   const performDiscardDrop = (tile) => {
     if (!canDiscard || !onDiscardTile) return;
-    const tileId = tile.id;
-    setOptimisticDiscardId(tileId);
-    if (optimisticDiscardTimerRef.current) clearTimeout(optimisticDiscardTimerRef.current);
-    optimisticDiscardTimerRef.current = setTimeout(() => {
-      setOptimisticDiscardId((cur) => (cur === tileId ? null : cur));
-    }, 4000);
-    Promise.resolve(onDiscardTile(tile))
-      .then((result) => { if (!result) setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)); })
-      .catch(() => setOptimisticDiscardId((cur) => (cur === tileId ? null : cur)));
+    optimisticallyRemoveTile(tile.id, () => onDiscardTile(tile));
   };
 
   const finishDrag = () => {
@@ -852,7 +868,9 @@ export default function PlayerRack({
         const target = { uid: tackEl.dataset.tackUid, groupIndex: Number(tackEl.dataset.tackIndex) };
         if (tackEl.dataset.tackReplaceTileId) target.replaceTileId = tackEl.dataset.tackReplaceTileId;
         else target.side = tackEl.dataset.tackSide;
-        onTackTile(d.tile, target);
+        // bkz. optimisticGoneId yorumu: işleme de atma gibi taşı ANINDA
+        // (sunucu round-trip'i beklemeden) ıstakadan gizler.
+        optimisticallyRemoveTile(d.tile.id, () => onTackTile(d.tile, target));
       }
       return;
     }
@@ -936,7 +954,7 @@ export default function PlayerRack({
               tileW={tileW}
               tileH={tileH}
               isHover={hoverIndex === index && !!ghost}
-              hidden={!!tile && tile.id === optimisticDiscardId}
+              hidden={!!tile && tile.id === optimisticGoneId}
               isPending={!!tile && tile.id === pendingTileId}
               selected={!!tile && selected.has(tile.id)}
               grouped={!!tile && !!groupOf[tile.id]}

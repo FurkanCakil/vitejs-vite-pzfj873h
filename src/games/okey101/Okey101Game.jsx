@@ -116,7 +116,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // İlk snapshot'ta (ref henüz null) ses ÇALINMAZ — odaya sonradan katılan ya
   // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
   // topluca duymasın diye.
-  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null, drawPileLen: null });
+  const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, setupPhase: null, drawPileLen: null, tackCount: null, tackSignature: null });
 
   // Ses aç/kapa tercihi (tarayıcıda kalıcı — bkz. okeySound#setOkeySoundMuted).
   const [soundMuted, setSoundMuted] = useState(() => isOkeySoundMuted());
@@ -126,6 +126,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // (yani biri taş attığında) bir kez çalar. Tek tek oyuncu takip etmek yerine
   // toplam saymak, aynı anda birden fazla alanın değiştiği snapshot'larda da
   // güvenilir çalışır.
+  // KULLANICI İSTEĞİ: taş ÇEKME sesi artık SADECE çekeni kendisi duyar —
+  // dört kişilik bir masada her rakibin (ortadan ya da soldan) çekişini de
+  // duymak fazla ses karmaşası yaratıyordu. Çekme boyunca `roomData.turn`
+  // hep ÇEKEN oyuncuda sabit kalır (sıra ancak ATIŞ sonrası ilerler — bkz.
+  // handleDrawPile/handleDrawDiscard'ın `turn` alanına DOKUNMAMASI), yani bu
+  // veri değişimi anında `roomData.turn === user.uid` ise çeken kişi BİZİZ
+  // demektir.
   const totalDiscards = Object.values(roomData?.discardPiles || {}).reduce((n, pile) => n + (pile?.length || 0), 0);
   useEffect(() => {
     const prev = soundRefs.current.discardCount;
@@ -133,16 +140,17 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     if (prev === null) return;
     if (totalDiscards > prev) playOkeySound('discard');
     // Toplam AZALDIYSA biri yandan taş ÇEKMİŞTİR (soldaki oyuncunun atış
-    // yığınının tepesindeki taş alındı) — çekme sesi.
-    else if (totalDiscards < prev) playOkeySound('draw');
+    // yığınının tepesindeki taş alındı) — çekme sesi, SADECE biz çektiysek.
+    else if (totalDiscards < prev && roomData?.turn === user.uid) playOkeySound('draw');
   }, [totalDiscards]);
 
-  // Ortadaki KAPALI DESTEDEN çekiş: deste uzunluğu her azaldığında.
+  // Ortadaki KAPALI DESTEDEN çekiş: deste uzunluğu her azaldığında — SADECE
+  // biz çektiysek (yukarıdaki NOT ile aynı gerekçe).
   const drawPileLen = roomData?.drawPile?.length ?? null;
   useEffect(() => {
     const prev = soundRefs.current.drawPileLen;
     soundRefs.current.drawPileLen = drawPileLen;
-    if (prev !== null && drawPileLen !== null && drawPileLen < prev) playOkeySound('draw');
+    if (prev !== null && drawPileLen !== null && drawPileLen < prev && roomData?.turn === user.uid) playOkeySound('draw');
   }, [drawPileLen]);
 
   // Açma sesi: masadaki toplam açık per sayısı arttığında (biri elini açtı ya
@@ -153,6 +161,26 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     soundRefs.current.openedCount = totalOpenedGroups;
     if (prev !== null && totalOpenedGroups > prev) playOkeySound('open');
   }, [totalOpenedGroups]);
+
+  // Taş İŞLEME (tacking) sesi: masadaki AÇIK bir pere tek taş eklenmesi ya da
+  // bir Okey'in çalınması — per SAYISI bu durumda DEĞİŞMEZ (yeni per açılması
+  // ayrı bir olaydır, yukarıdaki 'open' sesi ona aittir); sadece VAR OLAN bir
+  // per'in taş İÇERİĞİ değişir. Bu yüzden hem grup sayısını HEM DE tüm
+  // perlerin taş kimliklerinden çıkarılan bir "imza"yı izleriz: sayı AYNI
+  // kalıp imza DEĞİŞTİYSE bu bir işleme hamlesidir. Masa çapında (herkes
+  // duyar) — diğer masa sesleriyle aynı felsefe.
+  const openedTilesSignature = Object.entries(roomData?.openedHands || {})
+    .flatMap(([uid, groups]) => (groups || []).map((g, i) => `${uid}:${i}:${(g?.tiles || []).map((t) => t.id).join(',')}`))
+    .sort()
+    .join('|');
+  useEffect(() => {
+    const prevCount = soundRefs.current.tackCount;
+    const prevSig = soundRefs.current.tackSignature;
+    soundRefs.current.tackCount = totalOpenedGroups;
+    soundRefs.current.tackSignature = openedTilesSignature;
+    if (prevCount === null || prevSig === null) return;
+    if (totalOpenedGroups === prevCount && openedTilesSignature !== prevSig) playOkeySound('tack');
+  }, [openedTilesSignature, totalOpenedGroups]);
 
   // El bitti -> taşların devrilme sesi.
   const roundEndedNow = !!roomData?.roundEnded;
