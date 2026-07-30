@@ -1185,22 +1185,20 @@ export default function PlayerRack({
                 sorusunu kafadan toplamadan görür. */}
             {assisted && (
               <>
-                <span
-                  title={hasOpenedAlready
-                    ? 'Onayladığın (seri/set) perlerin toplam değeri'
-                    : `Seri/Set ile açman için ulaşman GEREKEN toplam ${seriesTarget}${seriesTarget !== OPEN_THRESHOLD ? ' (masadaki baraj nedeniyle 101\'den yüksek)' : ''}`}
-                  className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
-                    assistedTotal > 0 && (hasOpenedAlready || assistedTotal >= seriesTarget)
-                      ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
-                      : 'bg-slate-900/60 text-slate-300 border-slate-600'
-                  }`}
-                >
-                  {assistedTotal === 0
-                    ? '—'
-                    : hasOpenedAlready
-                      ? formatFoldBarrier(assistedTotal)
+                {!hasOpenedAlready && (
+                  <span
+                    title={`Seri/Set ile açman için ulaşman GEREKEN toplam ${seriesTarget}${seriesTarget !== OPEN_THRESHOLD ? ' (masadaki baraj nedeniyle 101\'den yüksek)' : ''}`}
+                    className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
+                      assistedTotal > 0 && assistedTotal >= seriesTarget
+                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50'
+                        : 'bg-slate-900/60 text-slate-300 border-slate-600'
+                    }`}
+                  >
+                    {assistedTotal === 0
+                      ? '—'
                       : `${assistedTotal}/${seriesTarget} (${tekLabel(assistedTotal)} / ${tekLabel(seriesTarget)})`}
-                </span>
+                  </span>
+                )}
                 <span
                   title={`Çift ile açman için gereken çift sayısı: ${assistedPairsRequired}`}
                   className={`text-[11px] sm:text-xs font-mono font-bold px-2 py-1 rounded-lg border whitespace-nowrap ${
@@ -1248,7 +1246,7 @@ export default function PlayerRack({
               </>
             )}
 
-            {allSelectedAreCompleteGroups && (
+            {!assisted && allSelectedAreCompleteGroups && (
               <>
               <button
                 type="button"

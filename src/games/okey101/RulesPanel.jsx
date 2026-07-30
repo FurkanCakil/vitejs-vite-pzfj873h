@@ -88,7 +88,7 @@ export default function RulesPanel({ rules, isHost, onChange }) {
             yüzden el de OTOMATİK dizili geldiği için ayrıca hazırlık süresi
             verilmez (bkz. Okey101Game). */}
         <RuleRow label="Yardımlı Mod" hint="İşlek taş işareti, per toplamı, otomatik seri/çift dizme ve Okey'in kendiliğinden ters dönmesi. El otomatik dizili geldiği için hazırlık süresi verilmez.">
-          <ToggleSwitch disabled={!isHost} checked={!!rules.assistedEnabled} onChange={(v) => onChange('assistedEnabled', v)} onLabel="Yardımlı" offLabel="Klasik" />
+          <ToggleSwitch disabled={!isHost} checked={!!rules.assistedEnabled} onChange={(v) => onChange('assistedEnabled', v)} onLabel="Yardımlı" offLabel="Yardımsız" />
         </RuleRow>
 
         <RuleRow label="Katlama Kuralı">

@@ -541,6 +541,18 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     finally { setIsSaving(false); }
   };
 
+  // Rakip henüz "Hazır" demediyse, kendi "Hazır" durumunu iptal edip
+  // gemileri tekrar düzenleyebilme (kullanıcı isteği). Rakip de hazırsa artık
+  // setupPhase zaten kapanmış olur, bu yüzden bu durumda iptal ANLAMSIZDIR.
+  const handleCancelReady = async () => {
+    if (!amIReady || isOpponentReady || isSaving) return;
+    setIsSaving(true);
+    try {
+      await updateRoom({ [`readyPlayers.${user.uid}`]: false });
+    } catch (err) { console.error('Amiral Battı hazır iptali hatası:', err); }
+    finally { setIsSaving(false); }
+  };
+
   // ============================================================
   // FAZ 2: atış / batırma / kazanma
   // ============================================================
@@ -1153,6 +1165,15 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
               >
                 {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
                 {readyToConfirm ? 'Hazır' : `Hazır (${placedShips.length}/${SHIP_DEFS.length} gemi)`}
+              </button>
+            ) : !isOpponentReady ? (
+              <button
+                onClick={handleCancelReady}
+                disabled={isSaving}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base bg-amber-600/15 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                Hazır — Vazgeç ve Düzenle
               </button>
             ) : (
               <div className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base bg-emerald-600/15 border border-emerald-500/40 text-emerald-300">

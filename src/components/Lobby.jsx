@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Users, Bot, UserPlus, ArrowLeft } from 'lucide-react';
+import React from 'react';
+import { Users, Bot, UserPlus } from 'lucide-react';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', available: true, icon: '❌⭕' },
@@ -13,20 +13,7 @@ const GAMES = [
 
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4', 'amiralbatti'];
 
-// Amiral Battı ZORLUK SEVİYESİ SUNMAZ (oyun tamamen şansa dayalı) — tek,
-// standart bir bot. Bu yüzden diğer oyunlardaki gibi bir "Kolay/Orta/Zor"
-// seçim ekranı GÖSTERİLMEZ, "Botla Oyna" butonu doğrudan oyunu başlatır.
-const NO_DIFFICULTY_BOT_GAMES = ['amiralbatti'];
-
-const DIFFICULTIES = [
-  { id: 'easy', label: 'Kolay' },
-  { id: 'medium', label: 'Orta' },
-  { id: 'hard', label: 'Zor' },
-];
-
 export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame }) {
-  const [botSelectGameId, setBotSelectGameId] = useState(null);
-
   return (
     <main className="max-w-5xl mx-auto">
       <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -52,7 +39,6 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
         {GAMES.map(game => {
           const isPremium = game.available && (game.id === 'xox' || game.id === 'tavla' || game.id === 'satranc' || game.id === 'dama' || game.id === 'okey101' || game.id === 'connect4' || game.id === 'amiralbatti');
           const isBotSupported = BOT_SUPPORTED_GAMES.includes(game.id);
-          const showingBotSelect = botSelectGameId === game.id;
           return (
             <div key={game.id} className={`p-6 rounded-xl border-2 flex flex-col transition-all duration-300 relative overflow-hidden
                 ${!game.available ? 'bg-slate-800/60 border-slate-700 opacity-70 grayscale' : ''}
@@ -75,18 +61,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                 <h3 className="text-2xl font-bold">{game.name}</h3>
               </div>
               {game.available ? (
-                showingBotSelect ? (
-                  <div className="relative z-10 flex flex-col gap-2">
-                    <button onClick={() => setBotSelectGameId(null)} className="flex items-center gap-1 text-xs text-slate-400 hover:text-white mb-1 transition-colors">
-                      <ArrowLeft className="w-3.5 h-3.5" /> Geri
-                    </button>
-                    {DIFFICULTIES.map(d => (
-                      <button key={d.id} onClick={() => startBotGame(game.id, d.id)} className="w-full text-center font-bold text-base bg-slate-900/60 hover:bg-indigo-600/40 border border-slate-600 hover:border-indigo-400 rounded-lg px-3 py-3 transition-colors">
-                        {d.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : game.id === 'okey101' ? (
+                game.id === 'okey101' ? (
                   <div className="relative z-10">
                     <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border bg-rose-600/20 text-rose-300 border-rose-500/50 hover:bg-rose-600 hover:text-white">
                       <UserPlus className="w-4 h-4" /> Özel Oda Kur
@@ -105,7 +80,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                     <button
                       disabled={!isBotSupported}
                       title={!isBotSupported ? 'Yakında' : undefined}
-                      onClick={() => (NO_DIFFICULTY_BOT_GAMES.includes(game.id) ? startBotGame(game.id, null) : setBotSelectGameId(game.id))}
+                      onClick={() => startBotGame(game.id, 'medium')}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
                     ><Bot className="w-4 h-4" /> Botla Oyna</button>
                   </div>

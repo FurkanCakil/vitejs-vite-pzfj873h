@@ -109,7 +109,7 @@ export function addScoreDelta(data, uid, amount, baseScores = null) {
   const scores = { ...(baseScores || data.scores || {}) };
   const updates = {};
   teamMembersOf(uid, data.rules, data.teams).forEach((u) => {
-    scores[u] = (scores[u] || 0) + amount;
+    scores[u] = (scores[u] || 0) - amount;
     updates[`scores.${u}`] = scores[u];
   });
   return { updates, scores };
@@ -699,10 +699,21 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
   if (wonByOkeyDiscard) opponentBonusMultiplier *= OKEY_DISCARD_OPPONENT_MULTIPLIER;
   if (wentOutFromHand) opponentBonusMultiplier *= WENT_OUT_FROM_HAND_OPPONENT_MULTIPLIER;
 
+  // Kazananın Eşli (2v2) takım arkadaşı: kazananın eli bittiği an tur biter,
+  // eşin ıstakasında kalan taşlar ONUN hatası değildir — bu yüzden eşe
+  // "elde kalan taş" cezası YAZILMAZ (kullanıcı isteği).
+  const winnerTeamUids = (rules?.gameType === '2v2' && teams)
+    ? ([teams.A || [], teams.B || []].find((t) => t.includes(winnerUid)) || [])
+    : [];
+
   const baseDelta = {};
   players.forEach((uid) => {
     if (uid === winnerUid) {
       baseDelta[uid] = wonByOkeyDiscard ? -(PENALTY_POINTS * 2) : -PENALTY_POINTS;
+      return;
+    }
+    if (winnerTeamUids.includes(uid)) {
+      baseDelta[uid] = 0;
       return;
     }
     if (!hasOpened?.[uid]) {
@@ -740,7 +751,7 @@ export function computeRoundEnd({ players, scores, roundStartScores, hasOpened, 
   const perPlayer = {};
   players.forEach((uid) => {
     const interimPenalty = (scores?.[uid] || 0) - (roundStartScores?.[uid] || 0);
-    const roundDelta = pooledDelta[uid] * multiplier;
+    const roundDelta = -(pooledDelta[uid] * multiplier);
     newScores[uid] = (scores?.[uid] || 0) + roundDelta;
     perPlayer[uid] = { interimPenalty, roundDelta, total: interimPenalty + roundDelta };
   });

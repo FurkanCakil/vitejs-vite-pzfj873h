@@ -36,7 +36,7 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
               (bitirme/kalan taş) cezası artık AYRI gösterilmiyor — oyuncuyu
               sadece "bu tur toplamda ne kadar yedi/kazandı" (pp.total) ve
               geçmiş turlarla birlikte kümülatif skor (scores[uid]) ilgilendiriyor. */}
-          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-red-400' : pp.total < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-emerald-400' : pp.total < 0 ? 'text-red-400' : 'text-slate-400'}`}>
             Bu Tur: {pp.total > 0 ? '+' : ''}{pp.total}
           </span>
           <span className="font-mono font-black text-white w-14 text-right">{scores?.[uid] ?? 0}</span>
@@ -72,7 +72,7 @@ export default function RoundResultBoard({ players, roundResult, scores, rules, 
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs shrink-0">
-          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-red-400' : pp.total < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+          <span className={`font-mono font-bold ${pp.total > 0 ? 'text-emerald-400' : pp.total < 0 ? 'text-red-400' : 'text-slate-400'}`}>
             Bu Tur: {pp.total > 0 ? '+' : ''}{pp.total}
           </span>
           <span className="font-mono font-black text-white w-14 text-right">{teamScore}</span>

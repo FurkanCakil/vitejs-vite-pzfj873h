@@ -2195,13 +2195,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             {roomData.rules?.foldToPartnerEnabled ? 'Eşe Katlama Var' : 'Eşe Katlama Yok'}
           </span>
         )}
-        {/* Yardımlı mod açıksa diğer kural rozetleriyle aynı yerde belirtilir —
-            masadaki herkes bu odanın yardımlı olduğunu görür. */}
-        {assisted && (
-          <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full bg-indigo-500/15 border-indigo-500/40 text-indigo-300">
-            Yardımlı
-          </span>
-        )}
+        {/* Yardımlı/Yardımsız durumu diğer kural rozetleriyle aynı yerde
+            belirtilir — masadaki herkes bu odanın modunu görür. */}
+        <span className={`text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full ${assisted ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-slate-500'}`}>
+          {assisted ? 'Yardımlı' : 'Yardımsız'}
+        </span>
         {/* Ses aç/kapa. Sarmalayıcı `pointer-events-none` olduğu için buton
             kendi üzerinde bunu geri açar. Tercih tarayıcıda saklanır. */}
         <button
