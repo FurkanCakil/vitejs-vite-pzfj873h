@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
@@ -432,7 +432,12 @@ export default function App() {
     setDisconnectCountdown(null);
   };
 
-  const createRoom = async (gameId) => {
+  // `isPublic`: Hızlı Eşleşme (findMatch) tarafından kurulan bekleme
+  // odalarını, kod-ile-katılım için kurulan ÖZEL odalardan ayırt eder — bkz.
+  // findMatch. Var olan "Özel Oda Kur" / "Arkadaşla Oyna" çağrıları bu
+  // parametreyi HİÇ vermez (varsayılan false), yani mevcut davranışları
+  // birebir aynı kalır.
+  const createRoom = async (gameId, isPublic = false) => {
     if (!user) return;
     setIsCreatingRoom(true);
     // Oda kodu 33^6 (~1.29 milyar) olası kombinasyondan seçiliyor; çakışma
@@ -444,8 +449,8 @@ export default function App() {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
     {
       const initialState = {
-         gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' }, 
-         scores: { [user.uid]: 0 }, status: 'waiting', board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
+         gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' },
+         scores: { [user.uid]: 0 }, status: 'waiting', isPublic, board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
          turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
        };
        
@@ -501,14 +506,19 @@ export default function App() {
     setIsCreatingRoom(false);
   };
 
-  const joinRoom = async (code) => {
-    if (!user || !code) return;
-    const cleanCode = code.trim().toUpperCase();
+  // Bir oda koduna katılmanın SAF (UI'dan bağımsız) çekirdek mantığı: mevcut
+  // "kod ile katıl" akışı (joinRoom) VE Hızlı Eşleşme (findMatch, aşağıda)
+  // TARAFINDAN paylaşılır — böylece takım rengi/sıra ataması, isim numarası,
+  // "resume" (yeniden bağlanma) gibi TÜM per-oyun mantığı TEK bir yerde kalır,
+  // iki akış arasında asla birbirinden sapmaz. Başarısızlıkta (oda yok/kapalı/
+  // dolu/zaten seyirci) `Error(mesaj-kodu)` FIRLATIR — çağıran taraf bunu
+  // kendi UI'ına uygun şekilde (joinRoom: kullanıcıya göster; findMatch:
+  // sessizce bir sonraki adayı dene) yorumlar.
+  const attemptJoinRoom = async (cleanCode) => {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     let optimisticData = null;
 
-    try {
-      await runTransaction(db, async (transaction) => {
+    await runTransaction(db, async (transaction) => {
         const roomSnap = await transaction.get(roomRef);
         if (!roomSnap.exists()) throw new Error("not-found");
         
@@ -587,17 +597,73 @@ export default function App() {
         }
       });
 
-      // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
-      // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
-      if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
-      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
-      
-    } catch (err) { 
+    // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
+    // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
+    if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
+    setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
+  };
+
+  const joinRoom = async (code) => {
+    if (!user || !code) return;
+    const cleanCode = code.trim().toUpperCase();
+    try {
+      await attemptJoinRoom(cleanCode);
+    } catch (err) {
       if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
       else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
       else if (err.message === "full") setSpectatePrompt(cleanCode);
       else if (err.message === "already-spectator") { setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); }
       else setErrorMsg("Odaya katılırken bir hata oluştu.");
+    }
+  };
+
+  // ============================================================
+  // HIZLI EŞLEŞME (Matchmaking) — bkz. Lobby.jsx "Hızlı Eşleş" butonu.
+  // ============================================================
+  // Mevcut "Özel Oda Kur" / "Kod ile Katıl" mimarisine HİÇ dokunmaz; sadece
+  // `isPublic: true` ile işaretlenmiş odaları arar/kurar. `rooms` koleksiyonu
+  // üzerinde SADECE eşitlik (`==`) filtreleriyle sorgulanır — Firestore'da bu
+  // tür sorgular (orderBy eklenmediği sürece) OTOMATİK tek-alan indeksleriyle
+  // çalışır, elle bir "composite index" oluşturmaya gerek YOKTUR.
+  const [matchmakingGameId, setMatchmakingGameId] = useState(null);
+  const findMatch = async (gameId) => {
+    if (!user || matchmakingGameId) return;
+    setMatchmakingGameId(gameId);
+    try {
+      const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
+      const q = query(
+        roomsRef,
+        where('gameId', '==', gameId),
+        where('status', '==', 'waiting'),
+        where('isPublic', '==', true),
+        limit(5),
+      );
+      const snap = await getDocs(q);
+      // Kendi kurduğum (hâlâ tek başıma beklediğim) bir oda adaylar arasında
+      // çıkabilir — ona "2. oyuncu" olarak katılmaya çalışmak anlamsızdır,
+      // baştan elenir.
+      const candidates = snap.docs.filter((d) => !(d.data().players || []).includes(user.uid));
+
+      for (const candidate of candidates) {
+        try {
+          await attemptJoinRoom(candidate.id);
+          return; // başarıyla katılındı — attemptJoinRoom zaten currentView'i 'room'a çevirdi
+        } catch {
+          // Bu aday artık uygun değil (araya biri girip doldurmuş, kapanmış
+          // vb.) — sessizce bir SONRAKİ adaya geçilir, kullanıcıya hata
+          // gösterilmez (bu, dıştan bakınca tek bir arama gibi görünmeli).
+        }
+      }
+
+      // Uygun (boş) bir eşleşme bulunamadı: normal oda kurar gibi YENİ bir
+      // PUBLIC oda kurulur, oyuncu onun bekleme ekranına düşer — bir sonraki
+      // "Hızlı Eşleş" diyen oyuncu bu odayı bulup katılacaktır.
+      await createRoom(gameId, true);
+    } catch (err) {
+      console.error('Hızlı eşleşme hatası:', err);
+      setErrorMsg('Rakip aranırken bir sorun oluştu.');
+    } finally {
+      setMatchmakingGameId(null);
     }
   };
 
@@ -784,7 +850,7 @@ export default function App() {
       )}
 
       {currentView === 'lobby' ? (
-        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} />
+        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} findMatch={findMatch} matchmakingGameId={matchmakingGameId} />
       ) : (
         // 101 Okey masası diğer oyunlardan DAHA GENİŞ bir kaba oturur: masanın
         // ortasındaki "Açılan Eller" alanına daha büyük (okunaklı) taşlar sığsın

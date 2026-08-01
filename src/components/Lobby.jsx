@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { onSnapshot } from 'firebase/firestore';
-import { Users, Bot, UserPlus } from 'lucide-react';
+import { Users, Bot, UserPlus, Zap, Loader2 } from 'lucide-react';
 import { presenceCounterRef } from '../hooks/usePresence.js';
 
 const GAMES = [
@@ -15,7 +15,7 @@ const GAMES = [
 
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4', 'amiralbatti'];
 
-export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame }) {
+export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame, findMatch, matchmakingGameId }) {
   // Aktif Kullanıcı Sayacı: SADECE bu tekil doküman dinlenir (bkz.
   // usePresence.js) — kullanıcı başına ayrı bir dinleyici YOKTUR. Bu
   // dinleyici sadece Lobby EKRANDAYKEN kurulu kalır; bir odaya/oyuna
@@ -94,21 +94,39 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                     </button>
                   </div>
                 ) : (
-                  <div className="relative z-10 flex gap-2">
-                    <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border
-                        ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
-                        ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
-                        ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
-                        ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
-                        ${game.id === 'connect4' ? 'bg-blue-600/20 text-blue-300 border-blue-500/50 hover:bg-blue-600 hover:text-white' : ''}
-                        ${game.id === 'amiralbatti' ? 'bg-sky-600/20 text-sky-300 border-sky-500/50 hover:bg-sky-600 hover:text-white' : ''}
-                      `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>
+                  <div className="relative z-10 flex flex-col gap-2">
+                    {/* HIZLI EŞLEŞME: bekleyen public bir oda varsa doğrudan
+                        katılır, yoksa "Arkadaşla Oyna" kurar gibi PUBLIC bir
+                        oda kurup bekleme ekranına düşürür (bkz.
+                        App.tsx#findMatch) — mevcut "Özel Oda Kur"/"Kod ile
+                        Katıl" akışına HİÇ dokunmaz. */}
                     <button
-                      disabled={!isBotSupported}
-                      title={!isBotSupported ? 'Yakında' : undefined}
-                      onClick={() => startBotGame(game.id, 'medium')}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
-                    ><Bot className="w-4 h-4" /> Botla Oyna</button>
+                      disabled={isCreatingRoom || !!matchmakingGameId}
+                      onClick={() => findMatch(game.id)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-all border border-transparent bg-gradient-to-r from-fuchsia-600 to-indigo-600 text-white shadow-[0_0_18px_rgba(217,70,239,0.35)] hover:shadow-[0_0_24px_rgba(217,70,239,0.55)] hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+                    >
+                      {matchmakingGameId === game.id ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Rakip Aranıyor...</>
+                      ) : (
+                        <><Zap className="w-4 h-4" /> Hızlı Eşleş</>
+                      )}
+                    </button>
+                    <div className="flex gap-2">
+                      <button disabled={isCreatingRoom} onClick={() => createRoom(game.id)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border
+                          ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
+                          ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
+                          ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
+                          ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
+                          ${game.id === 'connect4' ? 'bg-blue-600/20 text-blue-300 border-blue-500/50 hover:bg-blue-600 hover:text-white' : ''}
+                          ${game.id === 'amiralbatti' ? 'bg-sky-600/20 text-sky-300 border-sky-500/50 hover:bg-sky-600 hover:text-white' : ''}
+                        `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>
+                      <button
+                        disabled={!isBotSupported}
+                        title={!isBotSupported ? 'Yakında' : undefined}
+                        onClick={() => startBotGame(game.id, 'medium')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg font-bold text-sm transition-colors border ${isBotSupported ? 'bg-slate-900/60 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-indigo-400' : 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-not-allowed'}`}
+                      ><Bot className="w-4 h-4" /> Botla Oyna</button>
+                    </div>
                   </div>
                 )
               ) : ( <button disabled className="w-full relative z-10 bg-slate-700 text-slate-400 py-2.5 rounded-lg font-medium cursor-not-allowed">Çok Yakında</button> )}
