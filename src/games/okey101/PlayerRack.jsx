@@ -569,6 +569,11 @@ export default function PlayerRack({
     && selectedIds.every((id) => groupOf[id])
     && selectedGroupIds.every((gid) => (baseGroups[gid] || []).every((id) => selected.has(id)));
   const canRemoveGroup = allSelectedAreCompleteGroups && selectedGroupIds.length === 1;
+  // Kullanıcı isteği: ıstakada HER ZAMAN atılacak en az 1 taş kalmalı — bu
+  // seçim masaya açılırsa ıstaka TAMAMEN boşalacaksa "Seri/Çift Aç" hiç
+  // etkinleşmez (sunucu da aynı kuralı doğrular, bkz. handleOpenSeries).
+  const rackTileCount = useMemo(() => baseRack.filter(Boolean).length, [baseRack]);
+  const wouldEmptyRack = allSelectedAreCompleteGroups && (rackTileCount - selectedIds.length) < 1;
   // "Peri Güncelle" (2. madde): TAM BİR mevcut per (tümüyle seçili) + ona
   // bitişik getirilmiş TEK bir grupsuz taş seçiliyse, peri bozup baştan
   // seçmek yerine doğrudan büyütülmüş per olarak güncellenebilir.
@@ -576,7 +581,7 @@ export default function PlayerRack({
   const canAttemptUpdateGroup = selectedGroupIds.length === 1
     && ungroupedSelectedIds.length === 1
     && selectedIds.length === (baseGroups[selectedGroupIds[0]] || []).length + 1;
-  const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule;
+  const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule && !wouldEmptyRack;
   // İlk açılışta EN AZ `minPairsToOpen` (normalde 5; katlamalı modda masadaki
   // çift barajının bir fazlası) çift gerekir — ÜST SINIR YOKTUR: elinde 6-7
   // çift olan oyuncu hepsini tek seferde açabilir (ve katlamalı modda barajı
@@ -584,7 +589,7 @@ export default function PlayerRack({
   // seçilince "Çift Aç" butonu kayboluyordu.
   // Zaten açmış (ve kural gereği çift sürebilen) bir oyuncu için 1+ yeterlidir.
   const pairCountOk = hasOpenedAlready ? selectedGroupIds.length >= 1 : selectedGroupIds.length >= minPairsToOpen;
-  const canOpenPairs = allSelectedAreCompleteGroups && pairCountOk && canAct && canOpenPairsRule;
+  const canOpenPairs = allSelectedAreCompleteGroups && pairCountOk && canAct && canOpenPairsRule && !wouldEmptyRack;
 
   // `immediate`: Per Onayla/Onayı Kaldır/Peri Güncelle gibi SEYREK, KASITLI
   // buton tıklamaları debounce'u atlayıp hemen yazar (bkz. applyRack).
@@ -730,15 +735,19 @@ export default function PlayerRack({
     [baseGroups],
   );
   const assistedPairsRequired = hasOpenedAlready ? 1 : minPairsToOpen;
+  // Kullanıcı isteği: bu tek-tıkla-hepsini-aç da ıstakayı TAMAMEN boşaltamaz.
+  const assistedMeldsWouldEmptyRack = rackTileCount
+    - assistedMeldGroupIds.reduce((n, gid) => n + (baseGroups[gid]?.length || 0), 0) < 1;
+  const assistedPairsWouldEmptyRack = rackTileCount - assistedPairGroupIds.length * 2 < 1;
 
   const assistedOpenSeries = async () => {
-    if (assistedMeldGroupIds.length === 0 || !canAct || !canOpenMeldsRule || !onOpenSeries) return;
+    if (assistedMeldGroupIds.length === 0 || !canAct || !canOpenMeldsRule || !onOpenSeries || assistedMeldsWouldEmptyRack) return;
     await flushRackWrite();
     await onOpenSeries(assistedMeldGroupIds);
   };
 
   const assistedOpenPairs = async () => {
-    if (assistedPairGroupIds.length === 0 || !canAct || !canOpenPairsRule || !onOpenPairs) return;
+    if (assistedPairGroupIds.length === 0 || !canAct || !canOpenPairsRule || !onOpenPairs || assistedPairsWouldEmptyRack) return;
     await flushRackWrite();
     await onOpenPairs(assistedPairGroupIds);
   };
@@ -869,7 +878,14 @@ export default function PlayerRack({
     // için PlayerRack sınırlarının dışındaki bu hedefi de aynı sürükleme
     // jestiyle yakalayabiliyoruz.
     const centerFinishEl = canDiscard ? el?.closest('[data-center-finish-zone]') : null;
-    const tackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
+    // Kullanıcı isteği: ıstakada HER ZAMAN atılacak en az 1 taş kalmalı. Bu
+    // yüzden elindeki SON taş, bir per'in ucuna (side) işlenerek ıstakayı
+    // BOŞALTAMAZ — sunucu (handleTackTile) zaten reddeder, burada baştan
+    // hedef olarak bile SUNULMAZ. Okey İŞLEĞİ (replaceTileId) hariçtir: o taş
+    // eskisiyle YER DEĞİŞTİRİR (ıstaka sayısı DEĞİŞMEZ), bu kısıtla ilgisizdir.
+    const rawTackEl = (canAct && hasOpenedAlready && d.tileIds.length === 1) ? el?.closest('[data-tack-uid]') : null;
+    const isLastTile = baseRack.filter(Boolean).length <= 1;
+    const tackEl = (rawTackEl && isLastTile && !rawTackEl.dataset.tackReplaceTileId) ? null : rawTackEl;
     // KULLANICI İSTEĞİ: yandan alınan (henüz kullanılmamış) taş, ortadaki
     // "Taşı Geri Koy" butonuna ek olarak SOLDAN ÇEK bölmesine sürüklenerek de
     // iade edilebilsin. Sadece TAM O taş (tek başına, gruplanmamış) sürüklenirken
@@ -1228,7 +1244,7 @@ export default function PlayerRack({
                 <button
                   type="button"
                   onClick={assistedOpenSeries}
-                  disabled={!canAct || !canOpenMeldsRule || assistedMeldGroupIds.length === 0}
+                  disabled={!canAct || !canOpenMeldsRule || assistedMeldGroupIds.length === 0 || assistedMeldsWouldEmptyRack}
                   title="Onayladığın TÜM seri/setleri (sınırı geçiyorsa) masaya indir"
                   className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -1237,7 +1253,7 @@ export default function PlayerRack({
                 <button
                   type="button"
                   onClick={assistedOpenPairs}
-                  disabled={!canAct || !canOpenPairsRule || assistedPairGroupIds.length === 0}
+                  disabled={!canAct || !canOpenPairsRule || assistedPairGroupIds.length === 0 || assistedPairsWouldEmptyRack}
                   title="Onayladığın TÜM çiftleri (yeterliyse) masaya indir"
                   className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-fuchsia-600/20 hover:bg-fuchsia-600/40 text-fuchsia-300 border border-fuchsia-500/50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >

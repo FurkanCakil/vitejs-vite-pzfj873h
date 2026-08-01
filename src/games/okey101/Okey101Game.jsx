@@ -47,6 +47,47 @@ const extendedDeadlineAfterOpen = (currentDeadline) => Math.max(currentDeadline 
 // kilidi devralabilir. Normal bir tur artık ~3-6sn sürüyor.
 const BOT_TURN_STUCK_MS = 15000;
 
+// Kullanıcı isteği: ıstakada HER ZAMAN atılacak en az 1 taş kalmalı — bot
+// zaten açmışken elindeki TÜM per/çiftleri sürmek isterse ve bu ıstakayı
+// tamamen boşaltacaksa, en DÜŞÜK değerli olan(lar)ı masada bırakıp (bir
+// sonraki turda sürer) geri kalanını sürer. Böylece bot, "hepsi sığmıyor"
+// diye o turda TEK bir per bile sürmeden pes etmez.
+function trimMeldsToLeaveOneTile(melds, rackTileCount) {
+  if (!melds || melds.length === 0) return melds;
+  const sorted = [...melds].sort((a, b) => b.value - a.value);
+  const kept = [];
+  let used = 0;
+  for (const m of sorted) {
+    if (used + m.tiles.length > rackTileCount - 1) continue;
+    kept.push(m);
+    used += m.tiles.length;
+  }
+  return kept;
+}
+
+// Madde 10 (kullanıcı isteği): `pruneGroups` (tiles.js) sadece "bu taş hâlâ
+// ıstakada mı / grup 2'nin altına mı düştü" bakar — grubun taş DİZİLİMİNİN
+// hâlâ GEÇERLİ bir per (bitişik seri/set) ya da çift olup olmadığını KONTROL
+// ETMEZ. Bir taş (ör. yandan alınıp geri konulan) ıstakadan çıktığında, geri
+// kalan taşlar sayıca 2+ kalsa bile ARTIK kurallara uymayabilir (ör. 3'lü bir
+// serinin ortasındaki taş gidince kalan 2 uç taş bitişik bir çift OLUŞTURMAZ).
+// Böyle bir grup burada tamamen ELENIR — onayı otomatik kaldırılmış olur.
+function pruneAndValidateGroups(groups, rack, okeyInfo) {
+  const base = pruneGroups(groups, rack);
+  const tilesById = {};
+  (rack || []).forEach((t) => { if (t) tilesById[t.id] = t; });
+  const next = {};
+  Object.entries(base).forEach(([gid, tileIds]) => {
+    const tiles = tileIds.map((id) => tilesById[id]).filter(Boolean);
+    if (tiles.length !== tileIds.length) return;
+    const valid = tiles.length === 2
+      ? isValidPairTiles(tiles[0], tiles[1], okeyInfo)
+      : validateGroup(tiles, okeyInfo).valid;
+    if (valid) next[gid] = tileIds;
+  });
+  return next;
+}
+
 // Yandan çekilen taşın "değeri": gerçek Okey (joker) ise en yüksek (13)
 // sayılır, aksi halde kendi (Sahte Okey için: temsil ettiği) yüz değeri.
 function sideTakeTileValue(tile, okeyInfo) {
@@ -471,27 +512,41 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             }
             const melds = pickBotMelds(rackNow, okeyNow);
             const total = melds.reduce((s, m) => s + m.value, 0);
-            if (melds.length > 0 && total >= OPEN_THRESHOLD) apply2(await handleBotOpenMelds(turnUid, melds, false));
+            const meldsTiles = melds.reduce((n, m) => n + m.tiles.length, 0);
+            // Atacak taş kalması şart (bkz. yukarıdaki çift dalı).
+            if (melds.length > 0 && total >= OPEN_THRESHOLD && rackNow.length - meldsTiles >= 1) {
+              apply2(await handleBotOpenMelds(turnUid, melds, false));
+            }
             return;
           }
 
           // Çift ile açan bot artık per (seri/set) süremez; sadece elinde kalan
           // çiftleri masaya sürer (5. madde).
           if (data.openedWithPairs?.[turnUid]) {
-            const pairs = pickBotPairs(rackNow, okeyNow);
+            let pairs = pickBotPairs(rackNow, okeyNow);
+            // Atacak taş kalsın diye tüm eli çift olarak masaya sürmez — hepsi
+            // sığmıyorsa en düşük değerlisini/lerini bir sonraki tura bırakır.
+            if (rackNow.length - pairs.length * 2 < 1) {
+              pairs = trimMeldsToLeaveOneTile(pairs, rackNow.length);
+            }
             if (pairs.length > 0) apply2(await handleBotOpenMelds(turnUid, pairs, true));
             return;
           }
 
           // Seri/Set ile açan bot: perlerini sürer; ayrıca masada çift açan
           // biri varsa elindeki çiftleri de işleyebilir.
-          const melds = pickBotMelds(rackNow, okeyNow);
+          let melds = pickBotMelds(rackNow, okeyNow);
+          const meldsTiles = melds.reduce((n, m) => n + m.tiles.length, 0);
+          if (rackNow.length - meldsTiles < 1) melds = trimMeldsToLeaveOneTile(melds, rackNow.length);
           if (melds.length > 0) apply2(await handleBotOpenMelds(turnUid, melds, false));
           if (anyPairsOnTable(data.openedWithPairs)) {
             const rackAfter = (data.racks?.[turnUid] || []).filter(Boolean);
-            const pairs = pickBotPairs(rackAfter, okeyNow);
+            let pairs = pickBotPairs(rackAfter, okeyNow);
             // Atacak taş kalsın diye tüm eli çift olarak masaya sürmez.
-            if (pairs.length > 0 && rackAfter.length - pairs.length * 2 >= 1) {
+            if (rackAfter.length - pairs.length * 2 < 1) {
+              pairs = trimMeldsToLeaveOneTile(pairs, rackAfter.length);
+            }
+            if (pairs.length > 0) {
               apply2(await handleBotOpenMelds(turnUid, pairs, true));
             }
           }
@@ -1028,8 +1083,17 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       const tile = rack[idx];
       rack[idx] = null;
       const pile = [...(data.discardPiles?.[st.fromUid] || []), tile];
+      // Madde 10 (kullanıcı isteği): bu taş, oyuncunun ELLE "Per Onayla" ile
+      // onayladığı (ama henüz masaya AÇILMAMIŞ) bir taslak per'in İÇİNDE
+      // olabilir — taş rack'ten çıkınca o per artık kurallara UYMAYABİLİR
+      // (2'nin altına düşer ya da bitişiklik/joker dengesi bozulur). Onayı
+      // burada HEMEN budamazsak per, bir sonraki `handleUpdateRack` çağrısına
+      // (oyuncu ıstakada başka bir taş sürene) kadar "hayalet" bir taş id'si
+      // taşıyan geçersiz bir per olarak asılı kalırdı (bkz. pruneGroups).
+      const prunedGroups = pruneAndValidateGroups(data.groups?.[actingUid] || {}, rack, data.okey || null);
       t.update(roomRef, {
         [`racks.${actingUid}`]: rack,
+        [`groups.${actingUid}`]: prunedGroups,
         [`discardPiles.${st.fromUid}`]: pile,
         hasDrawnThisTurn: false,
         sideTake: null,
@@ -1040,6 +1104,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         next: {
           ...data,
           racks: { ...(data.racks || {}), [actingUid]: rack },
+          groups: { ...(data.groups || {}), [actingUid]: prunedGroups },
           discardPiles: { ...(data.discardPiles || {}), [st.fromUid]: pile },
           hasDrawnThisTurn: false,
           sideTake: null,
@@ -1353,6 +1418,16 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         });
         delete myGroupsNow[r.gid];
       }
+
+      // Kullanıcı isteği: bitebilmek için (ya da per açabilmek/işleyebilmek
+      // için) ıstakada HER ZAMAN atılacak EN AZ 1 taş kalmalıdır — taş
+      // atmadan "elden bitirme" artık GEÇERLİ DEĞİLDİR. Bu açılış ıstakayı
+      // TAMAMEN boşaltıyorsa bütünüyle reddedilir (oyuncu daha az per seçip
+      // tekrar denemelidir).
+      if (newRack.every((s) => s === null)) {
+        outcome = { success: false, reason: 'must-keep-tile' };
+        return;
+      }
       const existingOpened = data.openedHands?.[user.uid] || [];
       const update = {
         [`racks.${user.uid}`]: newRack,
@@ -1406,6 +1481,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => { console.error('Okey101 seri açma hatası:', err); outcome = null; });
 
     if (outcome?.reason === 'pairs-opener') showToast('Çift açtığın için per (seri/set) açamazsın. Sadece çift sürebilir ve tek tek taş işleyebilirsin.', 'red');
+    else if (outcome?.reason === 'must-keep-tile') showToast('Istakanda atacak en az 1 taş kalmalı! Daha az per seçip tekrar dene.', 'red');
     else if (outcome?.reason === 'invalid') showToast('Geçersiz Per Dizilimi!', 'red');
     else if (outcome?.reason === 'below101') showToast(`101'e ulaşamadın — ${outcome.myTotalLabel} ile kaldın. +101 ceza yedin.`, 'red');
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
@@ -1491,6 +1567,14 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         });
         delete myGroupsNow[gid];
       }
+
+      // Kullanıcı isteği (bkz. handleOpenSeries'teki aynı gerekçe): ıstakada
+      // HER ZAMAN atılacak en az 1 taş kalmalı — çiftleri sürerek de elini
+      // tamamen boşaltamaz.
+      if (newRack.every((s) => s === null)) {
+        outcome = { success: false, reason: 'must-keep-tile' };
+        return;
+      }
       // Çiftler NEREYE konacak? SERİ ile açmış bir oyuncu çift sürüyorsa,
       // çiftleri kendi perlerinin yanına değil masada ÇİFT AÇMIŞ oyuncunun
       // (2v2'de öncelikle EŞİNİN) perlerinin yanına gider — bkz. pickPairsHostUid.
@@ -1549,6 +1633,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     }).catch((err) => { console.error('Okey101 çift açma hatası:', err); outcome = null; });
 
     if (outcome?.reason === 'no-pairs-on-table') showToast('Elindeki çiftleri ancak masada çift açan bir oyuncu varsa işleyebilirsin.', 'red');
+    else if (outcome?.reason === 'must-keep-tile') showToast('Istakanda atacak en az 1 taş kalmalı! Daha az çift seçip tekrar dene.', 'red');
     else if (outcome?.reason === 'invalid') showToast(`Geçersiz Çift Seçimi! Açılış için EN AZ ${outcome.minPairs ?? 5} geçerli çift gerekli (daha fazlasıyla da açabilirsin).`, 'red');
     else if (outcome?.reason === 'invalid-pair') showToast('Geçersiz çift! Her per tam 2 taş ve aynı renk+sayı olmalı.', 'red');
     else if (outcome?.reason === 'side-tile-unused') showToast('Yandan aldığın taşı bu açılışta kullanmalısın! Kullanamıyorsan taşı geri koy.', 'red');
@@ -1645,6 +1730,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           if (idx !== -1) actorRackNow[idx] = null;
         });
       }
+
+      // Kullanıcı isteği (bkz. handleOpenSeries): ıstakada her zaman atılacak
+      // en az 1 taş kalmalı — bot da elini per/çift sürerek boşaltamaz.
+      if (actorRackNow.every((s) => s === null)) { outcome = { success: false }; return; }
       // bkz. handleOpenPairs#pairsHostUid — SERİ ile açmış bir bot çift
       // sürüyorsa, çiftler masadaki ÇİFT AÇANIN (2v2'de öncelikle eşinin)
       // perlerinin yanına gider. Bot da insanla aynı kurala tabidir.
@@ -1826,48 +1915,15 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         update.sideTake = null;
       }
 
-      // Eli bitirme: TAŞ ATMADAN, elindeki son taşı da işleyerek (tacking)
-      // ıstakayı tamamen boşaltmak da GEÇERLİ bir bitiriştir (gerçek 101 Okey
-      // kuralı). Bu kontrol eskiden SADECE handleDiscardTile'da vardı; bu
-      // yüzden bir oyuncu son taşını atmak yerine işlediğinde tur hiç bitmiyor,
-      // `hasDrawnThisTurn` true'da asılı kalıp oyun tıkanıyordu (özellikle
-      // botlar TAM bu şekilde takılıyordu).
-      const rackEmptiedByTack = !target.replaceTileId && newRack.every((s) => s === null);
-      if (rackEmptiedByTack) {
-        // "Elden bitirme" bonusu (bkz. 4. madde ve handleDiscardTile'daki aynı
-        // yorum): tacking'e girebilmek için zaten hasOpened[actingUid]=true
-        // şartı var (yukarıda kontrol edildi); geriye tek soru bu turun
-        // BAŞINDA da açık mıydı.
-        const wentOutFromHand = !data.openedBeforeCurrentTurn;
-        const { newScores, roundResult } = computeRoundEnd({
-          players: data.players || [],
-          scores: { ...(data.scores || {}), ...nextScores },
-          roundStartScores: data.roundStartScores || {},
-          hasOpened: data.hasOpened || {},
-          openedWithPairs: data.openedWithPairs || {},
-          racks: { ...(data.racks || {}), [actingUid]: newRack },
-          rules: data.rules || {},
-          teams: data.teams || null,
-          okeyInfo: okeyNow,
-          foldMultiplier: data.foldMultiplier || 1,
-          takenOkeys: data.takenOkeys || {},
-        }, actingUid, false, wentOutFromHand);
-
-        outcome.roundEnded = true;
-        t.update(roomRef, {
-          ...update,
-          [`racks.${actingUid}`]: newRack,
-          [`openedHands.${target.uid}`]: targetOpened,
-          turn: null,
-          turnDeadline: null,
-          hasDrawnThisTurn: false,
-          sideTake: null,
-          forcedPileDraw: false,
-          roundEnded: true,
-          roundResult,
-          scores: newScores,
-        });
-        outcome.next = { ...data, roundEnded: true, roundResult, scores: newScores };
+      // Kullanıcı isteği (5. madde): ıstakada HER ZAMAN atılacak en az 1 taş
+      // kalmalıdır — taş atmadan, son taşı da işleyerek (tacking) "elden
+      // bitirmek" artık GEÇERLİ DEĞİLDİR. Eskiden bu geçerli bir bitiriş
+      // sayılıyordu (gerçek 101 Okey kuralı); şimdi bilinçli olarak reddedilir
+      // — oyuncu (ya da bot) son taşını bunun yerine ATMALIDIR (bkz.
+      // handleDiscardTile). PlayerRack tarafında da bu hedef zaten SUNULMAZ
+      // (bkz. updateDropTarget#isLastTile) — bu, sunucu tarafındaki asıl kilit.
+      if (!target.replaceTileId && newRack.every((s) => s === null)) {
+        outcome = { success: false, reason: 'must-keep-tile' };
         return;
       }
 
@@ -1883,7 +1939,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       };
     }).catch((err) => { console.error('Okey101 işleme hatası:', err); outcome = null; });
 
-    if (outcome?.success === false) showToast('Bu taş buraya uymuyor, ıstakana geri döndü.', 'red');
+    if (outcome?.reason === 'must-keep-tile') showToast('Istakanda atacak en az 1 taş kalmalı — bu taşı işlemek yerine atmalısın.', 'red');
+    else if (outcome?.success === false) showToast('Bu taş buraya uymuyor, ıstakana geri döndü.', 'red');
     else if (outcome?.roundEnded) showToast('Elini taş atmadan işleyerek bitirdin!', 'emerald');
     else if (outcome?.success === true && outcome.wonOkey) {
       showToast(outcome.penalizedName ? `Okey'i kazandın! ${outcome.penalizedName} +101 ceza aldı.` : 'Okey\'i kazandın!', 'emerald');
@@ -2026,10 +2083,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // çift barajının bir fazlası, aksi halde 5). Üst sınır yoktur — 6/7 çiftle
   // de açılabilir ve baraj o sayıya kurulur (bkz. handleOpenPairs).
   const myPairsBarrier = roomData.rules?.foldingEnabled ? (roomData.foldPairsBarrier || null) : null;
-  const myMinPairsToOpen = requiredPairsToOpen(
-    myPairsBarrier,
-    isExemptFromFoldBarrier(user.uid, myPairsBarrier, roomData.rules, roomData.teams),
-  );
+  const myPairsBarrierExempt = isExemptFromFoldBarrier(user.uid, myPairsBarrier, roomData.rules, roomData.teams);
+  const myMinPairsToOpen = requiredPairsToOpen(myPairsBarrier, myPairsBarrierExempt);
   // KULLANICI İSTEĞİ (Yardımlı Mod ilerleme rozeti): seri/set (per) ile
   // açmak için ulaşılması gereken hedef toplam. Katlamasızsa (ya da baraj
   // yoksa/muafsa) sabit 101'dir; katlamalı modda masada bir baraj varsa (ve
@@ -2037,9 +2092,16 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // `barrier.total + 1`'dir (bkz. handleOpenSeries'teki `total <= barrier.total`
   // reddi — eşitlik bile yetmez).
   const mySeriesBarrier = roomData.rules?.foldingEnabled ? (roomData.foldBarrier || null) : null;
-  const mySeriesTarget = (mySeriesBarrier && !isExemptFromFoldBarrier(user.uid, mySeriesBarrier, roomData.rules, roomData.teams))
-    ? mySeriesBarrier.total + 1
-    : OPEN_THRESHOLD;
+  const mySeriesBarrierExempt = isExemptFromFoldBarrier(user.uid, mySeriesBarrier, roomData.rules, roomData.teams);
+  const mySeriesTarget = (mySeriesBarrier && !mySeriesBarrierExempt) ? mySeriesBarrier.total + 1 : OPEN_THRESHOLD;
+  // Madde 8 (kullanıcı isteği): "Eşe Katlama" KAPALIYSA, eşimin kurduğu baraj
+  // beni bağlamaz (yukarıdaki *Exempt zaten bunu doğru hesaplıyor) — ama
+  // rozet eskiden bunu hep "Baraj" diye (sanki BENİM sınırımmış gibi)
+  // gösteriyordu. Barajı EŞİM kurduysa ve ben ondan muafsam, rozet sadece
+  // BİLGİ amaçlı "Eşinin Açtığı" olarak gösterilir; benim açma sınırım
+  // (mySeriesTarget/myMinPairsToOpen, yukarıda) zaten DEĞİŞMEDEN 101/5 kalır.
+  const seriesBarrierIsInfoOnly = !!mySeriesBarrier && mySeriesBarrierExempt && mySeriesBarrier.uid !== user.uid;
+  const pairsBarrierIsInfoOnly = !!myPairsBarrier && myPairsBarrierExempt && myPairsBarrier.uid !== user.uid;
 
   const hasAnyOpenedHand = Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0);
 
@@ -2285,16 +2347,20 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
               kendisini de sağdaki oyuncunun ismiyle çakıştırıyordu. */}
           {(roomData.foldBarrier || roomData.foldPairsBarrier) && (
             <div className="flex flex-col items-stretch gap-1">
+              {/* Madde 8: barajı EŞİM kurduysa ve "Eşe Katlama" kapalıyken ben
+                  ondan muafsam, bu SADECE bilgi amaçlıdır — benim açma sınırım
+                  (mySeriesTarget) değişmez. Rozet daha SOLUK (fuchsia değil
+                  slate) ve "Eşinin Açtığı" yazarak bunu netleştirir. */}
               {roomData.foldBarrier && (
-                <div className={`flex items-center justify-between bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
-                  <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Baraj</span>
-                  <span className={`font-mono font-bold text-fuchsia-200 whitespace-nowrap ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
+                <div className={`flex items-center justify-between rounded-lg pointer-events-none ${seriesBarrierIsInfoOnly ? 'bg-slate-800/60 border border-slate-600/50' : 'bg-fuchsia-500/10 border border-fuchsia-500/40'} ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
+                  <span className={`font-bold uppercase tracking-widest ${seriesBarrierIsInfoOnly ? 'text-slate-400' : 'text-fuchsia-300/90'} ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{seriesBarrierIsInfoOnly ? 'Eşinin Açtığı' : 'Baraj'}</span>
+                  <span className={`font-mono font-bold whitespace-nowrap ${seriesBarrierIsInfoOnly ? 'text-slate-300' : 'text-fuchsia-200'} ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{formatFoldBarrier(roomData.foldBarrier.total)}</span>
                 </div>
               )}
               {roomData.foldPairsBarrier && (
-                <div className={`flex items-center justify-between bg-fuchsia-500/10 border border-fuchsia-500/40 rounded-lg pointer-events-none ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
-                  <span className={`text-fuchsia-300/90 font-bold uppercase tracking-widest ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>Çift</span>
-                  <span className={`font-mono font-bold text-fuchsia-200 whitespace-nowrap ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{roomData.foldPairsBarrier.count} çift</span>
+                <div className={`flex items-center justify-between rounded-lg pointer-events-none ${pairsBarrierIsInfoOnly ? 'bg-slate-800/60 border border-slate-600/50' : 'bg-fuchsia-500/10 border border-fuchsia-500/40'} ${isCompact ? 'gap-1 px-1.5 py-0.5' : 'gap-1.5 sm:gap-2 px-2 py-1'}`}>
+                  <span className={`font-bold uppercase tracking-widest ${pairsBarrierIsInfoOnly ? 'text-slate-400' : 'text-fuchsia-300/90'} ${isCompact ? 'text-[8px]' : 'text-[9px] sm:text-[10px]'}`}>{pairsBarrierIsInfoOnly ? 'Eşinin Açtığı (Çift)' : 'Çift'}</span>
+                  <span className={`font-mono font-bold whitespace-nowrap ${pairsBarrierIsInfoOnly ? 'text-slate-300' : 'text-fuchsia-200'} ${isCompact ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{roomData.foldPairsBarrier.count} çift</span>
                 </div>
               )}
             </div>

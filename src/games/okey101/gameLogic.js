@@ -507,8 +507,15 @@ export function pickPairsHostUid(uid, openedWithPairs, rules, teams, random = Ma
 // kırmızı 13 + Okey varsa (4. renk siyah eksik), Okey siyah 13'ü temsil eder
 // ve siyah 13 atılırsa/işlenirse tam bu fonksiyon onu yakalar. Aynı mantık
 // bir çiftte (ör. kırmızı 13 + Okey) DİĞER kırmızı 13 için de geçerlidir.
+// 6. madde (kullanıcı isteği): Sahte Okey, gerçek Okey'in YERİNE hiçbir
+// zaman "satın alma/işleme" taşı olarak sürülemez. Aksi hâlde (Sahte Okey de
+// isPairWildcard olduğu için) örneğin [kırmızı 5, Gerçek Okey] çiftinde
+// Gerçek Okey'i Sahte Okey ile "değiştirmeye" çalışmak, kalan taraf zaten
+// joker olduğu için isValidPairTiles'ı KOŞULSUZ geçer — yani per türü/rengi/
+// sayısı hiç önemli olmadan HERHANGİ bir taş(!) o pozisyona oturabiliyordu.
+// Bir joker'i SADECE temsil ettiği GERÇEK (joker olmayan) taş satın alabilir.
 export function findJokerReplacements(groupTiles, groupType, newTile, okeyInfo) {
-  if (!groupTiles || !newTile || isOkeyTile(newTile, okeyInfo)) return [];
+  if (!groupTiles || !newTile || isOkeyTile(newTile, okeyInfo) || newTile.isJoker) return [];
   const results = [];
   groupTiles.forEach((t, jokerIdx) => {
     if (!isOkeyTile(t, okeyInfo)) return;

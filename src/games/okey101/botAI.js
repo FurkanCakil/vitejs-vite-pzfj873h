@@ -130,25 +130,211 @@ function greedyByValue(handTiles, okeyInfo) {
 
 const meldsTotalValue = (melds) => melds.reduce((s, m) => s + m.value, 0);
 
-// KULLANICI RAPORU: "Seri Diz" (ve bot açılışları) bazen elde çok daha
-// yüksek puanlı bir dizilim mümkünken düşük bir tanesini üretiyordu. Kök
-// neden, eski sürümün KATEGORİ SIRALI açgözlü olmasıydı (önce TÜM setleri
-// tüketip ANCAK SONRA serilere bakıyordu) — bu, düşük değerli bir seti,
-// tam da onun kullandığı bir taşa muhtaç olan ÇOK DAHA DEĞERLİ bir seriyi
-// bilmeden bloke edebiliyordu (ör. mavi 5'i bir "5 seti"ne kilitleyip
-// mavi 5-6-7-8 serisini 6-7-8'e düşürmek gibi).
+function combinations(arr, k) {
+  const result = [];
+  const n = arr.length;
+  const combo = [];
+  function backtrack(start) {
+    if (combo.length === k) { result.push(combo.slice()); return; }
+    for (let i = start; i < n; i++) { combo.push(arr[i]); backtrack(i + 1); combo.pop(); }
+  }
+  backtrack(0);
+  return result;
+}
+
+// ============================================================
+// 1. madde (kullanıcı isteği): TAM (EGZAKT) per araması
+// ============================================================
+// KULLANICI RAPORU: "Seri Diz" (ve bot açılışları) elde çok daha yüksek
+// puanlı bir dizilim mümkünken düşük bir tanesini üretebiliyordu — çünkü
+// eski sürüm SADECE açgözlü (greedy) stratejiler deniyordu: her adımda o an
+// en iyi görüneni seçip bir daha geri dönmüyorlardı. Bu, genel halde
+// (ağırlıklı küme paketleme NP-zor olduğu için) KANITLANABİLİR şekilde
+// optimal olmayan sonuçlar üretebilir — düşük değerli bir per, çok daha
+// değerli BAŞKA bir kombinasyonu (aynı taşı istediği için) bilmeden bloke
+// edebilir. Somut örnekler: (A) bir set'i, onun kullandığı taşa muhtaç çok
+// daha değerli bir seriyi bloke ederek seçmek; (B) elde birden fazla seri
+// mümkünken Okey'i toplam puanı MAKSİMİZE etmeyen bir boşluğa yerleştirmek;
+// (C) bir taşı, onu KOMŞU taşlarıyla birleştirip YENİ bir per kurmak yerine
+// mevcut (ama toplamda daha düşük değerli) bir pere eklemek.
 //
-// En yüksek toplam değeri veren kombinasyonu bulmak genel halde NP-zor bir
-// "ağırlıklı küme paketleme" problemidir; burada PRATİKTE çok güçlü sonuç
-// veren üç bağımsız stratejiyi (değer-açgözlü, set-önce, seri-önce) dener
-// ve TOPLAM DEĞERİ en yüksek olanı seçer. Üçü de zaten `validateGroup`'tan
-// geçmiş GEÇERLİ perler ürettiği için hangisi seçilirse seçilsin sonuç
-// oynanabilir kalır — sadece aralarından en iyisi seçilir. Bu fonksiyon HEM
-// botların açılış kararında HEM DE Yardımlı Mod'un "Seri Diz" butonunda
-// (bkz. assist.js#buildSeriesArrangement) kullanılır — zorluk seviyesi fark
-// etmeksizin TÜM botlar (Okey101'de zorluk sadece bot ismini etkiler, karar
-// mantığını değil) bu iyileştirmeden otomatik yararlanır.
+// Çözüm: elin TÜM taş-per kombinasyonlarını (jokerler dahil) tarayıp EN
+// YÜKSEK TOPLAM PUANI veren dizilimi bulan TAM bir arama:
+//   1) Gerçek (joker olmayan) taşlar ETKİN (renk,sayı) "slot"lara gruplanır
+//      (Sahte Okey de effectiveTile ile bu slotlara girer — o bir joker
+//      DEĞİLDİR, bkz. tiles.js). Her slotta 0/1/2 fiziksel taş olabilir.
+//   2) Olası TÜM setler (bir sayı, 3-4 farklı renk, gerekirse joker) ve TÜM
+//      seri pencereleri (bir renk, 3-13 uzunluk, gerekirse joker — SADECE
+//      gerçekten eksik pozisyonlar için) "aday per" olarak üretilir.
+//   3) Adaylar arasından, kullanılabilir taş/joker STOĞUNU aşmayan ve
+//      TOPLAM DEĞERİ en yüksek olan alt-kümeyi bulmak için, "hâlâ elde taş
+//      kalan İLK slot"u çapa alıp o slotu (a) hiç kullanmama ya da (b) onu
+//      içeren adaylardan birine dahil etme seçeneklerini deneyen, hafızalı
+//      (memoized) tam bir geri izleme (backtracking) yapılır — bu, standart
+//      "ilk elemana göre dallan" tam arama yapısıdır (aynı anda hem "bu
+//      taşı hiç kullanma" hem "şu peri dene" dallarını kapsadığı için sonuç
+//      KANITLANABİLİR şekilde optimaldir). Elin en fazla ~22 taş olması
+//      (ve gerçekçi ellerde çok daha az "çakışma" bulunması) sayesinde bu
+//      arama pratikte milisaniyeler içinde biter.
+//
+// GÜVENLİK AĞI: arama beklenmedik şekilde (patolojik bir el yüzünden) çok
+// büyürse bir üst çağrı-sayısı sınırında sessizce İPTAL edilip eski (hâlâ
+// geçerli perler üreten, sadece garanti-optimal olmayan) açgözlü ensemble'a
+// düşülür — kullanıcı hiçbir zaman oynanamaz bir sonuç görmez.
+const EXACT_MELD_SEARCH_CALL_LIMIT = 200000;
+
+function buildMeldCandidates(normalTiles, okeyInfo, maxJokers) {
+  const slotKey = (color, number) => `${color}::${number}`;
+  const slotMap = new Map(); // key -> tile[]
+  normalTiles.forEach((t) => {
+    const e = effectiveTile(t, okeyInfo);
+    const key = slotKey(e.color, e.number);
+    if (!slotMap.has(key)) slotMap.set(key, []);
+    slotMap.get(key).push(t);
+  });
+  const slots = [...slotMap.entries()].map(([, tiles]) => {
+    const e = effectiveTile(tiles[0], okeyInfo);
+    return { color: e.color, number: e.number, tiles };
+  });
+  const slotIndex = new Map(slots.map((s, i) => [slotKey(s.color, s.number), i]));
+
+  const candidates = [];
+
+  // SETLER: bir sayı için 3-4 farklı renk (+ gerekirse joker).
+  const numbers = [...new Set(slots.map((s) => s.number))];
+  for (const number of numbers) {
+    const colorsAtNumber = slots.filter((s) => s.number === number);
+    const m = colorsAtNumber.length;
+    for (let size = 3; size <= 4; size++) {
+      for (let j = 0; j <= Math.min(maxJokers, size); j++) {
+        const c = size - j;
+        if (c < 1 || c > m) continue;
+        for (const combo of combinations(colorsAtNumber, c)) {
+          const slotUsage = combo.map((s) => slotIndex.get(slotKey(s.color, s.number)));
+          candidates.push({ type: 'set', slotUsage, jokers: j, value: size * number });
+        }
+      }
+    }
+  }
+
+  // SERİLER: bir renk için 3-13 uzunluk pencere (+ gerekirse joker, SADECE
+  // gerçekten eksik pozisyonlar için — mevcut bir taş varsa jokeri boşuna
+  // harcamaz, bu daha değerli olan alternatifi ASLA domine edilmez kılar).
+  const colors = [...new Set(slots.map((s) => s.color))];
+  for (const color of colors) {
+    const bySlotNumber = new Map(
+      slots.filter((s) => s.color === color).map((s) => [s.number, slotIndex.get(slotKey(s.color, s.number))]),
+    );
+    for (let start = 1; start <= 13; start++) {
+      for (let len = 3; len <= 13; len++) {
+        const end = start + len - 1;
+        if (end > 13) break;
+        let jNeeded = 0;
+        const slotUsage = [];
+        for (let n = start; n <= end; n++) {
+          if (bySlotNumber.has(n)) slotUsage.push(bySlotNumber.get(n));
+          else jNeeded++;
+        }
+        if (jNeeded > maxJokers || slotUsage.length === 0) continue;
+        let value = 0;
+        for (let n = start; n <= end; n++) value += n;
+        candidates.push({ type: 'seri', slotUsage, jokers: jNeeded, value, color, start, end });
+      }
+    }
+  }
+
+  return { slots, candidates };
+}
+
+// `handTiles`in en yüksek toplam değerli per dizilimini bulur; `bailedOut`
+// (patolojik el) durumunda `null` döner — çağıran taraf açgözlü ensemble'a
+// düşer (bkz. pickBotMelds).
+function solveExactMelds(handTiles, okeyInfo) {
+  const jokerTiles = handTiles.filter((t) => isOkeyTile(t, okeyInfo));
+  const normalTiles = handTiles.filter((t) => !isOkeyTile(t, okeyInfo));
+  if (normalTiles.length === 0) return [];
+  const maxJokers = jokerTiles.length;
+
+  const { slots, candidates } = buildMeldCandidates(normalTiles, okeyInfo, maxJokers);
+  if (candidates.length === 0) return [];
+
+  const perSlot = slots.map(() => []);
+  candidates.forEach((c, ci) => { c.slotUsage.forEach((si) => perSlot[si].push(ci)); });
+
+  const memo = new Map();
+  let callCount = 0;
+  let bailedOut = false;
+
+  function solve(counts, jokerBudget) {
+    if (bailedOut) return { value: 0, melds: [] };
+    let anchor = -1;
+    for (let i = 0; i < counts.length; i++) { if (counts[i] > 0) { anchor = i; break; } }
+    if (anchor === -1) return { value: 0, melds: [] };
+
+    const key = `${counts.join(',')}|${jokerBudget}`;
+    const cached = memo.get(key);
+    if (cached) return cached;
+
+    callCount += 1;
+    if (callCount > EXACT_MELD_SEARCH_CALL_LIMIT) { bailedOut = true; return { value: 0, melds: [] }; }
+
+    // Seçenek A: bu slottaki BİR taşı hiçbir pere hiç dahil etme.
+    const countsSkip = counts.slice();
+    countsSkip[anchor] -= 1;
+    let best = solve(countsSkip, jokerBudget);
+
+    // Seçenek B: bu slotu içeren adaylardan birine dahil et (tümü denenir).
+    for (const ci of perSlot[anchor]) {
+      const c = candidates[ci];
+      if (c.jokers > jokerBudget) continue;
+      let feasible = true;
+      for (const si of c.slotUsage) { if (counts[si] < 1) { feasible = false; break; } }
+      if (!feasible) continue;
+      const nextCounts = counts.slice();
+      for (const si of c.slotUsage) nextCounts[si] -= 1;
+      const sub = solve(nextCounts, jokerBudget - c.jokers);
+      const val = c.value + sub.value;
+      if (val > best.value) best = { value: val, melds: [c, ...sub.melds] };
+    }
+
+    memo.set(key, best);
+    return best;
+  }
+
+  const initialCounts = slots.map((s) => s.tiles.length);
+  const result = solve(initialCounts, maxJokers);
+  if (bailedOut) return null;
+
+  // Soyut (slot bazlı) aday perleri GERÇEK taş nesnelerine dönüştürür.
+  const slotCursor = slots.map(() => 0);
+  let jokerCursor = 0;
+  const slotIndexOf = (color, number) => slots.findIndex((s) => s.color === color && s.number === number);
+  return result.melds.map((c) => {
+    const tiles = [];
+    if (c.type === 'set') {
+      c.slotUsage.forEach((si) => { tiles.push(slots[si].tiles[slotCursor[si]++]); });
+      for (let k = 0; k < c.jokers; k++) tiles.push(jokerTiles[jokerCursor++]);
+    } else {
+      for (let n = c.start; n <= c.end; n++) {
+        const si = slotIndexOf(c.color, n);
+        if (si !== -1 && c.slotUsage.includes(si)) tiles.push(slots[si].tiles[slotCursor[si]++]);
+        else tiles.push(jokerTiles[jokerCursor++]);
+      }
+    }
+    return { tiles, type: c.type, value: c.value };
+  });
+}
+
+// Bu fonksiyon HEM botların açılış kararında HEM DE Yardımlı Mod'un "Seri
+// Diz" butonunda (bkz. assist.js#buildSeriesArrangement) kullanılır —
+// zorluk seviyesi fark etmeksizin TÜM botlar (Okey101'de zorluk sadece bot
+// ismini etkiler, karar mantığını değil) bu aramadan otomatik yararlanır.
 export function pickBotMelds(handTiles, okeyInfo) {
+  const exact = solveExactMelds(handTiles, okeyInfo);
+  if (exact) return exact;
+  // Emniyet ağı: tam arama sınırı aşıldıysa (patolojik el) eski açgözlü
+  // ensemble'a düşülür — hâlâ geçerli perler üretir, sadece garanti-optimal
+  // olmayabilir.
   const strategies = [
     greedyByValue(handTiles, okeyInfo),
     greedyByOrder(handTiles, okeyInfo, 'sets-first'),
