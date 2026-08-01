@@ -4,6 +4,7 @@ import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
 import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, formatFoldBarrier, tekLabel, OPEN_THRESHOLD } from './gameLogic.js';
 import { buildSeriesArrangement, buildPairsArrangement, confirmedMeldTotal } from './assist.js';
+import { findNearestSlotIndex } from './nearestSlot.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 
@@ -81,6 +82,9 @@ const RackSlot = React.memo(function RackSlot({
   return (
     <div
       data-slot-index={index}
+      // Madde 9: bırakma noktasına EN YAKIN BOŞ slotu bulabilmek için
+      // (bkz. nearestSlot.js) boş slotlar DOM'da işaretlenir.
+      data-slot-empty={tile ? undefined : '1'}
       style={{ width: `${tileW}px`, height: `${tileH}px` }}
       className={`rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
       onPointerMove={handlers.onPointerMove}
@@ -907,6 +911,15 @@ export default function PlayerRack({
     if (tackEl || centerFinishEl || returnEl) { /* hedef zaten işleme/bitirme/iade alanı */ }
     else if (slotEl) index = Number(slotEl.dataset.slotIndex);
     else if (discardEl) discard = true;
+    else {
+      // Madde 9: imleç hiçbir slotun TAM üstünde değil — ama iki slotun
+      // ARASINDAKİ birkaç piksellik boşluğa denk gelmiş olabilir. Bu durumda
+      // eskiden hedef `null` kalıyor ve bırakılan taş hiç kımıldamıyordu
+      // ("bıraktım, tutmadı"). Artık en yakın slota (bir slot genişliği
+      // mesafesine kadar) oturur; ıstakanın TAMAMEN dışına bırakılan taş ise
+      // -mesafe sınırı sayesinde- yine hiçbir şey yapmaz.
+      index = findNearestSlotIndex(clientX, clientY, { maxDistanceFactor: 1 });
+    }
 
     // Bırakma kararı REF'ten okunur (bkz. finishDrag): hedef tespiti animasyon
     // karesine ertelendiği için, parmak kaldırıldığı anda React state'i bir

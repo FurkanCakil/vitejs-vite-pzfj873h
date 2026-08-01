@@ -340,6 +340,70 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     if (myRackNow.some((t) => t && t.id === pendingDraw.tile.id)) setPendingDraw(null);
   }, [roomData.racks, pendingDraw, user.uid]);
 
+  // ============================================================
+  // İYİMSER TUR DURUMU ("Write-Ahead Buffer")
+  // ============================================================
+  // KÖK NEDEN: Bu oyundaki tüm kritik hamleler `runTransaction` ile yazılır.
+  // Firestore'da transaction'lar -düz `updateDoc`'un AKSİNE- yerel ön belleği
+  // güncellemez, yani "latency compensation" YOKTUR: `onSnapshot` ancak sunucu
+  // yazımı onayladıktan SONRA tetiklenir. Bu yüzden taş atıldığında taş
+  // ıstakadan anında kalksa bile (PlayerRack#optimisticGoneId) SIRA, ATIŞ
+  // YIĞINI ve açılan perler ~300ms boyunca ESKİ hâlinde kalıyordu.
+  //
+  // Çözüm: hamleyi sunucuya göndermeden ÖNCE sonucun TUR DURUMU kısmını buraya
+  // yazıp ekranı anında güncelliyoruz; gerçek veri gelince katman düşüyor.
+  //
+  // KAPSAM BİLEREK DARDIR — iki şey bu katmana DAHİL DEĞİLDİR:
+  //   1) `racks`/`groups`: bunların çok daha ince ayarlı kendi iyimser katmanı
+  //      PlayerRack içinde zaten var (optimisticRack/optimisticGoneId); ikinci
+  //      bir katman onunla çakışıp taşı iki kez gizler/geri getirirdi.
+  //   2) EFEKTLER: bot orkestrasyonu ve süre-aşımı watchdog'u HER ZAMAN ham
+  //      `roomData`yı okur (bu yüzden bu blok erken-return'lerden ÖNCE, ama
+  //      `view` birleştirmesi SONRA yapılır). Aksi halde host, sunucuda henüz
+  //      var OLMAYAN bir tura göre bot hamlesi tetikleyebilirdi.
+  const [turnPatch, setTurnPatch] = useState(null); // { patch, baseSig }
+  const turnPatchTimerRef = useRef(null);
+  useEffect(() => () => { if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current); }, []);
+
+  // İyimser katmanın NE ZAMAN düşeceğini belirleyen imza: sunucudaki tur
+  // durumu HERHANGİ bir yönde değiştiği an (bizim yazımımız düştüğü için ya da
+  // araya başka bir oyuncunun hamlesi girdiği için) tahminimiz artık
+  // bayattır ve gerçek veriye bırakılır. Bu, "transaction bitince temizle"
+  // yaklaşımından daha güvenlidir: orada, yazım onaylandığı AN ile snapshot'ın
+  // GELDİĞİ an arasındaki boşlukta ekran bir kare eski duruma geri sekerdi.
+  const turnStateSignature = (data) => [
+    data.turn ?? '',
+    data.hasDrawnThisTurn ? 1 : 0,
+    data.sideTake?.tileId ?? '',
+    data.forcedPileDraw ? 1 : 0,
+    data.roundEnded ? 1 : 0,
+    Object.entries(data.discardPiles || {}).map(([uid, p]) => `${uid}:${(p || []).length}`).sort().join(','),
+    Object.entries(data.openedHands || {}).map(([uid, g]) => `${uid}:${(g || []).reduce((n, x) => n + (x?.tiles?.length || 0), 0)}`).sort().join(','),
+  ].join('|');
+
+  const clearTurnPatch = () => {
+    if (turnPatchTimerRef.current) { clearTimeout(turnPatchTimerRef.current); turnPatchTimerRef.current = null; }
+    setTurnPatch(null);
+  };
+
+  // `buildPatch(data)` ham sunucu durumundan iyimser tur durumunu üretir.
+  const applyTurnPatch = (buildPatch) => {
+    const patch = buildPatch(roomData);
+    if (!patch) return;
+    setTurnPatch({ patch, baseSig: turnStateSignature(roomData) });
+    // EMNİYET AĞI (normalde HİÇ tetiklenmez): yazım kalıcı olarak başarısız
+    // olur ve sunucu durumu HİÇ değişmezse ekran sonsuza dek onaylanmamış bir
+    // tahmini göstermesin.
+    if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current);
+    turnPatchTimerRef.current = setTimeout(() => setTurnPatch(null), 5000);
+  };
+
+  useEffect(() => {
+    if (!turnPatch) return;
+    if (turnStateSignature(roomData) !== turnPatch.baseSig) clearTurnPatch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomData, turnPatch]);
+
   // ---- Çekme etkileşimi (deste + soldan gelen taş, ikisi de sürüklenebilir) ----
   // NOT: Hook'lar aşağıdaki erken return'lerden ÖNCE çağrılmak zorunda olduğu
   // için gereken durumlar burada ham `roomData`'dan türetiliyor.
@@ -813,6 +877,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     );
   }
 
+  // İYİMSER TUR DURUMU: buradan AŞAĞISI (yani SADECE render'a giden türetilmiş
+  // değerler) ham `roomData` yerine `view`i okur. Yukarıdaki efektler —
+  // özellikle bot orkestrasyonu ve süre-aşımı watchdog'u — bilerek ham
+  // `roomData`da bırakılmıştır (bkz. turnPatch yorumu).
+  const view = turnPatch ? { ...roomData, ...turnPatch.patch } : roomData;
+
   const players = (roomData.players || []).map((uid) => ({
     uid,
     name: roomData.playerNames?.[uid] || (isBotUid(uid) ? 'Bot' : 'Oyuncu'),
@@ -821,14 +891,14 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const okeyInfo = roomData.okey || null;
   const myRack = roomData.racks?.[user.uid] || null;
   const myGroups = roomData.groups?.[user.uid] || {};
-  const myDiscardPile = roomData.discardPiles?.[user.uid] || [];
+  const myDiscardPile = view.discardPiles?.[user.uid] || [];
   const myTopDiscard = myDiscardPile.length > 0 ? myDiscardPile[myDiscardPile.length - 1] : null;
   const isPlayer = (roomData.players || []).includes(user.uid);
   const myHasOpened = !!roomData.hasOpened?.[user.uid];
 
   const setupPhase = !!roomData.setupPhase;
-  const isMyTurn = !setupPhase && roomData.turn === user.uid;
-  const hasDrawn = !!roomData.hasDrawnThisTurn;
+  const isMyTurn = !setupPhase && view.turn === user.uid;
+  const hasDrawn = !!view.hasDrawnThisTurn;
   const mustDraw = isPlayer && isMyTurn && !hasDrawn;
   const mustDiscard = isPlayer && isMyTurn && hasDrawn;
   // 2. madde: elde tam 1 taş kaldıysa, atılacak HANGİ taş olursa olsun bu
@@ -846,7 +916,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const nextUid = getNextTurnUid(roomData.players || [], seatAnchorUid);
   const topUid = (roomData.players || []).find((uid) => uid !== seatAnchorUid && uid !== prevUid && uid !== nextUid) || null;
 
-  const turnPlayerName = players.find((p) => p.uid === roomData.turn)?.name || '...';
+  const turnPlayerName = players.find((p) => p.uid === view.turn)?.name || '...';
 
   // Kare masa düzeni: ben her zaman altta (ıstaka), SOLUMDAKİ (prevUid) taşımı
   // alabileceğim/onun taşını çekebileceğim kişi, SAĞIMDAKİ (nextUid) taşımı
@@ -865,7 +935,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const buildSeat = (uid) => {
     const p = players.find((pl) => pl.uid === uid);
     if (!p) return null;
-    const pile = roomData.discardPiles?.[uid] || [];
+    const pile = view.discardPiles?.[uid] || [];
     return {
       player: p,
       rackCount: roomData.racks?.[uid]?.filter(Boolean).length ?? 0,
@@ -884,8 +954,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // KULLANICI İSTEĞİ: elini önceden AÇMIŞ bir oyuncu da yandan aldığı taşı bu
   // turda kullanmak zorundadır (bkz. handleDrawDiscard/handleCancelSideTake
   // yorumları) — bu yüzden artık `!myHasOpened` ile SINIRLI değildir.
-  const mySideTakePending = roomData.sideTake?.uid === user.uid;
-  const mySideTakeTileId = mySideTakePending ? roomData.sideTake.tileId : null;
+  const mySideTakePending = view.sideTake?.uid === user.uid;
+  const mySideTakeTileId = mySideTakePending ? view.sideTake.tileId : null;
 
   // Istaka düzenlemesi artık transaction içinde ve SUNUCUDAKİ taş kümesiyle
   // birleştirilerek yazılır (bkz. mergeRackLayout). Böylece bir düzenleme,
@@ -1046,10 +1116,35 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       pendingDrawTimerRef.current = setTimeout(() => setPendingDraw(null), 2500);
     }
 
+    // İYİMSER TUR DURUMU (bkz. turnPatch): `pendingDraw` taşı slotta anında
+    // GÖSTERİYORDU ama `hasDrawnThisTurn` sunucudan gelene kadar false
+    // kaldığı için "AT" bölmesi (mustDiscard) ~300ms geç beliriyordu — yani
+    // taşı çeker çekmez atamıyordunuz. Artık çekme de anında yansır.
+    applyTurnPatch((data) => {
+      if (source === 'pile') return { hasDrawnThisTurn: true };
+      // Yandan (soldan) çekme: taş komşunun yığınından ANINDA kalkar ve
+      // "kullan ya da geri koy" durumu (sideTake) hemen devreye girer.
+      const fromUid = getPrevTurnUid(data.players || [], user.uid);
+      const pile = data.discardPiles?.[fromUid] || [];
+      const drawn = pile[pile.length - 1];
+      if (!fromUid || !drawn) return null;
+      return {
+        hasDrawnThisTurn: true,
+        discardPiles: { ...(data.discardPiles || {}), [fromUid]: pile.slice(0, -1) },
+        sideTake: {
+          uid: user.uid,
+          fromUid,
+          tileId: drawn.id,
+          tileValue: sideTakeTileValue(drawn, data.okey || null),
+          penalized: !data.hasOpened?.[user.uid],
+        },
+      };
+    });
+
     const result = source === 'pile'
       ? await handleDrawPile(undefined, targetIndex)
       : await handleDrawDiscard(undefined, targetIndex);
-    if (!result?.success) { setPendingDraw(null); setDrawFlipId(null); }
+    if (!result?.success) { setPendingDraw(null); setDrawFlipId(null); clearTurnPatch(); }
     return result;
   };
   performDrawRef.current = performDraw;
@@ -1060,7 +1155,32 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // artık hem henüz açmamış HEM DE zaten açmış oyuncular için geçerlidir
   // (kullanıcı isteği) — `sideTake.penalized` ayrımı zaten CEZA tarafında
   // (bkz. handleOpenSeries/handleOpenPairs/handleTackTile), burada değil.
-  const handleCancelSideTake = async (actingUid = user.uid) => {
+  // `explicitUid` SADECE bot/süre-aşımı orkestrasyonu tarafından verilir;
+  // oyuncunun kendi arayüzünden (buton ya da taşı SOLDAN ÇEK bölmesine
+  // sürükleyerek) tetiklediği çağrılar argümansızdır — iyimser tur durumu da
+  // (bkz. turnPatch) yalnızca o yolda uygulanır.
+  const handleCancelSideTake = async (explicitUid) => {
+    const actingUid = explicitUid || user.uid;
+
+    // İYİMSER: taş, sahibinin atış yığınına ANINDA geri döner ve bu tur artık
+    // sadece desteden çekilebilir (forcedPileDraw) — ekran sunucuyu beklemez.
+    if (!explicitUid) {
+      applyTurnPatch((data) => {
+        const st = data.sideTake;
+        if (!st || st.uid !== user.uid) return null;
+        const tile = (data.racks?.[user.uid] || []).find((s) => s && s.id === st.tileId);
+        if (!tile) return null;
+        return {
+          hasDrawnThisTurn: false,
+          sideTake: null,
+          forcedPileDraw: true,
+          discardPiles: {
+            ...(data.discardPiles || {}),
+            [st.fromUid]: [...(data.discardPiles?.[st.fromUid] || []), tile],
+          },
+        };
+      });
+    }
     let outcome = { success: false };
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -1112,6 +1232,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         },
       };
     }).catch((err) => { console.error('Okey101 taş geri koyma hatası:', err); outcome = { success: false }; });
+    if (!explicitUid && !outcome?.success) clearTurnPatch(); // reddedildiyse tahmini geri al
     return outcome;
   };
 
@@ -1171,6 +1292,30 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const handleDiscardTile = async (tile, explicitUid) => {
     const actingUid = explicitUid || user.uid;
     if (!explicitUid && !mustDiscard) return;
+
+    // İYİMSER TUR DURUMU (bkz. turnPatch): taş masaya ve sıra rakibe ANINDA
+    // geçer, transaction arkada döner. SADECE kendi elimle yaptığım atışta
+    // uygulanır — `explicitUid` verilmişse hamleyi bot/süre-aşımı
+    // orkestrasyonu yapıyordur, o zaten benim ekranımın "şu an" durumu değildir.
+    // ELİ BİTİREN atış da HARİÇ tutulur: orada tur sonu (skorlar, centerDiscard,
+    // roundResult) tamamen sunucunun hesabıdır; tahmin etmeye çalışmak yanlış
+    // bir ara ekran gösterirdi.
+    if (!explicitUid && !isFinishingDiscard) {
+      applyTurnPatch((data) => {
+        const nextUid = getNextTurnUid(data.players || [], user.uid);
+        if (!nextUid) return null;
+        return {
+          turn: nextUid,
+          hasDrawnThisTurn: false,
+          sideTake: null,
+          forcedPileDraw: false,
+          discardPiles: {
+            ...(data.discardPiles || {}),
+            [user.uid]: [...(data.discardPiles?.[user.uid] || []), tile],
+          },
+        };
+      });
+    }
     let outcome = null;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -1324,6 +1469,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       outcome = { success: true, carelessDiscard, discardedOkey, discardedTackable };
       t.update(roomRef, update);
     }).catch((err) => { console.error('Okey101 atma hatası:', err); outcome = null; });
+
+    // Hamle reddedildiyse/başarısızsa iyimser tahmin HEMEN geri alınır (ekran
+    // sunucudaki gerçek duruma döner). Başarılıysa katman kendiliğinden,
+    // sunucu durumu değiştiği an düşer (bkz. turnStateSignature).
+    if (!explicitUid && !outcome?.success) clearTurnPatch();
 
     if (outcome?.discardedOkey) showToast('Okey attın! +101 ceza aldın.', 'red');
     else if (outcome?.discardedTackable) showToast('İşlek taş attın! +101 ceza aldın.', 'red');
@@ -1835,6 +1985,27 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const actingUid = explicitUid || user.uid;
     if (!explicitUid && (!mustDiscard || !myHasOpened)) return;
     if (!target?.uid) return;
+
+    // İYİMSER: işlenen taş masadaki perin ucuna ANINDA oturur (taşın ıstakadan
+    // kalkması zaten PlayerRack#optimisticGoneId ile anında oluyordu; eksik
+    // olan, taşın masada BELİRMESİydi). Sıra DEĞİŞMEZ — işledikten sonra hâlâ
+    // bir taş atmam gerekir. Okey işleği (`replaceTileId`) HARİÇTİR: orada
+    // ıstakama Okey GELİR; bu bir ıstaka değişimidir ve bu katmanın kapsamı
+    // dışındadır (bkz. turnPatch kapsam notu).
+    if (!explicitUid && !target.replaceTileId) {
+      applyTurnPatch((data) => {
+        const group = (data.openedHands?.[target.uid] || [])[target.groupIndex];
+        if (!group) return null;
+        const okeyNow = data.okey || null;
+        const { valid, newTiles } = canTackTile(group.tiles, group.type, tile, target.side, okeyNow);
+        if (!valid) return null;
+        const targetOpened = [...(data.openedHands?.[target.uid] || [])];
+        targetOpened[target.groupIndex] = { ...group, tiles: orderGroupTiles(newTiles, group.type, okeyNow) };
+        const patch = { openedHands: { ...(data.openedHands || {}), [target.uid]: targetOpened } };
+        if (data.sideTake?.uid === user.uid && data.sideTake.tileId === tile.id) patch.sideTake = null;
+        return patch;
+      });
+    }
     let outcome = null;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -1938,6 +2109,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         sideTake: 'sideTake' in update ? update.sideTake : data.sideTake,
       };
     }).catch((err) => { console.error('Okey101 işleme hatası:', err); outcome = null; });
+
+    if (!explicitUid && !outcome?.success) clearTurnPatch(); // reddedildiyse tahmini geri al
 
     if (outcome?.reason === 'must-keep-tile') showToast('Istakanda atacak en az 1 taş kalmalı — bu taşı işlemek yerine atmalısın.', 'red');
     else if (outcome?.success === false) showToast('Bu taş buraya uymuyor, ıstakana geri döndü.', 'red');
@@ -2061,12 +2234,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // işlenebilir" bilgisi her zaman okunabilir.
   {
     const cache = openEndsCacheRef.current;
-    if (cache.opened !== roomData.openedHands || cache.okeyInfoRef !== okeyInfo) {
+    if (cache.opened !== view.openedHands || cache.okeyInfoRef !== okeyInfo) {
       const map = {};
-      Object.entries(roomData.openedHands || {}).forEach(([uid, groups]) => {
+      Object.entries(view.openedHands || {}).forEach(([uid, groups]) => {
         (groups || []).forEach((g, gi) => { map[`${uid}:${gi}`] = getGroupOpenEnds(g.tiles, g.type, okeyInfo); });
       });
-      openEndsCacheRef.current = { opened: roomData.openedHands, okeyInfoRef: okeyInfo, map };
+      openEndsCacheRef.current = { opened: view.openedHands, okeyInfoRef: okeyInfo, map };
     }
   }
   const openEndsMap = openEndsCacheRef.current.map;
@@ -2103,7 +2276,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const seriesBarrierIsInfoOnly = !!mySeriesBarrier && mySeriesBarrierExempt && mySeriesBarrier.uid !== user.uid;
   const pairsBarrierIsInfoOnly = !!myPairsBarrier && myPairsBarrierExempt && myPairsBarrier.uid !== user.uid;
 
-  const hasAnyOpenedHand = Object.values(roomData.openedHands || {}).some((groups) => groups.length > 0);
+  const hasAnyOpenedHand = Object.values(view.openedHands || {}).some((groups) => groups.length > 0);
 
   // AÇILAN ELLER paneli: kullanıcı isteğiyle artık masanın ORTA sütununda
   // (deste/gösterge'nin ALTINDA), sol/sağ koltukların YANINDA duruyor —
@@ -2129,7 +2302,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       </div>
       <div className="flex flex-col gap-2 sm:gap-3">
         {players.map((p) => {
-          const openedGroups = roomData.openedHands?.[p.uid] || [];
+          const openedGroups = view.openedHands?.[p.uid] || [];
           if (openedGroups.length === 0) return null;
           return (
             // Perler arası boşluk BİLEREK geniş tutuldu: yan yana duran iki
@@ -2301,7 +2474,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         rightSeat={rightSeat}
         bottomSeat={bottomSeat}
         hostUid={roomData.host}
-        turnUid={roomData.turn}
+        turnUid={view.turn}
         okeyInfo={okeyInfo}
         compact={isCompact}
         turnBanner={turnBanner}

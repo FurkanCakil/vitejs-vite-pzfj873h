@@ -1,12 +1,15 @@
 import { useCallback, useRef, useState } from 'react';
+import { findNearestSlotIndex } from './nearestSlot.js';
 
 // Hem ortadaki KAPALI DESTEDEN hem de solumdaki oyuncunun BANA ATTIĞI taştan
 // aynı şekilde (sürükleyerek) taş çekebilmek için ortak etkileşim mantığı.
 //
 // Davranış:
 //   - Hareket etmeden bırakılırsa (klasik tık) ıstakadaki İLK boş slota çeker.
-//   - Sürüklenip ıstakadaki belirli bir slotun üzerinde bırakılırsa TAM O
-//     SLOTA çeker.
+//   - Sürüklenip bırakılırsa, bırakma noktasına EN YAKIN BOŞ slota çeker
+//     (bkz. nearestSlot.js — Madde 9). Eskiden burada `elementFromPoint`
+//     kullanılıyordu; taş iki slotun ARASINA bırakıldığında hedef `null`
+//     dönüyor ve taş ilgisiz bir yere, ıstakanın İLK boş slotuna fırlıyordu.
 // Sürüklerken imleci takip eden bir "ghost" gösterilir.
 //
 // PERFORMANS: Ghost'un POZİSYONU React state'i ile DEĞİL, `ghostElRef`
@@ -57,17 +60,22 @@ export default function useDrawDrag({ enabled, onDraw }) {
     }
     d.x = e.clientX; d.y = e.clientY;
     applyPos(ghostElRef.current, e.clientX, e.clientY);
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const slotEl = el?.closest('[data-slot-index]');
-    d.targetIndex = slotEl ? Number(slotEl.dataset.slotIndex) : null;
   }, []);
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e) => {
     const d = dragRef.current;
     dragRef.current = null;
     reset();
     if (!d) return;
-    onDraw(d.targetIndex);
+    // Hiç hareket etmeden bırakıldıysa (klasik tık) hedef YOKTUR: çağıran
+    // taraf ıstakanın ilk boş slotuna çeker — imlecin o an bulunduğu
+    // (destenin üstündeki) noktaya "en yakın" slota çekmek anlamsız olurdu.
+    if (!d.moved) { onDraw(null); return; }
+    // Hedef, bırakma ANINDAKİ konuma göre hesaplanır (pointermove'da değil):
+    // parmak son karede hâlâ kayıyor olabilir, asıl belirleyici bırakma noktasıdır.
+    const x = e?.clientX ?? d.x;
+    const y = e?.clientY ?? d.y;
+    onDraw(findNearestSlotIndex(x, y, { emptyOnly: true }));
   }, [onDraw, reset]);
 
   const handlers = enabled
