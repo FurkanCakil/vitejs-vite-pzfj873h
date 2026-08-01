@@ -337,23 +337,38 @@ export function computeSelectedGroupsValue(results) {
 // ============================================================
 // ÇİFT (pair) kuralları
 // ============================================================
-// Bir taş, ÇİFT oluştururken "her taşın eşi olabilen" bir joker mi?
-//   - Gerçek Okey: her zaman (klasik kural).
-//   - Sahte Okey: 2'li per yapmak için kullanılabilir (2. madde).
+// Bir taş, ÇİFT oluştururken "HERHANGİ BİR taşın eşi olabilen" (yani karşı
+// tarafın ne olduğuna bakılmaksızın çifti geçerli kılan) bir joker mi?
+//   - Gerçek Okey: her zaman (klasik kural) — her taşı temsil edebilir.
 //   - GÖSTERGE ile aynı renk+sayıdaki taş: destede o taşın İKİ kopyası vardır
 //     ve biri masada Gösterge olarak duruyordur — yani elindeki kopyanın eşi
 //     ASLA gelemez. Bu yüzden (sadece ÇİFT ile AÇARKEN, bkz. `indicator`
 //     parametresinin nerede verildiği) o taş istenen herhangi bir taşa
 //     bağlanabilir. Seri/set açarken ya da işlerken bu geçerli DEĞİLDİR.
+//
+// KULLANICI RAPORU / DÜZELTME: Sahte Okey burada YOKTUR — o "her taşın eşi"
+// DEĞİLDİR. Eskiden `tile.isJoker` de bu listede olduğu için Sahte Okey
+// RASTGELE bir taşla bile "geçerli çift" sayılıyordu. Sahte Okey'in
+// (`effectiveTile` ile, bkz. tiles.js) SABİT bir yüz değeri vardır (o elin
+// Okey'i, yani göstergenin +1'i) — bu yüzden Sahte Okey aşağıdaki
+// `isValidPairTiles`'ın son satırındaki NORMAL eşitlik kontrolüne bırakılır.
+// Sonuç, kullanıcının istediği KESİN kural ile birebir örtüşür: Sahte Okey
+// ancak (a) DİĞER Sahte Okey ile (ikisi de aynı sabit değere eşlenir), (b)
+// Gerçek Okey ile (Okey her taşı temsil eder), ya da (c) SADECE ilk çift
+// açılışında Gösterge eşiyle (o da kendi joker dalından geçerli olur) çift
+// kurabilir — rastgele bir taşla ASLA.
 export function isPairWildcard(tile, okeyInfo, indicator = null) {
   if (!tile) return false;
   if (isOkeyTile(tile, okeyInfo)) return true;
-  if (tile.isJoker) return true; // Sahte Okey
   if (indicator && tile.color === indicator.color && tile.number === indicator.number) return true;
   return false;
 }
 
 // İki taş geçerli bir ÇİFT oluşturuyor mu? (Jokerler için bkz. isPairWildcard.)
+// Sahte Okey `isPairWildcard` DEĞİLDİR — buraya `effectiveTile` ile SABİT
+// yüz değeriyle (o elin Okey'i) girer, bu yüzden karşı taraf da TAM O
+// değere sahip değilse (yani diğer Sahte Okey ya da Gerçek Okey/Gösterge
+// değilse) çift GEÇERSİZDİR.
 export function isValidPairTiles(a, b, okeyInfo, indicator = null) {
   if (!a || !b) return false;
   if (isPairWildcard(a, okeyInfo, indicator) || isPairWildcard(b, okeyInfo, indicator)) return true;

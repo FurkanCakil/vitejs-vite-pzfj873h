@@ -5,9 +5,12 @@
 // bunlardan İKİSİNİ üretir:
 //   1) "Seri Diz": elden en değerli seri/set (per) kombinasyonunu bulup
 //      ıstakayı bu perler ONAYLANMIŞ (groups) halde yeniden dizer.
-//   2) "Çift Diz": elindeki TÜM geçerli çiftleri per yapar; elde Okey / Sahte
-//      Okey / Gösterge eşi (bkz. gameLogic#isPairWildcard) varsa bunlar boşta
-//      kalan EN YÜKSEK sayılı taşa bağlanır.
+//   2) "Çift Diz": elindeki TÜM geçerli çiftleri per yapar; elde Gerçek Okey
+//      ya da (ilk açılışta) Gösterge eşi (bkz. gameLogic#isPairWildcard) varsa
+//      bunlar boşta kalan EN YÜKSEK sayılı taşa bağlanır. Sahte Okey bu
+//      "herhangi bir taşla eşleşebilen joker" grubunda DEĞİLDİR — kendi sabit
+//      yüz değeriyle (o elin Okey'i) normal bir taş gibi eşlenir, yani ancak
+//      DİĞER Sahte Okey (ya da Gerçek Okey/Gösterge) ile çift kurabilir.
 //
 // ÖNEMLİ: Oyunun KURALLARINA hiç dokunulmaz. Üretilen perler, oyuncunun elle
 // "Per Onayla" ile kurabileceği perlerle BİREBİR aynı doğrulayıcılardan
@@ -54,8 +57,9 @@ export function pickAllPairs(handTiles, okeyInfo, indicator = null) {
     if (i < arr.length) spare.push(arr[i]);
   });
 
-  // Joker/gösterge eşleri EN YÜKSEK sayılı boş taşa bağlanır (kullanıcı isteği)
-  // — böylece elde kalırsa en çok ceza yazdıracak taş kurtarılmış olur.
+  // Gerçek Okey/gösterge eşi (Sahte Okey DAHİL DEĞİL — bkz. dosya başı notu)
+  // EN YÜKSEK sayılı boş taşa bağlanır (kullanıcı isteği) — böylece elde
+  // kalırsa en çok ceza yazdıracak taş kurtarılmış olur.
   spare.sort((a, b) => effNumber(b, okeyInfo) - effNumber(a, okeyInfo));
   const unusedWildcards = [];
   wildcards.forEach((w) => {

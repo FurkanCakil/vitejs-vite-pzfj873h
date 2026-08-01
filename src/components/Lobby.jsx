@@ -17,10 +17,12 @@ const GAMES = [
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4', 'amiralbatti'];
 
 // KULLANICI İSTEĞİ: bot zorluk seçimi 101 Okey'den KALDIRILDI (orada üç
-// seviyenin karar mantığı birebir aynıydı, bkz. okey101/botPlayers.js) ve
-// gerçekten farklı davranan Connect 4 botuna EKLENDİ (bkz. connect4/bot.js —
-// Minimax + Alpha-Beta derinliği seviyeye göre değişir).
-const DIFFICULTY_GAMES = ['connect4'];
+// seviyenin karar mantığı birebir aynıydı, bkz. okey101/botPlayers.js) — bu
+// TEK oyuna özel bir düzeltmeydi. Diğer beş oyunun botu zorluğa göre GERÇEKTEN
+// farklı davranıyor (bkz. ilgili bot.js dosyaları: xox/checkers/backgammon
+// easy->rastgele/medium->arama/hard->daha derin arama, chess Stockfish beceri
+// seviyesi, connect4 Minimax+Alpha-Beta derinliği) — bu beşinde seçim KALIR.
+const DIFFICULTY_GAMES = ['xox', 'tavla', 'satranc', 'dama', 'connect4'];
 const DIFFICULTY_OPTIONS = [
   { value: 'easy', label: 'Kolay' },
   { value: 'medium', label: 'Orta' },
