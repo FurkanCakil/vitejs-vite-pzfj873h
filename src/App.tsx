@@ -470,7 +470,7 @@ export default function App() {
         Object.assign(initialState, {
           maxPlayers: 4,
           isBotPlayer: {},
-          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false, botDifficulty: 'medium' },
+          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false },
           teams: { A: [], B: [] },
           countdownStartedAt: null,
           // Seyircilerin "botun yerine geçme" teklifleri (bkz. Okey101Game).
@@ -850,14 +850,14 @@ export default function App() {
       )}
 
       {currentView === 'lobby' ? (
-        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} findMatch={findMatch} matchmakingGameId={matchmakingGameId} />
+        <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} findMatch={findMatch} matchmakingGameId={matchmakingGameId} userId={user?.uid} />
       ) : (
         // 101 Okey masası diğer oyunlardan DAHA GENİŞ bir kaba oturur: masanın
         // ortasındaki "Açılan Eller" alanına daha büyük (okunaklı) taşlar sığsın
         // ve yan koltuklar gerçekten kenarlara açılsın diye.
         <main className={`${isOkeyTable ? 'max-w-6xl' : 'max-w-5xl'} mx-auto flex flex-col items-center ${okeyCompact ? 'h-full w-full' : ''}`}>
           {!hideChrome && (
-            <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} />
+            <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} isPublicRoom={!!roomData?.isPublic} />
           )}
 
           <div className={isFullscreen
@@ -895,11 +895,20 @@ export default function App() {
             )}
 
             {roomData?.status === 'waiting' && roomData?.gameId !== 'okey101' ? (
+              /* HIZLI EŞLEŞME odasında davet kodu GÖSTERİLMEZ (kullanıcı
+                 isteği): kod, yalnızca arkadaşını çağırmak içindir. Rastgele
+                 eşleşme beklerken sadece "Oyuncu Bekleniyor" görünür. */
               <div className="text-center py-12">
                 <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold mb-2">Rakip Bekleniyor...</h2>
-                <p className="text-slate-400 max-w-sm mx-auto mb-6">Arkadaşına oda kodunu gönder. O da bu kodu yazarak masaya katılabilir.</p>
-                {!isFullscreen && <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">{roomCode}</div>}
+                <h2 className="text-2xl font-bold mb-2">Oyuncu Bekleniyor...</h2>
+                {roomData?.isPublic ? (
+                  <p className="text-slate-400 max-w-sm mx-auto">Sana uygun bir rakip aranıyor. Biri katıldığı anda oyun başlayacak.</p>
+                ) : (
+                  <>
+                    <p className="text-slate-400 max-w-sm mx-auto mb-6">Arkadaşına oda kodunu gönder. O da bu kodu yazarak masaya katılabilir.</p>
+                    {!isFullscreen && <div className="text-3xl font-mono bg-slate-900 px-6 py-3 rounded-lg border border-slate-600 inline-block shadow-inner">{roomCode}</div>}
+                  </>
+                )}
               </div>
             ) : (
               <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''}`}>

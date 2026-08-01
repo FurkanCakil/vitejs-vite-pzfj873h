@@ -10,7 +10,8 @@ import { playSound } from '../../utils/sound.js';
 export const MAX_PLAYERS = 4;
 const COUNTDOWN_MS = 3000;
 
-const DEFAULT_RULES = { gameType: 'ffa', assistedEnabled: false, foldingEnabled: false, foldToPartnerEnabled: false, botDifficulty: 'medium' };
+// KULLANICI İSTEĞİ: `botDifficulty` kaldırıldı (bkz. RulesPanel/botPlayers).
+const DEFAULT_RULES = { gameType: 'ffa', assistedEnabled: false, foldingEnabled: false, foldToPartnerEnabled: false };
 
 export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leaveRoom }) {
   const isHost = roomData.host === user.uid;
@@ -89,7 +90,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
       const missing = MAX_PLAYERS - currentPlayers.length;
       if (missing <= 0) return;
 
-      const bots = createBotPlayers(missing, currentPlayers.length, data.rules?.botDifficulty || 'medium');
+      const bots = createBotPlayers(missing, currentPlayers.length);
       const newNames = { ...data.playerNames }; const newIsBot = { ...(data.isBotPlayer || {}) }; const newScores = { ...data.scores };
       bots.forEach((b) => { newNames[b.uid] = b.name; newIsBot[b.uid] = true; newScores[b.uid] = 0; });
       const allPlayers = [...currentPlayers, ...bots.map((b) => b.uid)];

@@ -23,7 +23,7 @@ import {
   OPEN_THRESHOLD, PENALTY_POINTS, SIDE_TAKE_SERIES_MULTIPLIER, SIDE_TAKE_PAIRS_MULTIPLIER,
 } from './gameLogic.js';
 import {
-  randomTurnDelay, pickBotMelds, pickBotPairs, shouldTakeDiscard, shouldTakeDiscardToOpen, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
+  randomTurnDelay, pickBotMelds, pickBotPairs, canOpenedBotUseTile, shouldTakeDiscardToOpen, findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from './botAI.js';
 
 // Istaka panelinin (yeşil çerçeve) kendi iç boşluğu — `sm:p-4`. Panel genişliği
@@ -562,7 +562,12 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           let canTakeSide = false;
           if (!data.forcedPileDraw && topDiscard) {
             if (data.hasOpened?.[turnUid]) {
-              canTakeSide = shouldTakeDiscard(rack, topDiscard, data.okey || null);
+              // KULLANICI İSTEĞİ: açmış bot da taşı ancak BU TURDA
+              // kullanabilecekse alır — aksi halde "aldı, hemen geri koydu"
+              // görüntüsü oluşuyordu (bkz. botAI#canOpenedBotUseTile).
+              canTakeSide = canOpenedBotUseTile(rack, topDiscard, data.okey || null, data.openedHands || {}, {
+                pairsAllowed: !!data.openedWithPairs?.[turnUid] || anyPairsOnTable(data.openedWithPairs),
+              });
             } else {
               const barrierForBot = data.rules?.foldingEnabled ? (data.foldBarrier || null) : null;
               const exemptBot = !barrierForBot || isExemptFromFoldBarrier(turnUid, barrierForBot, data.rules, data.teams);
@@ -610,8 +615,29 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             const melds = pickBotMelds(rackNow, okeyNow);
             const total = melds.reduce((s, m) => s + m.value, 0);
             const meldsTiles = melds.reduce((n, m) => n + m.tiles.length, 0);
+            const tilesLeftAfterOpen = rackNow.length - meldsTiles;
+
+            // KULLANICI RAPORU ("botlar durup dururken -101 yiyor"): burada
+            // eşik SABİT 101 (OPEN_THRESHOLD) idi ve KATLAMALI moddaki barajı
+            // hiç hesaba katmıyordu. Masada ör. 150'lik bir baraj varken 110
+            // toplayan bot açmayı deniyor, `handleBotOpenMelds` bunu
+            // "barajı geçemedin" diye reddederken +101 ceza yazıyordu — yani
+            // bot kendi kendine ceza yiyordu. Artık bot da insan oyuncuyla
+            // AYNI hedefi (barajın bir fazlası) gözetir.
+            //
+            // "Elden bitirme" istisnası korunur: tüm elini tek hamlede serip
+            // son taşı atacak oyuncu barajdan MUAFtır (bkz.
+            // handleBotOpenMelds#botGoesOutFromHand) — o durumda yine sadece
+            // 101 alt sınırı aranır.
+            const barrierNow = data.rules?.foldingEnabled ? (data.foldBarrier || null) : null;
+            const exemptNow = !barrierNow || isExemptFromFoldBarrier(turnUid, barrierNow, data.rules, data.teams);
+            const goesOutFromHand = tilesLeftAfterOpen <= 1;
+            const requiredTotal = (barrierNow && !exemptNow && !goesOutFromHand)
+              ? barrierNow.total + 1
+              : OPEN_THRESHOLD;
+
             // Atacak taş kalması şart (bkz. yukarıdaki çift dalı).
-            if (melds.length > 0 && total >= OPEN_THRESHOLD && rackNow.length - meldsTiles >= 1) {
+            if (melds.length > 0 && total >= requiredTotal && tilesLeftAfterOpen >= 1) {
               apply2(await handleBotOpenMelds(turnUid, melds, false));
             }
             return;
@@ -915,6 +941,21 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // özellikle bot orkestrasyonu ve süre-aşımı watchdog'u — bilerek ham
   // `roomData`da bırakılmıştır (bkz. turnPatch yorumu).
   const view = turnPatch ? { ...roomData, ...turnPatch.patch } : roomData;
+
+  // HAYALET GÖRÜNTÜ DÜZELTMESİ (kullanıcı raporu): `incomingTile` (soldaki
+  // oyuncunun bana attığı, "SOLDAN ÇEK" bölmesinde gösterilen taş) YUKARIDA,
+  // erken-return'lerden ÖNCE ham `roomData`dan türetilir — çünkü `useDrawDrag`
+  // hook'u ona erken-return'lerden önce ihtiyaç duyar. Ama RENDER'a da o ham
+  // değer gidiyordu: taşı soldan çektiğimde taş anında ıstakama geliyor,
+  // buna rağmen kopyası sunucu cevabı gelene kadar (~300ms) hâlâ soldaki
+  // bölmede duruyordu (taş iki yerde birden görünüyordu).
+  //
+  // Çekme yaması `discardPiles`i zaten iyimser olarak eksiltiyor (bkz.
+  // performDraw), bu yüzden render için değeri `view`den YENİDEN türetmek
+  // hayaleti tamamen ortadan kaldırır.
+  const incomingTileView = prevSeatUid
+    ? ((view.discardPiles?.[prevSeatUid] || []).slice(-1)[0] || null)
+    : null;
 
   const players = (roomData.players || []).map((uid) => ({
     uid,
@@ -2732,7 +2773,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
             onToggleFlippedTile={toggleFlippedTile}
             indicator={myHasOpened ? null : (roomData.indicator || null)}
             lastDiscardTile={myTopDiscard}
-            incomingDiscard={incomingTile}
+            incomingDiscard={incomingTileView}
             canTakeIncoming={canTakeIncomingNow}
             incomingDragHandlers={incomingDrag.handlers}
             canOpenPairsRule={myCanLayPairs}

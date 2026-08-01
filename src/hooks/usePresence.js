@@ -1,51 +1,97 @@
 import { useEffect } from 'react';
-import { doc, setDoc, increment } from 'firebase/firestore';
+import { doc, runTransaction, setDoc, deleteField } from 'firebase/firestore';
 import { db, appId } from '../firebase/config.js';
 
-// Küresel "aktif kullanıcı" sayacının tek dokümanı — diğer tüm oda verileriyle
-// AYNI yol düzenini (artifacts/{appId}/public/data/...) kullanır, böylece
-// mevcut Firestore güvenlik kurallarının (rooms için zaten çalışan) kapsamına
-// girer, ayrıca YENİ bir kural eklemeye gerek kalmaz.
+// Küresel "aktif kullanıcı" dokümanı — diğer tüm oda verileriyle AYNI yol
+// düzenini (artifacts/{appId}/public/data/...) kullanır.
 export const presenceCounterRef = doc(db, 'artifacts', appId, 'public', 'data', 'serverStatus', 'info');
 
-// NOT (mimari kısıt): Bu proje sadece Firestore kullanıyor, Realtime Database
-// (RTDB) kurulu DEĞİL — Firestore'da RTDB'deki `onDisconnect` gibi SUNUCU
-// TARAFLI "bağlantı koptu" tespiti YOKTUR. Bu yüzden azaltma (-1) İSTEMCİ
-// TARAFLI en iyi çaba (best-effort) ile yapılır: normal kapanışlarda (sekmeyi
-// kapatma, sayfadan ayrılma, React unmount) kusursuz çalışır; SADECE tarayıcı/
-// işlem çökmesi ya da ani elektrik/ağ kesintisi gibi TAMAMEN anormal
-// durumlarda sayaç bir süre yüksek kalabilir (drift) — bunu garantili
-// önlemenin tek yolu RTDB + onDisconnect (ya da Cloud Functions) olurdu.
+// ============================================================
+// NEDEN SAYAÇ (increment) DEĞİL, "HEARTBEAT" (kalp atışı)?
+// ============================================================
+// İlk sürüm tek bir `activeUsers` sayısını `increment(+1)` / `increment(-1)`
+// ile güncelliyordu. KULLANICI RAPORU: "sadece ben kullanırken 18 aktif oyuncu
+// göründü". Kök neden yapısaldı: +1 GARANTİLİ yazılır ama -1 yalnızca sekme
+// DÜZGÜNCE kapanırsa yazılabilir. Tarayıcı çökmesi, sekmenin bellek yüzünden
+// atılması, internetin aniden kesilmesi, telefonda uygulamanın öldürülmesi ya
+// da bir test/otomasyon oturumu -1'i kaçırır. Kaçırılan her -1 sayacı KALICI
+// olarak şişirir; sayacın kendini toparlaması İMKÂNSIZDIR (geçmişi bilmez).
+// Firestore'da RTDB'deki `onDisconnect` gibi sunucu taraflı bir kopma tespiti
+// de yoktur, yani -1'i güvenilir kılmanın bir yolu yoktu.
 //
-// Bu hook SADECE bu tekil dokümana YAZAR (setDoc + increment) — hiçbir okuma
-// (onSnapshot/getDoc) YAPMAZ, okuma maliyeti sıfırdır. Sayacı GÖSTERMEK için
-// ayrı ve sadece Lobby görünürken aktif olan bir onSnapshot kullanılır (bkz.
-// Lobby.jsx) — böylece oyun içindeyken bu okuma hiç çalışmaz.
+// ÇÖZÜM: Sayı TUTMAK yerine, her sekme kendi "son görüldüm" zamanını yazar:
+//   sessions: { <oturumId>: <epoch ms> }
+// Aktif kullanıcı = son FRESH_MS içinde haber vermiş oturum sayısı. Böylece
+// kaybolan bir sekme kendiliğinden (en geç FRESH_MS sonra) sayımdan düşer —
+// sistem KENDİ KENDİNİ ONARIR, kalıcı şişme mümkün değildir.
+//
+// MALİYET: Tek doküman, tek dinleyici (bkz. Lobby.jsx — dinleyici yalnızca
+// lobi ekranı açıkken kuruludur, oyun içinde hiç okuma olmaz). Yazma:
+// kullanıcı başına 60 saniyede 1.
+const HEARTBEAT_MS = 60_000;
+// Bu süre içinde haber vermiş oturumlar "çevrimiçi" sayılır. Heartbeat
+// aralığının yeterince üzerinde tutulur ki geçici bir ağ hıçkırığı ya da
+// arka plana alınmış bir sekme (tarayıcılar arka planda zamanlayıcıları
+// kısar) yanlışlıkla düşmesin.
+const FRESH_MS = 150_000;
+// Bu kadar eskimiş kayıtlar dokümandan TAMAMEN silinir (doküman sonsuza dek
+// büyümesin diye). Sayımı zaten etkilemiyorlardı.
+const PRUNE_MS = 10 * 60_000;
+
+// Dokümandaki oturum haritasından o anki aktif kullanıcı sayısını üretir.
+// Saf fonksiyon — Lobby hem ilk snapshot'ta hem de periyodik tazelemede
+// (oturumlar zamanla bayatlar) bunu yeniden çağırır.
+export function countActiveSessions(sessions, now = Date.now()) {
+  if (!sessions || typeof sessions !== 'object') return 0;
+  return Object.values(sessions).filter((t) => typeof t === 'number' && now - t < FRESH_MS).length;
+}
+
 export default function usePresence(uid) {
   useEffect(() => {
     if (!uid) return undefined;
 
-    let settled = false;
-    const decrement = () => {
-      if (settled) return;
-      settled = true;
-      // `merge: true`: doküman hiç yoksa (ilk kullanıcı) sorunsuz oluşturur;
-      // `increment()` eksik/yok bir alanı da güvenle 0'dan başlatır.
-      setDoc(presenceCounterRef, { activeUsers: increment(-1) }, { merge: true }).catch(() => {});
+    // Oturum kimliği SEKME BAŞINADIR (uid başına değil): aynı kullanıcı iki
+    // sekme açtıysa bu gerçekten iki aktif oturumdur ve biri kapanınca
+    // diğeri etkilenmemelidir.
+    const sessionId = `${uid}_${Math.random().toString(36).slice(2, 10)}`;
+    let stopped = false;
+
+    const beat = async () => {
+      try {
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(presenceCounterRef);
+          const now = Date.now();
+          const sessions = { ...(snap.data()?.sessions || {}) };
+          Object.keys(sessions).forEach((key) => {
+            if (typeof sessions[key] !== 'number' || now - sessions[key] > PRUNE_MS) delete sessions[key];
+          });
+          sessions[sessionId] = now;
+          // `activeUsers`: ESKİ (hatalı) sayaç alanı. İlk yazımda temizlenir ki
+          // eski sürümden kalan şişmiş değer ortalıkta kalmasın.
+          t.set(presenceCounterRef, { sessions, activeUsers: deleteField() }, { merge: true });
+        });
+      } catch { /* ağ/izin hatası sayacı bozmasın — bir sonraki atışta düzelir */ }
     };
 
-    setDoc(presenceCounterRef, { activeUsers: increment(1) }, { merge: true }).catch(() => {});
+    // Temiz kapanışta kendi kaydımızı hemen sileriz (sayı ANINDA düşsün).
+    // Kaçırılırsa da sorun değildir: kayıt FRESH_MS sonra kendiliğinden
+    // sayımdan düşer — bu tasarımın tüm amacı buydu.
+    const leave = () => {
+      if (stopped) return;
+      stopped = true;
+      setDoc(presenceCounterRef, { sessions: { [sessionId]: deleteField() } }, { merge: true }).catch(() => {});
+    };
 
-    // `pagehide`, `beforeunload`'a göre mobil Safari/iOS dahil sekme kapatma
-    // gibi durumlarda daha güvenilir tetiklenir; ikisi BİRDEN dinlenip HANGİSİ
-    // önce ateşlerse o sayılır (`settled` bayrağı ikinci kez azaltmayı engeller).
-    window.addEventListener('beforeunload', decrement);
-    window.addEventListener('pagehide', decrement);
+    beat();
+    const interval = setInterval(() => { if (!stopped) beat(); }, HEARTBEAT_MS);
+    window.addEventListener('beforeunload', leave);
+    window.addEventListener('pagehide', leave);
 
     return () => {
-      window.removeEventListener('beforeunload', decrement);
-      window.removeEventListener('pagehide', decrement);
-      decrement();
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', leave);
+      window.removeEventListener('pagehide', leave);
+      leave();
     };
   }, [uid]);
 }

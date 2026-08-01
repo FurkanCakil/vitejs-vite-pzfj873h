@@ -419,6 +419,43 @@ export function shouldTakeDiscardToOpen(handTiles, discardTile, okeyInfo, requir
   return usedInMeld && total >= requiredTotal;
 }
 
+// Elini ZATEN AÇMIŞ bir bot için: yandan taş almanın TEK anlamı, o taşı BU
+// TURDA masaya koyabilmektir — kural gereği yandan alınan taş ya kullanılmalı
+// ya da geri konmalıdır (bkz. Okey101Game#handleCancelSideTake).
+//
+// KULLANICI RAPORU: bot "taşı alıp hemen geri koyuyor, saçma duruyor". Kök
+// neden, açmış botlar için burada genel bir "işime yarar mı" sezgisinin
+// (shouldTakeDiscard) kullanılmasıydı: o sezgi "yüksek sayılı taşı İLERİDE
+// kullanırım" gibi gerekçelerle taş aldırıyor, bot taşı o tur kullanamayınca
+// aynı tur içinde geri koyuyordu.
+//
+// Artık taş SADECE ŞİMDİ kullanılabiliyorsa alınır:
+//   a) masadaki açık bir perin ucuna işlenebiliyorsa (botun gerçekten yaptığı
+//      hamle — bkz. Okey101Game#attemptTacking), YA DA
+//   b) botun bu turda masaya süreceği YENİ bir per/çiftin parçası oluyorsa.
+// (b)'de taşın per'de GERÇEKTEN yer alması aranır: taş olmadan da kurulabilen
+// bir per, o taşı almak için gerekçe değildir.
+//
+// NOT: Okey çalma (findJokerReplacements) bilerek "kullanılabilir" SAYILMAZ —
+// bot orkestrasyonu `replaceTileId` hamlesini hiç yapmaz (bkz. attemptTacking
+// yalnızca findTackOpportunities kullanır), dolayısıyla onu gerekçe saymak
+// yine "alıp geri koyma" durumunu doğururdu.
+export function canOpenedBotUseTile(handTiles, discardTile, okeyInfo, openedHands, { pairsAllowed = false } = {}) {
+  if (!discardTile) return false;
+
+  if (findTackOpportunities([discardTile], openedHands, okeyInfo).length > 0) return true;
+
+  const withTile = [...handTiles, discardTile];
+  const melds = pickBotMelds(withTile, okeyInfo);
+  if (melds.some((m) => m.tiles.some((t) => t.id === discardTile.id))) return true;
+
+  if (pairsAllowed) {
+    const pairs = pickBotPairs(withTile, okeyInfo);
+    if (pairs.some((p) => p.tiles.some((t) => t.id === discardTile.id))) return true;
+  }
+  return false;
+}
+
 // Masadaki (kendi veya rakip) açık perlere işlenebilecek (tacking) tüm fırsatları tarar.
 export function findTackOpportunities(handTiles, openedHandsAllPlayers, okeyInfo) {
   const opportunities = [];

@@ -1,12 +1,6 @@
 import React from 'react';
 import { Lock, Settings } from 'lucide-react';
 
-const BOT_DIFFICULTY_OPTIONS = [
-  { value: 'easy', label: 'Kolay' },
-  { value: 'medium', label: 'Orta' },
-  { value: 'hard', label: 'Zor' },
-];
-
 function RuleRow({ label, hint, children }) {
   return (
     <div className="flex items-center justify-between gap-4 flex-wrap py-2">
@@ -53,7 +47,7 @@ function ToggleSwitch({ checked, onChange, onLabel, offLabel, disabled }) {
   );
 }
 
-// `rules`: { gameType: 'ffa'|'2v2', assistedEnabled, foldingEnabled, foldToPartnerEnabled, botDifficulty }
+// `rules`: { gameType: 'ffa'|'2v2', assistedEnabled, foldingEnabled, foldToPartnerEnabled }
 // NOT: "yandan taş alma -> elini aç ya da geri koy" kuralı ve buna bağlı ceza
 // (çekilen taşın 10/20 katı) artık koşulsuz uygulanır, bu yüzden burada ayrı
 // bir "Ceza Kuralı" ayarı YOKTUR.
@@ -101,16 +95,11 @@ export default function RulesPanel({ rules, isHost, onChange }) {
           </RuleRow>
         )}
 
-        <RuleRow label="Bot Zorluk Seviyesi">
-          <select
-            disabled={!isHost}
-            value={rules.botDifficulty}
-            onChange={(e) => onChange('botDifficulty', e.target.value)}
-            className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
-          >
-            {BOT_DIFFICULTY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </RuleRow>
+        {/* KULLANICI İSTEĞİ: "Bot Zorluk Seviyesi" seçimi KALDIRILDI — üç
+            seviyenin de karar mantığı birebir aynıydı (bkz.
+            botPlayers.js#createBotPlayers yorumu), seçim yalnızca bot isminin
+            sonundaki etiketi değiştiriyordu. Zorluk seçimi artık gerçekten
+            farklı davranan Connect 4 botunda sunuluyor (bkz. Lobby.jsx). */}
       </div>
     </div>
   );

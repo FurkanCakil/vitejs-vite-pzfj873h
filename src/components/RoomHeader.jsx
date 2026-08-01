@@ -1,7 +1,11 @@
 import React from 'react';
-import { ArrowLeft, Maximize, Check, Copy, Bot } from 'lucide-react';
+import { ArrowLeft, Maximize, Check, Copy, Bot, Zap } from 'lucide-react';
 
-export default function RoomHeader({ leaveRoom, toggleFullscreen, roomCode, copyToClipboard, copySuccess, isBotGame }) {
+// `isPublicRoom`: oda HIZLI EŞLEŞME ile kurulduysa true. KULLANICI İSTEĞİ —
+// davet kodu yalnızca "arkadaşımla oynayacağım" senaryosuna ait bir özelliktir;
+// rastgele eşleşilen bir masada gösterilmesi anlamsızdır, bu yüzden orada kod
+// yerine sade bir "Hızlı Eşleşme" rozeti görünür.
+export default function RoomHeader({ leaveRoom, toggleFullscreen, roomCode, copyToClipboard, copySuccess, isBotGame, isPublicRoom }) {
   return (
     <div className="w-full flex items-center justify-between mb-4 sm:mb-8">
       <button onClick={leaveRoom} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"><ArrowLeft className="w-5 h-5" /> Odadan Çık</button>
@@ -11,6 +15,11 @@ export default function RoomHeader({ leaveRoom, toggleFullscreen, roomCode, copy
           <div className="flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-full border border-slate-700 shadow-md">
             <Bot className="w-5 h-5 text-indigo-300" />
             <span className="text-sm text-slate-300 font-medium">Bot Modu</span>
+          </div>
+        ) : isPublicRoom ? (
+          <div className="flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-full border border-fuchsia-500/40 shadow-md">
+            <Zap className="w-5 h-5 text-fuchsia-300" />
+            <span className="text-sm text-slate-300 font-medium">Hızlı Eşleşme</span>
           </div>
         ) : (
           <div className="flex items-center gap-4 bg-slate-800 px-4 py-2 rounded-full border border-slate-700 shadow-md">

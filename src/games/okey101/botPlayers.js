@@ -10,8 +10,6 @@ const BOT_DISPLAY_NAMES = [
   'Serkan', 'Tuğçe', 'Umut', 'Yasemin', 'Hakan', 'İrem', 'Barış', 'Ceren',
 ];
 
-export const BOT_DIFFICULTY_LABELS = { easy: 'Kolay', medium: 'Orta', hard: 'Zor' };
-
 export function isBotUid(uid) {
   return typeof uid === 'string' && uid.startsWith(OKEY_BOT_PREFIX);
 }
@@ -23,8 +21,13 @@ export function isBotUid(uid) {
 // tek başınayken (yani hemen her oyunda) startIndex hep aynı (1, 2, 3...)
 // olduğu için "Kalanı Botlarla Doldur" HER SEFERİNDE birebir aynı 3 ismi
 // (Mehmet, Zeynep, Ali) üretiyordu.
-export function createBotPlayers(count, startIndex, difficulty) {
-  const label = BOT_DIFFICULTY_LABELS[difficulty] || difficulty;
+//
+// KULLANICI İSTEĞİ: 101 Okey'de bot ZORLUK SEVİYESİ KALDIRILDI. Sebep, bunun
+// gerçek bir seçim olmamasıydı: üç seviyenin de karar mantığı BİREBİR AYNIydı
+// (bkz. botAI.js — tek bir arama/heuristik seti vardır, `difficulty` hiçbir
+// yerde okunmuyordu), yalnızca bot İSMİNİN sonundaki etiketi değiştiriyordu.
+// Artık botlar sadece "Bot <İsim>" olarak adlandırılır.
+export function createBotPlayers(count, startIndex) {
   const pool = [...BOT_DISPLAY_NAMES];
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -35,7 +38,7 @@ export function createBotPlayers(count, startIndex, difficulty) {
     const idx = startIndex + i;
     const uid = `${OKEY_BOT_PREFIX}${idx}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const displayName = pool[i % pool.length];
-    const name = `Bot ${displayName} (${label})`;
+    const name = `Bot ${displayName}`;
     bots.push({ uid, name });
   }
   return bots;
