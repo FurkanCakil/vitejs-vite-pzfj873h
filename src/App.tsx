@@ -8,6 +8,7 @@ import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction } from 'fire
 import { auth, db, appId } from './firebase/config.js';
 import { generateRoomCode } from './utils/roomCode.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
+import usePresence from './hooks/usePresence.js';
 
 import useViewport from './hooks/useViewport.js';
 
@@ -68,6 +69,9 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const isOnline = useOnlineStatus(); // Custom Hook'umuzu kullanıyoruz
+  // Aktif Kullanıcı Sayacı: oturum boyunca (auth tamamlanınca) küresel sayacı
+  // +1/-1 yazar — SADECE yazar, hiç okuma yapmaz (bkz. usePresence.js).
+  usePresence(user?.uid);
   const { isCompact } = useViewport();
   const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);

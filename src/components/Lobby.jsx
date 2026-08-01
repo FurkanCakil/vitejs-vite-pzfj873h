@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { onSnapshot } from 'firebase/firestore';
 import { Users, Bot, UserPlus } from 'lucide-react';
+import { presenceCounterRef } from '../hooks/usePresence.js';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', available: true, icon: '❌⭕' },
@@ -14,8 +16,32 @@ const GAMES = [
 const BOT_SUPPORTED_GAMES = ['xox', 'dama', 'satranc', 'tavla', 'connect4', 'amiralbatti'];
 
 export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame }) {
+  // Aktif Kullanıcı Sayacı: SADECE bu tekil doküman dinlenir (bkz.
+  // usePresence.js) — kullanıcı başına ayrı bir dinleyici YOKTUR. Bu
+  // dinleyici sadece Lobby EKRANDAYKEN kurulu kalır; bir odaya/oyuna
+  // girildiğinde (Lobby unmount olduğunda) otomatik kapanır, oyun içindeyken
+  // hiç okuma maliyeti oluşturmaz.
+  const [activeUsers, setActiveUsers] = useState(null);
+  useEffect(() => {
+    const unsub = onSnapshot(presenceCounterRef, (snap) => {
+      setActiveUsers(snap.data()?.activeUsers ?? 0);
+    }, (err) => { console.error('Aktif kullanıcı sayacı okunamadı (Firestore kuralı):', err); setActiveUsers(null); });
+    return unsub;
+  }, []);
+
   return (
     <main className="max-w-5xl mx-auto">
+      <div className="flex justify-end mb-4">
+        <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-full pl-2.5 pr-3.5 py-1.5 shadow-lg backdrop-blur-sm">
+          <span
+            className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"
+            style={{ boxShadow: '0 0 6px 2px rgba(34,197,94,0.65)' }}
+          />
+          <span className="text-xs sm:text-sm font-medium text-slate-300">
+            Aktif Oyuncu: <span className="font-bold text-white tabular-nums">{activeUsers === null ? '—' : Math.max(0, activeUsers)}</span>
+          </span>
+        </div>
+      </div>
       <div className="bg-slate-800 p-6 rounded-xl mb-6 shadow-lg border border-slate-700 flex flex-col md:flex-row gap-4 items-center justify-between">
         <div><h2 className="text-xl font-semibold mb-1">Oyuncu İsmin</h2><p className="text-sm text-slate-400">Oyunlarda bu isimle görüneceksin.</p></div>
         <input type="text" placeholder="İsmini yaz..." value={nickname} onChange={(e) => { setNickname(e.target.value); try { localStorage.setItem('nickname', e.target.value); } catch { /* depolama engelliyse yok say */ } }} className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-center w-full md:w-64 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" maxLength={15} />
