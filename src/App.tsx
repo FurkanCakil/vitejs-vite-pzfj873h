@@ -526,7 +526,13 @@ export default function App() {
           let updatePayload = { players: updatedPlayers, status: data.gameId === 'okey101' ? 'waiting' : 'playing', abandonedBy: null, abandonReason: null };
 
           if (!isResume) {
-            updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || 'Oyuncu 2' }; 
+            // Madde 12 (kullanıcı isteği): isim girmeyen misafirlere HEP sabit
+            // 'Oyuncu 2' yazılıyordu — Okey101 gibi 3-4 kişilik odalarda 3.
+            // ve 4. oyuncu da (hepsi boş isimle girerse) aynı "Oyuncu 2"
+            // adını alıp çakışıyordu. Artık numarası, odaya KATILDIĞI GERÇEK
+            // SIRAYA (updatedPlayers.length: host=1, sonrakiler=2,3,4...) göre
+            // sıralı ve artan şekilde verilir.
+            updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || `Oyuncu ${updatedPlayers.length}` };
             updatePayload.scores = { ...data.scores, [user.uid]: 0 }; 
             
             if (data.gameId === 'tavla') {
@@ -561,7 +567,11 @@ export default function App() {
             let missingUid = null; if (data.scores) missingUid = Object.keys(data.scores).find(uid => !(data.players || []).includes(uid));
             if (missingUid && missingUid !== user.uid) {
                 const newScores = { ...data.scores }; newScores[user.uid] = newScores[missingUid] || 0; delete newScores[missingUid]; updatePayload.scores = newScores;
-                const newNames = { ...data.playerNames }; newNames[user.uid] = nickname || 'Oyuncu 2'; delete newNames[missingUid]; updatePayload.playerNames = newNames;
+                // Madde 12: terk edilen koltuğu dolduran yeni misafire de,
+                // sabit 'Oyuncu 2' yerine o koltuğun odadaki GERÇEK sıra
+                // numarası (1-tabanlı) verilir.
+                const seatNumber = (data.players || []).indexOf(missingUid) + 1;
+                const newNames = { ...data.playerNames }; newNames[user.uid] = nickname || `Oyuncu ${seatNumber || updatedPlayers.length}`; delete newNames[missingUid]; updatePayload.playerNames = newNames;
                 if (data.playerColors) { const newColors = { ...data.playerColors }; newColors[user.uid] = newColors[missingUid]; delete newColors[missingUid]; updatePayload.playerColors = newColors; }
                 if (data.turn === missingUid) updatePayload.turn = user.uid; if (data.startingPlayer === missingUid) updatePayload.startingPlayer = user.uid; if (data.winner === missingUid) updatePayload.winner = user.uid;
             } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }

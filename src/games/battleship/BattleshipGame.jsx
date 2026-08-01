@@ -496,13 +496,21 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         // Bot MODU: bot filosu zaten oda kurulurken (App.tsx#startBotGame)
         // yerleştirilip "hazır" işaretlenmiş durumda — tek bir yerel oyuncu
         // olduğu için yarış durumu YOK, transaction'a gerek DUYULMAZ. İnsan
-        // hazır olduğu an savaş doğrudan başlar; başlangıç sırası (kim ilk
-        // ateş eder) rastgele belirlenir.
+        // hazır olduğu an savaş doğrudan başlar.
+        // Madde 2 (kullanıcı isteği): İLK elde başlangıç sırası rastgele
+        // belirlenir, ama SONRAKİ ellerde (Yeniden Oyna) `roomData.startingPlayer`
+        // (bir önceki elin başlayanı) baz alınarak sıra DETERMİNİSTİK OLARAK
+        // DEĞİŞİR — aynı taraf art arda iki kez başlamaz.
+        const prevStarter = roomData.startingPlayer;
+        const nextStarter = prevStarter
+          ? (prevStarter === user.uid ? BOT_UID : user.uid)
+          : (Math.random() < 0.5 ? user.uid : BOT_UID);
         await updateRoom({
           [`ships.${user.uid}`]: placedShips,
           [`readyPlayers.${user.uid}`]: true,
           setupPhase: false,
-          turn: Math.random() < 0.5 ? user.uid : BOT_UID,
+          turn: nextStarter,
+          startingPlayer: nextStarter,
         });
         // KULLANICI İSTEĞİ: jenerik `playSound('check')` (sert/yüksek sesli)
       // yerine bu oyuna özel, kısık ve yumuşak bir onay sesi (bkz.
@@ -529,7 +537,15 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         };
         if (bothReady) {
           update.setupPhase = false;
-          update.turn = data.host;
+          // Madde 2: İLK elde host başlar (data.startingPlayer henüz yok);
+          // SONRAKİ ellerde (Yeniden Oyna) bir önceki elin başlayanının
+          // KARŞISINDAKİ oyuncuya geçilir — sıra art arda aynı tarafta kalmaz.
+          const prevStarter = data.startingPlayer;
+          const nextStarter = prevStarter
+            ? ((data.players || []).find((uid) => uid !== prevStarter) || data.host)
+            : data.host;
+          update.turn = nextStarter;
+          update.startingPlayer = nextStarter;
         }
         t.update(roomRef, update);
       });
@@ -645,7 +661,11 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       update.winner = user.uid;
       update.turn = null;
       update.scores = { ...roomData.scores, [user.uid]: (roomData.scores?.[user.uid] || 0) + 1 };
-    } else {
+    } else if (!isHit) {
+      // Madde 3 (kullanıcı isteği): İSABET (hit) olduğunda sıra DEĞİŞMEZ —
+      // aynı oyuncu karavana vurana kadar atmaya devam eder. `turn` alanına
+      // hiç dokunulmayarak (ıskada olduğu gibi rakibe yazmak yerine) mevcut
+      // değeri korunur, yani sıra zaten atan oyuncuda kalır.
       update.turn = opponentUid;
     }
 
@@ -685,14 +705,22 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         update.winner = BOT_UID;
         update.turn = null;
         update.scores = { ...roomData.scores, [BOT_UID]: (roomData.scores?.[BOT_UID] || 0) + 1 };
-      } else {
+      } else if (!isHit) {
+        // Madde 3: bot da isabet ettiğinde sırayı bırakmaz, ıskalayana kadar
+        // ateş etmeye devam eder (bkz. handleShoot'taki aynı kural).
         update.turn = user.uid;
       }
       updateRoom(update);
     }, 1500 + Math.random() * 1000);
     return () => clearTimeout(timer);
+    // Madde 3: bot isabet ettiğinde `roomData.turn` DEĞİŞMEDEN BOT_UID kalır
+    // (yukarıdaki gibi) — bu efekt SADECE `roomData.turn` bağımlılığına
+    // güvenseydi, aynı değer tekrar yazılmadığı için ikinci (zincirleme) atışı
+    // tetiklemezdi. `roomData.shots?.[BOT_UID]?.length` her atışta arttığı
+    // için, sıra hâlâ botta olduğu sürece efekt bir sonraki atış için de
+    // güvenilir şekilde yeniden çalışır.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBot, roomData.turn, roomData.winner, roomData.status, isPlaying]);
+  }, [isBot, roomData.turn, roomData.winner, roomData.status, isPlaying, roomData.shots?.[BOT_UID]?.length]);
 
   const requestRematch = async () => {
     if (isSpectator) return;

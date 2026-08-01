@@ -24,6 +24,12 @@ export const playSound = (type) => {
       gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 0.3); osc.start(now); osc.stop(now + 0.3);
     } else if (type === 'error') {
       osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now); gain.gain.setValueAtTime(0.5, now); gain.gain.linearRampToValueAtTime(0, now + 0.2); osc.start(now); osc.stop(now + 0.2);
+    } else if (type === 'countdownTick') {
+      // Madde 11 (kullanıcı isteği): oyun başlamadan önceki 3-2-1 geri
+      // sayımında her saniye çalan, kısık sesli, kısa bir "dın" (beep).
+      osc.type = 'sine'; osc.frequency.setValueAtTime(880, now);
+      gain.gain.setValueAtTime(0.001, now); gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      osc.start(now); osc.stop(now + 0.15);
     }
   } catch (e) {}
 };

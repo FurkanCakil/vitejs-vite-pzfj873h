@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Eye, Crown, Users, Loader2, Check, X, Bot } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
@@ -153,6 +153,44 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
 
   const canDropInHover = isMyTurn && !roomData.winner && hoveredCol !== null && !isColumnFull(board, hoveredCol);
 
+  // Madde 4 (kullanıcı isteği): kazanan 4'lü dizinin üzerinden geçen görsel
+  // bir bağlama çizgisi. Tahta responsive (sm/md/lg breakpoint'lerine göre
+  // hücre boyutu DEĞİŞİYOR — bkz. .connect4-hole sınıfları), bu yüzden
+  // koordinatlar CSS'ten değil, kazanan İLK ve SON hücrenin GERÇEK DOM
+  // konumundan (getBoundingClientRect) ölçülür — hangi breakpoint aktif
+  // olursa olsun her zaman doğru hizalanır.
+  const boardRef = useRef(null);
+  const [winLineCoords, setWinLineCoords] = useState(null);
+  useEffect(() => {
+    const line = roomData.winningLine;
+    if (!line || line.length < 2 || !boardRef.current) { setWinLineCoords(null); return undefined; }
+    // Kazanan hücreler her zaman TEK bir düz doğru üzerindedir (yatay/dikey/
+    // çapraz) — satır (row) sonra sütun (col) sırasına göre sıralamak, doğrunun
+    // yönü ne olursa olsun İKİ UÇ noktayı (ilk/son) doğru şekilde verir.
+    const measure = () => {
+      const el = boardRef.current;
+      if (!el) return;
+      const sorted = [...line].sort((a, b) => {
+        const ra = Math.floor(a / CONNECT4_COLS); const rb = Math.floor(b / CONNECT4_COLS);
+        return ra !== rb ? ra - rb : (a % CONNECT4_COLS) - (b % CONNECT4_COLS);
+      });
+      const firstEl = el.querySelector(`[data-cell-index="${sorted[0]}"]`);
+      const lastEl = el.querySelector(`[data-cell-index="${sorted[sorted.length - 1]}"]`);
+      if (!firstEl || !lastEl) { setWinLineCoords(null); return; }
+      const boardRect = el.getBoundingClientRect();
+      const r1 = firstEl.getBoundingClientRect(); const r2 = lastEl.getBoundingClientRect();
+      setWinLineCoords({
+        x1: r1.left + r1.width / 2 - boardRect.left,
+        y1: r1.top + r1.height / 2 - boardRect.top,
+        x2: r2.left + r2.width / 2 - boardRect.left,
+        y2: r2.top + r2.height / 2 - boardRect.top,
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [roomData.winningLine]);
+
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl bg-gradient-to-br from-amber-950/40 to-slate-900 p-4 md:p-8 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden">
       <style>{`
@@ -197,6 +235,22 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
             radial-gradient(circle at 35% 28%, #93c5fd 0%, #3b82f6 45%, #1d4ed8 85%, #1e3a8a 100%);
           border: 2px solid #1e3a8a;
         }
+
+        /* Madde 4: kazanma çizgisi — hücrelerin (deliklerin) ÜSTÜNDEN geçtiği
+           için deliğe göre daha ince/parlak; uçtan uca "çiziliyormuş" gibi
+           kısa bir animasyonla belirir. */
+        .connect4-winline {
+          stroke: #facc15;
+          stroke-width: 6;
+          stroke-linecap: round;
+          stroke-dasharray: 100;
+          stroke-dashoffset: 100;
+          filter: drop-shadow(0 0 6px rgba(250,204,21,0.9)) drop-shadow(0 0 2px rgba(255,255,255,0.8));
+          animation: connect4WinLineDraw 500ms 120ms ease-out forwards;
+        }
+        @keyframes connect4WinLineDraw {
+          to { stroke-dashoffset: 0; }
+        }
       `}</style>
 
       <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Connect 4</h2>
@@ -225,7 +279,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
         {/* 1. MADDE (7x6 Tahta): gerçekçi AHŞAP dokulu çerçeve + oyulmuş
             delikler (bkz. üstteki .connect4-board / .connect4-hole). Sütuna
             tıklamak için tüm sütun (üstteki "düşürme" ipucu dahil) tıklanabilir. */}
-        <div className="connect4-board flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
+        <div ref={boardRef} className="connect4-board relative flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
           {Array.from({ length: CONNECT4_COLS }, (_, col) => {
             const colFull = isColumnFull(board, col);
             const clickable = isMyTurn && !roomData.winner && !colFull;
@@ -250,7 +304,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
                   const isWinningCell = roomData.winningLine?.includes(index);
                   const justDropped = lastMove && lastMove.row === row && lastMove.col === col;
                   return (
-                    <div key={row} className="connect4-hole w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-full flex items-center justify-center overflow-hidden">
+                    <div key={row} data-cell-index={index} className="connect4-hole w-8 h-8 sm:w-12 sm:h-12 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-full flex items-center justify-center overflow-hidden">
                       {cell && (
                         <div
                           className={`w-[85%] h-[85%] rounded-full ${DISC_CLASS[cell]} ${isWinningCell ? 'ring-4 ring-yellow-300 shadow-[0_0_16px_rgba(253,224,71,0.9)] scale-105' : ''} ${justDropped ? 'connect4-drop' : ''}`}
@@ -262,6 +316,18 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
               </div>
             );
           })}
+          {/* Madde 4: kazanan 4'lünün üzerinden geçen bağlama çizgisi.
+              `pathLength={100}` sayesinde stroke-dasharray/dashoffset gerçek
+              piksel uzunluğundan BAĞIMSIZ (her zaman 0-100 aralığında) çalışır. */}
+          {winLineCoords && (
+            <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
+              <line
+                x1={winLineCoords.x1} y1={winLineCoords.y1} x2={winLineCoords.x2} y2={winLineCoords.y2}
+                pathLength={100}
+                className="connect4-winline"
+              />
+            </svg>
+          )}
         </div>
 
         {roomData.winner && roomData.status !== 'abandoned' && (

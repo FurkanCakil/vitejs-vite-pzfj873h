@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { Users } from 'lucide-react';
 import RulesPanel from './RulesPanel.jsx';
 import TeamSelection from './TeamSelection.jsx';
 import PlayerList from './PlayerList.jsx';
 import { createBotPlayers, isBotUid } from './botPlayers.js';
+import { playSound } from '../../utils/sound.js';
 
 export const MAX_PLAYERS = 4;
 const COUNTDOWN_MS = 3000;
@@ -136,9 +137,23 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leav
 
   // ---- Ekranda gösterilecek geri sayım (tüm istemcilerde ortak countdownStartedAt'tan türetilir) ----
   const [countdownDisplay, setCountdownDisplay] = useState(null);
+  // Madde 11 (kullanıcı isteği): 3-2-1 geri sayımının HER SANİYESİNDE kısık
+  // sesli bir "dın" (beep) çalınır. `tick` 200ms'de bir çalıştığı için aynı
+  // saniyeyi tekrar tekrar çalmamak üzere son çalınan değeri ref'te tutulur —
+  // sadece GÖSTERİLEN sayı GERÇEKTEN değiştiğinde (3 -> 2 -> 1) yeni bir beep
+  // tetiklenir; bu, host DAHİL masadaki HERKESİN istemcisinde (ortak
+  // `countdownStartedAt`tan türetildiği için) eş zamanlı duyulur.
+  const lastBeepedRef = useRef(null);
   useEffect(() => {
-    if (!roomData.countdownStartedAt) { setCountdownDisplay(null); return; }
-    const tick = () => setCountdownDisplay(Math.max(0, Math.ceil((roomData.countdownStartedAt + COUNTDOWN_MS - Date.now()) / 1000)));
+    if (!roomData.countdownStartedAt) { setCountdownDisplay(null); lastBeepedRef.current = null; return; }
+    const tick = () => {
+      const next = Math.max(0, Math.ceil((roomData.countdownStartedAt + COUNTDOWN_MS - Date.now()) / 1000));
+      setCountdownDisplay(next);
+      if (next > 0 && next !== lastBeepedRef.current) {
+        lastBeepedRef.current = next;
+        playSound('countdownTick');
+      }
+    };
     tick();
     const interval = setInterval(tick, 200);
     return () => clearInterval(interval);
