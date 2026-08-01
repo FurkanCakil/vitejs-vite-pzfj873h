@@ -189,12 +189,109 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   }, [isHost]);
 
   // ============================================================
+  // İYİMSER TUR DURUMU ("Write-Ahead Buffer")
+  // ============================================================
+  // KÖK NEDEN: Bu oyundaki tüm kritik hamleler `runTransaction` ile yazılır.
+  // Firestore'da transaction'lar -düz `updateDoc`'un AKSİNE- yerel ön belleği
+  // güncellemez, yani "latency compensation" YOKTUR: `onSnapshot` ancak sunucu
+  // yazımı onayladıktan SONRA tetiklenir. Bu yüzden taş atıldığında taş
+  // ıstakadan anında kalksa bile (PlayerRack#optimisticGoneId) SIRA, ATIŞ
+  // YIĞINI ve açılan perler ~300ms boyunca ESKİ hâlinde kalıyordu.
+  //
+  // Çözüm: hamleyi sunucuya göndermeden ÖNCE sonucun TUR DURUMU kısmını buraya
+  // yazıp ekranı anında güncelliyoruz; gerçek veri gelince katman düşüyor.
+  //
+  // Bu blok BİLEREK "MASA ÇAPINDA SESLER" bölümünden ÖNCE (yani sesler bu
+  // katmanı kullanabilsin diye) ve erken-return'lerden ÖNCE (efektler her
+  // zaman ham `roomData`yı görsün diye, bkz. `view` birleştirmesi çok daha
+  // aşağıda) tanımlanır.
+  //
+  // KAPSAM BİLEREK DARDIR — `racks`/`groups` bu katmana DAHİL DEĞİLDİR:
+  // bunların çok daha ince ayarlı kendi iyimser katmanı PlayerRack içinde
+  // zaten var (optimisticRack/optimisticGoneId); ikinci bir katman onunla
+  // çakışıp taşı iki kez gizler/geri getirirdi.
+  const [turnPatch, setTurnPatch] = useState(null); // { patch, baseSig }
+  const turnPatchTimerRef = useRef(null);
+  useEffect(() => () => { if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current); }, []);
+
+  // İyimser katmanın NE ZAMAN düşeceğini belirleyen imza: sunucudaki tur
+  // durumu HERHANGİ bir yönde değiştiği an (bizim yazımımız düştüğü için ya da
+  // araya başka bir oyuncunun hamlesi girdiği için) tahminimiz artık
+  // bayattır ve gerçek veriye bırakılır. Bu, "transaction bitince temizle"
+  // yaklaşımından daha güvenlidir: orada, yazım onaylandığı AN ile snapshot'ın
+  // GELDİĞİ an arasındaki boşlukta ekran bir kare eski duruma geri sekerdi.
+  const turnStateSignature = (data) => [
+    data.turn ?? '',
+    data.hasDrawnThisTurn ? 1 : 0,
+    data.sideTake?.tileId ?? '',
+    data.forcedPileDraw ? 1 : 0,
+    data.roundEnded ? 1 : 0,
+    data.drawPile?.length ?? '',
+    Object.entries(data.discardPiles || {}).map(([uid, p]) => `${uid}:${(p || []).length}`).sort().join(','),
+    Object.entries(data.openedHands || {}).map(([uid, g]) => `${uid}:${(g || []).reduce((n, x) => n + (x?.tiles?.length || 0), 0)}`).sort().join(','),
+  ].join('|');
+
+  const clearTurnPatch = () => {
+    if (turnPatchTimerRef.current) { clearTimeout(turnPatchTimerRef.current); turnPatchTimerRef.current = null; }
+    setTurnPatch(null);
+  };
+
+  // `buildPatch(data)` ham sunucu durumundan iyimser tur durumunu üretir.
+  const applyTurnPatch = (buildPatch) => {
+    const patch = buildPatch(roomData);
+    if (!patch) return;
+    setTurnPatch({ patch, baseSig: turnStateSignature(roomData) });
+    // EMNİYET AĞI (normalde HİÇ tetiklenmez): yazım kalıcı olarak başarısız
+    // olur ve sunucu durumu HİÇ değişmezse ekran sonsuza dek onaylanmamış bir
+    // tahmini göstermesin.
+    if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current);
+    turnPatchTimerRef.current = setTimeout(() => setTurnPatch(null), 5000);
+  };
+
+  useEffect(() => {
+    if (!turnPatch) return;
+    if (turnStateSignature(roomData) !== turnPatch.baseSig) clearTurnPatch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomData, turnPatch]);
+
+  // Sesler (aşağıda) ve tur durumu türetilen değerleri BU birleştirilmiş
+  // görünümü okur — `view` (çok daha aşağıda, erken-return'lerden SONRA)
+  // ile AYNI mantık, sadece efektlerin erişebileceği kadar erken tanımlanır.
+  const soundView = turnPatch ? { ...roomData, ...turnPatch.patch } : roomData;
+
+  // ============================================================
   // MASA ÇAPINDA SESLER
   // ============================================================
   // Oyunu ilgilendiren hamlelerin sesi, hamleyi KİM yaparsa yapsın MASADAKİ
   // HERKESTE çalmalıdır. Bu yüzden sesler yerel tıklamaya değil, Firestore'dan
   // gelen VERİ DEĞİŞİMİNE bağlanır: her istemci kendi `roomData`'sındaki
   // ilgili alanın değiştiğini görüp sesi kendisi çalar.
+  //
+  // KULLANICI RAPORU (Ses Senkronizasyonu / "Audio Desync"): Optimistic UI
+  // ("Write-Ahead Buffer", yukarıda) görseli anında güncellerken sesler HÂLÂ
+  // ham `roomData`ya (yani sunucu cevabına, ~300ms) bağlıysa, GÖRSEL ile SES
+  // birbirinden kopar (taş anında masaya düşer ama "atış" sesi bir çeyrek
+  // saniye sonra gelir). Çözüm burada da AYNI `soundView` (roomData +
+  // turnPatch): kendi hamlemi yaptığımda `soundView` ANINDA değişir, ses de
+  // anında çalar. BAŞKA bir oyuncunun hamlesinde `soundView` onun için
+  // `turnPatch` olmadığından yine `roomData`ya eşittir — o oyuncunun ekranında
+  // (ve masadaki HERKESTE) davranış eskisiyle birebir aynı kalır.
+  //
+  // YANKI (echo) RİSKİ YOKTUR: iyimser tahmin ile ~300ms sonra gelen GERÇEK
+  // veri (hamle başarılıysa) TAMAMEN AYNI değeri üretir (aynı taş, aynı
+  // pile/openedHands hesaplaması — bkz. applyTurnPatch çağrıları), yani
+  // `totalDiscards`/`openedTilesSignature` gibi bağımlılıklar iki durum
+  // arasında geçişte DEĞİŞMEZ; React efekti ikinci kez tetiklenmez. Bu yüzden
+  // (Gemini'nin önerdiği) bir "throttle/debounce" gerekmez — üstelik böyle bir
+  // throttle, iki farklı oyuncu 300ms içinde art arda taş atarsa İKİNCİ
+  // oyuncunun sesini MASADAKİ HERKESTEN yanlışlıkla bastırırdı (yankı-önleme
+  // bir aksiyonu değil bir OYUNCUYU susturmuş olurdu). Tek gerçek (ve kabul
+  // edilebilir ölçüde nadir) istisna: sunucu hamleyi REDDEDERSE, iyimser
+  // tahmin `clearTurnPatch` ile geri alınırken sayaç bir an için geriye
+  // sıçrayabilir — bu durumda (ör. atış sayısı azalınca "çekme" sesi gibi)
+  // yersiz TEK bir ses çalabilir; hamleler zaten istemcide önceden
+  // doğrulandığı için sunucu reddi son derece nadirdir ve bu kozmetik
+  // sapma bir throttle'ın çok-oyunculu doğruluğu bozma riskine değmez.
   //
   // İlk snapshot'ta (ref henüz null) ses ÇALINMAZ — odaya sonradan katılan ya
   // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
@@ -216,7 +313,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // handleDrawPile/handleDrawDiscard'ın `turn` alanına DOKUNMAMASI), yani bu
   // veri değişimi anında `roomData.turn === user.uid` ise çeken kişi BİZİZ
   // demektir.
-  const totalDiscards = Object.values(roomData?.discardPiles || {}).reduce((n, pile) => n + (pile?.length || 0), 0);
+  const totalDiscards = Object.values(soundView?.discardPiles || {}).reduce((n, pile) => n + (pile?.length || 0), 0);
   useEffect(() => {
     const prev = soundRefs.current.discardCount;
     soundRefs.current.discardCount = totalDiscards;
@@ -229,7 +326,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
   // Ortadaki KAPALI DESTEDEN çekiş: deste uzunluğu her azaldığında — SADECE
   // biz çektiysek (yukarıdaki NOT ile aynı gerekçe).
-  const drawPileLen = roomData?.drawPile?.length ?? null;
+  const drawPileLen = soundView?.drawPile?.length ?? null;
   useEffect(() => {
     const prev = soundRefs.current.drawPileLen;
     soundRefs.current.drawPileLen = drawPileLen;
@@ -238,7 +335,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
   // Açma sesi: masadaki toplam açık per sayısı arttığında (biri elini açtı ya
   // da yeni per/çift sürdü) kısa rüzgar sesi.
-  const totalOpenedGroups = Object.values(roomData?.openedHands || {}).reduce((n, groups) => n + (groups?.length || 0), 0);
+  const totalOpenedGroups = Object.values(soundView?.openedHands || {}).reduce((n, groups) => n + (groups?.length || 0), 0);
   useEffect(() => {
     const prev = soundRefs.current.openedCount;
     soundRefs.current.openedCount = totalOpenedGroups;
@@ -252,7 +349,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // perlerin taş kimliklerinden çıkarılan bir "imza"yı izleriz: sayı AYNI
   // kalıp imza DEĞİŞTİYSE bu bir işleme hamlesidir. Masa çapında (herkes
   // duyar) — diğer masa sesleriyle aynı felsefe.
-  const openedTilesSignature = Object.entries(roomData?.openedHands || {})
+  const openedTilesSignature = Object.entries(soundView?.openedHands || {})
     .flatMap(([uid, groups]) => (groups || []).map((g, i) => `${uid}:${i}:${(g?.tiles || []).map((t) => t.id).join(',')}`))
     .sort()
     .join('|');
@@ -339,70 +436,6 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const myRackNow = roomData.racks?.[user.uid] || [];
     if (myRackNow.some((t) => t && t.id === pendingDraw.tile.id)) setPendingDraw(null);
   }, [roomData.racks, pendingDraw, user.uid]);
-
-  // ============================================================
-  // İYİMSER TUR DURUMU ("Write-Ahead Buffer")
-  // ============================================================
-  // KÖK NEDEN: Bu oyundaki tüm kritik hamleler `runTransaction` ile yazılır.
-  // Firestore'da transaction'lar -düz `updateDoc`'un AKSİNE- yerel ön belleği
-  // güncellemez, yani "latency compensation" YOKTUR: `onSnapshot` ancak sunucu
-  // yazımı onayladıktan SONRA tetiklenir. Bu yüzden taş atıldığında taş
-  // ıstakadan anında kalksa bile (PlayerRack#optimisticGoneId) SIRA, ATIŞ
-  // YIĞINI ve açılan perler ~300ms boyunca ESKİ hâlinde kalıyordu.
-  //
-  // Çözüm: hamleyi sunucuya göndermeden ÖNCE sonucun TUR DURUMU kısmını buraya
-  // yazıp ekranı anında güncelliyoruz; gerçek veri gelince katman düşüyor.
-  //
-  // KAPSAM BİLEREK DARDIR — iki şey bu katmana DAHİL DEĞİLDİR:
-  //   1) `racks`/`groups`: bunların çok daha ince ayarlı kendi iyimser katmanı
-  //      PlayerRack içinde zaten var (optimisticRack/optimisticGoneId); ikinci
-  //      bir katman onunla çakışıp taşı iki kez gizler/geri getirirdi.
-  //   2) EFEKTLER: bot orkestrasyonu ve süre-aşımı watchdog'u HER ZAMAN ham
-  //      `roomData`yı okur (bu yüzden bu blok erken-return'lerden ÖNCE, ama
-  //      `view` birleştirmesi SONRA yapılır). Aksi halde host, sunucuda henüz
-  //      var OLMAYAN bir tura göre bot hamlesi tetikleyebilirdi.
-  const [turnPatch, setTurnPatch] = useState(null); // { patch, baseSig }
-  const turnPatchTimerRef = useRef(null);
-  useEffect(() => () => { if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current); }, []);
-
-  // İyimser katmanın NE ZAMAN düşeceğini belirleyen imza: sunucudaki tur
-  // durumu HERHANGİ bir yönde değiştiği an (bizim yazımımız düştüğü için ya da
-  // araya başka bir oyuncunun hamlesi girdiği için) tahminimiz artık
-  // bayattır ve gerçek veriye bırakılır. Bu, "transaction bitince temizle"
-  // yaklaşımından daha güvenlidir: orada, yazım onaylandığı AN ile snapshot'ın
-  // GELDİĞİ an arasındaki boşlukta ekran bir kare eski duruma geri sekerdi.
-  const turnStateSignature = (data) => [
-    data.turn ?? '',
-    data.hasDrawnThisTurn ? 1 : 0,
-    data.sideTake?.tileId ?? '',
-    data.forcedPileDraw ? 1 : 0,
-    data.roundEnded ? 1 : 0,
-    Object.entries(data.discardPiles || {}).map(([uid, p]) => `${uid}:${(p || []).length}`).sort().join(','),
-    Object.entries(data.openedHands || {}).map(([uid, g]) => `${uid}:${(g || []).reduce((n, x) => n + (x?.tiles?.length || 0), 0)}`).sort().join(','),
-  ].join('|');
-
-  const clearTurnPatch = () => {
-    if (turnPatchTimerRef.current) { clearTimeout(turnPatchTimerRef.current); turnPatchTimerRef.current = null; }
-    setTurnPatch(null);
-  };
-
-  // `buildPatch(data)` ham sunucu durumundan iyimser tur durumunu üretir.
-  const applyTurnPatch = (buildPatch) => {
-    const patch = buildPatch(roomData);
-    if (!patch) return;
-    setTurnPatch({ patch, baseSig: turnStateSignature(roomData) });
-    // EMNİYET AĞI (normalde HİÇ tetiklenmez): yazım kalıcı olarak başarısız
-    // olur ve sunucu durumu HİÇ değişmezse ekran sonsuza dek onaylanmamış bir
-    // tahmini göstermesin.
-    if (turnPatchTimerRef.current) clearTimeout(turnPatchTimerRef.current);
-    turnPatchTimerRef.current = setTimeout(() => setTurnPatch(null), 5000);
-  };
-
-  useEffect(() => {
-    if (!turnPatch) return;
-    if (turnStateSignature(roomData) !== turnPatch.baseSig) clearTurnPatch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomData, turnPatch]);
 
   // ---- Çekme etkileşimi (deste + soldan gelen taş, ikisi de sürüklenebilir) ----
   // NOT: Hook'lar aşağıdaki erken return'lerden ÖNCE çağrılmak zorunda olduğu
@@ -1121,7 +1154,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     // kaldığı için "AT" bölmesi (mustDiscard) ~300ms geç beliriyordu — yani
     // taşı çeker çekmez atamıyordunuz. Artık çekme de anında yansır.
     applyTurnPatch((data) => {
-      if (source === 'pile') return { hasDrawnThisTurn: true };
+      // `drawPile` de (sadece SAYI olarak) buraya dahildir: hem "DESTE"
+      // sayacı hem de çekme sesi (bkz. soundView#drawPileLen) bu değeri
+      // izler — aksi halde ikisi de gerçek yazım gelene kadar (~300ms) eski
+      // sayıyı göstermeye/duymaya devam ederdi.
+      if (source === 'pile') return { hasDrawnThisTurn: true, drawPile: (data.drawPile || []).slice(0, -1) };
       // Yandan (soldan) çekme: taş komşunun yığınından ANINDA kalkar ve
       // "kullan ya da geri koy" durumu (sideTake) hemen devreye girer.
       const fromUid = getPrevTurnUid(data.players || [], user.uid);
@@ -2494,7 +2531,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
           >
             <span className={`text-slate-400 font-bold uppercase tracking-widest ${isCompact ? 'text-[9px]' : 'text-[10px] sm:text-xs'}`}>Deste</span>
             <TileBack size={isCompact ? 'small' : 'normal'} />
-            <span className={`font-mono font-bold text-slate-200 ${isCompact ? 'text-xs' : 'text-sm sm:text-lg'}`}>{roomData.drawPile?.length ?? 0}</span>
+            <span className={`font-mono font-bold text-slate-200 ${isCompact ? 'text-xs' : 'text-sm sm:text-lg'}`}>{view.drawPile?.length ?? 0}</span>
           </div>
 
           {/* 6. madde: Göstergenin HANGİ taş olduğu, taşın hemen ALTINDA
