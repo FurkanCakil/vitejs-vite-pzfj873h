@@ -200,6 +200,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (!piece || piece.color !== myColor) return;
     e.preventDefault(); e.stopPropagation();
     if (arrows.length) setArrows([]);
+    if (redSquares.size) setRedSquares(new Set());
     dragMovedRef.current = false;
     setDragPiece({ from: index, piece, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no-op */ }
@@ -239,6 +240,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   const handleSquareClick = async (index) => {
     if (arrows.length) setArrows([]);
+    if (redSquares.size) setRedSquares(new Set());
     if (Date.now() - pointerHandledAtRef.current < 400) return; // az önce pointerup zaten işledi
     if (!isMyTurn || isSpectator || effective.winner || roomData.status === 'abandoned' || promotionPrompt || isSubmitting) return;
     const piece = board[index];
@@ -263,8 +265,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const boardGridRef = useRef(null);
   const [arrows, setArrows] = useState([]);
   const [drawingArrow, setDrawingArrow] = useState(null); // { from, to }
+  // Sağ tık sürüklemeden (aynı karede bırakılırsa) o kare KIRMIZI işaretlenir
+  // — chess.com'daki "tehdit/tehlike karesi" işaretlemesiyle aynı davranış.
+  // Aynı kareye tekrar sağ tıklamak işareti kaldırır (toggle).
+  const [redSquares, setRedSquares] = useState(new Set());
 
-  useEffect(() => { setArrows([]); setDrawingArrow(null); }, [boardStr]);
+  useEffect(() => { setArrows([]); setDrawingArrow(null); setRedSquares(new Set()); }, [boardStr]);
 
   const handleBoardMouseDown = (e) => {
     if (e.button !== 2) return;
@@ -287,6 +293,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
           setArrows((arrs) => {
             const exists = arrs.some((a) => a.from === prev.from && a.to === prev.to);
             return exists ? arrs.filter((a) => !(a.from === prev.from && a.to === prev.to)) : [...arrs, { from: prev.from, to: prev.to }];
+          });
+        } else if (prev) {
+          // Hareket yok: sağ tık = kare işaretleme (toggle), ok değil.
+          setRedSquares((prevSet) => {
+            const next = new Set(prevSet);
+            if (next.has(prev.from)) next.delete(prev.from); else next.add(prev.from);
+            return next;
           });
         }
         return null;
@@ -579,6 +592,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
             const isLastMove = effective.lastMove?.from === i || effective.lastMove?.to === i;
             const isBeingDragged = dragPiece && dragPiece.from === i;
             const isDraggable = !isSpectator && !effective.winner && isMyTurn && cell && cell.color === myColor && !promotionPrompt && !isSubmitting;
+            const isRedMarked = redSquares.has(i);
 
             const showFile = isBlackPerspective ? r === 0 : r === 7;
             const showRank = isBlackPerspective ? c === 7 : c === 0;
@@ -588,6 +602,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                 {showFile && <div className={`absolute bottom-0 right-1 text-[8px] sm:text-[10px] font-bold ${isDark ? 'text-[#eeeed2]/80' : 'text-[#769656]/80'}`}>{files[c]}</div>}
                 {showRank && <div className={`absolute top-0 left-1 text-[8px] sm:text-[10px] font-bold ${isDark ? 'text-[#eeeed2]/80' : 'text-[#769656]/80'}`}>{ranks[r]}</div>}
 
+                {isRedMarked && <div className="absolute inset-0 bg-red-600/50 pointer-events-none" />}
                 {isKingInDanger && <div className="absolute inset-0 bg-red-500/60 shadow-[inset_0_0_20px_rgba(220,38,38,0.9)] pointer-events-none" />}
                 {isValidMove && !cell && <div className="w-4 h-4 md:w-5 md:h-5 bg-black/20 rounded-full pointer-events-none" />}
                 {isValidMove && cell && <div className="absolute inset-0 border-[4px] md:border-[5px] border-black/20 rounded-full m-1 pointer-events-none" />}
