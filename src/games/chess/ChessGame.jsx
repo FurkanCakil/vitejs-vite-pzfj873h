@@ -3,10 +3,12 @@ import { Loader2, Check, X, Users, ArrowUpDown, Undo2, Handshake, Flag, Bot } fr
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { CHESS_ICONS, PIECE_VALUES, chessPieceStyle } from './constants.js';
-import { createInitialChessBoard, getStrictLegalMoves, isSquareAttacked, getBoardStateString, getGameState } from './logic.js';
+import { createInitialChessBoard, getStrictLegalMoves, getPseudoLegalMoves, isSquareAttacked, getBoardStateString, getGameState } from './logic.js';
 import { boardToFEN, uciMoveToIndices } from './fen.js';
 import { useStockfish } from './stockfishEngine.js';
 import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG } from './bot.js';
+
+const EMPTY_SET = new Set();
 
 export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
@@ -47,6 +49,37 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   }, [roomData.lastMove, roomData.turn, roomData.winner, optimistic, user.uid]);
   useEffect(() => () => { if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current); }, []);
 
+  // ============================================================
+  // ÖN-HAMLE (premove) — chess.com tarzı: sıra bizde DEĞİLKEN bir taş
+  // oynanırsa, gerçek bir hamle olarak GÖNDERİLMEZ; yerel bir kuyruğa
+  // eklenir (SINIRSIZ sayıda birikebilir — zincirleme ön-hamle). Sıra bize
+  // gelir gelmez kuyruktaki İLK hamle otomatik oynanır (bkz. aşağıdaki
+  // auto-play useEffect); o an artık geçersizse (pozisyon beklenmedik
+  // şekilde değiştiyse) TÜM kuyruk iptal edilir. Tamamen yerel/hayali bir
+  // öngörüdür — Firestore'a hiç yazılmaz, tahtada sadece soluk taşlarla
+  // gösterilir.
+  const [premoves, setPremoves] = useState([]);
+  const [premovePromotionPrompt, setPremovePromotionPrompt] = useState(null); // { from, to }
+  useEffect(() => { if (isMyTurn) setPremovePromotionPrompt(null); }, [isMyTurn]);
+
+  const canInteract = !isSpectator && !effective.winner && roomData.status !== 'abandoned' && !promotionPrompt && !premovePromotionPrompt && !isSubmitting;
+
+  const applyPremoveToBoard = (boardArr, pm) => {
+    const b = boardArr.map((p) => (p ? { ...p } : null));
+    const piece = b[pm.from];
+    if (!piece) return b;
+    if (piece.type === 'k' && Math.abs(pm.from - pm.to) === 2) {
+      if (pm.to === 62) { b[61] = b[63] ? { ...b[63], hasMoved: true } : null; b[63] = null; }
+      if (pm.to === 58) { b[59] = b[56] ? { ...b[56], hasMoved: true } : null; b[56] = null; }
+      if (pm.to === 6)  { b[5]  = b[7]  ? { ...b[7],  hasMoved: true } : null; b[7]  = null; }
+      if (pm.to === 2)  { b[3]  = b[0]  ? { ...b[0],  hasMoved: true } : null; b[0]  = null; }
+    }
+    const moved = { ...piece, hasMoved: true };
+    if (pm.promotion) moved.type = pm.promotion;
+    b[pm.to] = moved; b[pm.from] = null;
+    return b;
+  };
+
   const toastTimeoutRef = useRef(null);
   const showToast = (msg) => {
     playSound('error'); setGameToast(msg);
@@ -61,9 +94,28 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   const board = useMemo(() => (Array.isArray(effective.board) && effective.board.length === 64) ? effective.board : Array(64).fill(null), [effective.board]);
 
+  // Sıra bizde değilken kuyruktaki ön-hamleler sırayla uygulanmış HAYALİ bir
+  // tahta üretilir — sadece görüntü ve zincirleme ön-hamle seçimi için
+  // kullanılır. Gerçek hamle mantığı (executeMove, bot FEN'i, şah kontrolü)
+  // HER ZAMAN yukarıdaki gerçek `board`'u kullanır, buna hiç dokunmaz.
+  const { displayBoard, premoveFaded } = useMemo(() => {
+    if (isMyTurn || premoves.length === 0) return { displayBoard: board, premoveFaded: EMPTY_SET };
+    let b = board; const faded = new Set();
+    for (const pm of premoves) { b = applyPremoveToBoard(b, pm); faded.delete(pm.from); faded.add(pm.to); }
+    return { displayBoard: b, premoveFaded: faded };
+  }, [board, isMyTurn, premoves]);
+  // Etkileşim (seçim/sürükleme/tıklama) her zaman "o an ekranda görünen" tahta
+  // üzerinden yapılır: sıra bizdeyse gerçek tahta, değilse ön-hamle projeksiyonu.
+  const interactionBoard = isMyTurn ? board : displayBoard;
+
   const validMoves = useMemo(() => {
-     return (selectedSquare !== null && isMyTurn) ? getStrictLegalMoves(board, selectedSquare, effective.enPassantTarget) : [];
-  }, [selectedSquare, isMyTurn, boardStr, effective.enPassantTarget]);
+     if (selectedSquare === null) return [];
+     const piece = interactionBoard[selectedSquare];
+     if (!piece || piece.color !== myColor) return [];
+     return isMyTurn
+       ? getStrictLegalMoves(interactionBoard, selectedSquare, effective.enPassantTarget)
+       : getPseudoLegalMoves(interactionBoard, selectedSquare, true, null, false);
+  }, [selectedSquare, isMyTurn, interactionBoard, effective.enPassantTarget, myColor]);
 
   const inCheckKings = useMemo(() => {
      let kings = []; if (effective.winner) return kings;
@@ -158,13 +210,23 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const performMove = async (from, to) => {
+    const srcPiece = interactionBoard[from];
+    if (!srcPiece) return;
+    const r = Math.floor(to / 8);
+    const isPromotion = srcPiece.type === 'p' && ((srcPiece.color === 'w' && r === 0) || (srcPiece.color === 'b' && r === 7));
+
+    if (!isMyTurn) {
+      // Sıra bizde değil: gerçek bir hamle DEĞİL, ön-hamle kuyruğuna eklenir.
+      if (isPromotion) { setPremovePromotionPrompt({ from, to }); setSelectedSquare(null); return; }
+      setPremoves((prev) => [...prev, { from, to }]);
+      setSelectedSquare(null);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const newBoard = board.map(p => p ? { ...p } : null);
       const movingPiece = { ...newBoard[from] }; const targetPiece = newBoard[to] ? { ...newBoard[to] } : null;
-      const r = Math.floor(to / 8);
-      const isPromotion = movingPiece.type === 'p' && ((movingPiece.color === 'w' && r === 0) || (movingPiece.color === 'b' && r === 7));
-
       if (isPromotion) { playSound('move'); setPromotionPrompt({ from, to, movingPiece, targetPiece, newBoard }); return; }
       await executeMove(from, to, movingPiece, targetPiece, newBoard);
     } catch (err) {
@@ -174,6 +236,28 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       setIsSubmitting(false);
     }
   };
+
+  // Sıra bize gelince kuyruktaki İLK ön-hamle otomatik oynanır. Gerçek/onaylı
+  // tahtaya (`board`, opponent'ın az önceki hamlesini yansıtan) karşı
+  // yeniden doğrulanır — artık yasa dışıysa (taş alınmış, yol kapanmış, şah
+  // tehlikesi vb.) TÜM kuyruk sessizce iptal edilir (chess.com'daki gibi:
+  // pozisyon beklenmedik şekilde saptığı için kalan hamleler de güvenilmez).
+  useEffect(() => {
+    if (!isMyTurn || premoves.length === 0 || isSubmitting || isSpectator || effective.winner || roomData.status === 'abandoned') return;
+    const next = premoves[0];
+    const legal = getStrictLegalMoves(board, next.from, effective.enPassantTarget);
+    if (!legal.includes(next.to)) { setPremoves([]); return; }
+    const srcPiece = board[next.from];
+    if (!srcPiece) { setPremoves([]); return; }
+    setPremoves((prev) => prev.slice(1));
+    const movingPiece = { ...srcPiece, ...(next.promotion ? { type: next.promotion } : {}) };
+    const targetPiece = board[next.to] ? { ...board[next.to] } : null;
+    const freshBoard = board.map(p => p ? { ...p } : null);
+    setIsSubmitting(true);
+    executeMove(next.from, next.to, movingPiece, targetPiece, freshBoard)
+      .catch(() => setOptimistic(null))
+      .finally(() => setIsSubmitting(false));
+  }, [isMyTurn, premoves, board, effective.enPassantTarget, isSubmitting, isSpectator, effective.winner, roomData.status]);
 
   // Sürükleyerek YA DA tıklayarak oynama aynı anda desteklenir. pointerup bir
   // etkileşimi (sürükleyerek hamle YA DA basit dokunma-seç) tamamen işlediyse
@@ -196,7 +280,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   const handlePiecePointerDown = (e, index, piece) => {
     if (e.button !== undefined && e.button !== 0) return; // yalnızca sol tık/dokunma taş sürükler
-    if (!isMyTurn || isSpectator || effective.winner || roomData.status === 'abandoned' || promotionPrompt || isSubmitting) return;
+    if (!canInteract) return;
     if (!piece || piece.color !== myColor) return;
     e.preventDefault(); e.stopPropagation();
     if (arrows.length) setArrows([]);
@@ -230,7 +314,9 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       return;
     }
     const targetIndex = getSquareAt(e.clientX, e.clientY);
-    const legalTargets = getStrictLegalMoves(board, current.from, effective.enPassantTarget);
+    const legalTargets = isMyTurn
+      ? getStrictLegalMoves(interactionBoard, current.from, effective.enPassantTarget)
+      : getPseudoLegalMoves(interactionBoard, current.from, true, null, false);
     if (targetIndex === null || targetIndex === current.from || !legalTargets.includes(targetIndex)) {
       setSelectedSquare(current.from); // geçersiz bırakma noktası: seçili kalsın, tıklayarak devam edilebilsin
       return;
@@ -242,8 +328,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (arrows.length) setArrows([]);
     if (redSquares.size) setRedSquares(new Set());
     if (Date.now() - pointerHandledAtRef.current < 400) return; // az önce pointerup zaten işledi
-    if (!isMyTurn || isSpectator || effective.winner || roomData.status === 'abandoned' || promotionPrompt || isSubmitting) return;
-    const piece = board[index];
+    if (!canInteract) return;
+    const piece = interactionBoard[index];
 
     if (selectedSquare === null || (piece && piece.color === myColor)) {
       if (piece && piece.color === myColor) setSelectedSquare(index === selectedSquare ? null : index);
@@ -583,32 +669,45 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
+      {!isMyTurn && premoves.length > 0 && (
+        <div className="w-full flex items-center justify-center gap-2 mb-2">
+          <span className="text-[11px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/30 px-2.5 py-1 rounded-full">
+            {premoves.length} ön-hamle sırada
+          </span>
+          <button onClick={() => { setPremoves([]); setSelectedSquare(null); }} className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-600 px-2.5 py-1 rounded-full border border-slate-600 transition-colors">
+            İptal Et
+          </button>
+        </div>
+      )}
+
       <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700" onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}>
         <div ref={boardGridRef} className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900 relative">
           {visualIndices.map((i) => {
-            const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
+            const cell = interactionBoard[i]; const r = Math.floor(i / 8); const c = i % 8;
             const isDark = (r + c) % 2 !== 0; const isSelected = selectedSquare === i; const isValidMove = validMoves.includes(i);
             const isKingInDanger = inCheckKings.includes(i);
             const isLastMove = effective.lastMove?.from === i || effective.lastMove?.to === i;
+            const isPremovePending = !isMyTurn && premoveFaded.has(i);
+            const isPremoveSquare = !isMyTurn && premoves.some((pm) => pm.from === i || pm.to === i);
             const isBeingDragged = dragPiece && dragPiece.from === i;
-            const isDraggable = !isSpectator && !effective.winner && isMyTurn && cell && cell.color === myColor && !promotionPrompt && !isSubmitting;
+            const isDraggable = canInteract && cell && cell.color === myColor;
             const isRedMarked = redSquares.has(i);
 
             const showFile = isBlackPerspective ? r === 0 : r === 7;
             const showRank = isBlackPerspective ? c === 7 : c === 0;
 
             return (
-              <div key={i} data-sq={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#769656]' : 'bg-[#eeeed2]'} ${isSelected ? 'bg-yellow-400/70' : ''} ${isLastMove && !isSelected ? 'bg-yellow-400/40' : ''}`}>
+              <div key={i} data-sq={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#769656]' : 'bg-[#eeeed2]'} ${isSelected ? 'bg-yellow-400/70' : ''} ${isLastMove && !isSelected ? 'bg-yellow-400/40' : ''} ${isPremoveSquare && !isSelected ? 'bg-sky-400/30' : ''}`}>
                 {showFile && <div className={`absolute bottom-0 right-1 text-[8px] sm:text-[10px] font-bold ${isDark ? 'text-[#eeeed2]/80' : 'text-[#769656]/80'}`}>{files[c]}</div>}
                 {showRank && <div className={`absolute top-0 left-1 text-[8px] sm:text-[10px] font-bold ${isDark ? 'text-[#eeeed2]/80' : 'text-[#769656]/80'}`}>{ranks[r]}</div>}
 
                 {isRedMarked && <div className="absolute inset-0 bg-red-600/50 pointer-events-none" />}
                 {isKingInDanger && <div className="absolute inset-0 bg-red-500/60 shadow-[inset_0_0_20px_rgba(220,38,38,0.9)] pointer-events-none" />}
-                {isValidMove && !cell && <div className="w-4 h-4 md:w-5 md:h-5 bg-black/20 rounded-full pointer-events-none" />}
-                {isValidMove && cell && <div className="absolute inset-0 border-[4px] md:border-[5px] border-black/20 rounded-full m-1 pointer-events-none" />}
+                {isValidMove && !cell && <div className={`w-4 h-4 md:w-5 md:h-5 rounded-full pointer-events-none ${isMyTurn ? 'bg-black/20' : 'bg-sky-500/40'}`} />}
+                {isValidMove && cell && <div className={`absolute inset-0 border-[4px] md:border-[5px] rounded-full m-1 pointer-events-none ${isMyTurn ? 'border-black/20' : 'border-sky-500/40'}`} />}
                 {cell && (
                   <div
-                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : 1 }}
+                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : (isPremovePending ? 0.55 : 1) }}
                     onPointerDown={isDraggable ? (e) => handlePiecePointerDown(e, i, cell) : undefined}
                     onPointerMove={isDraggable ? handlePiecePointerMove : undefined}
                     onPointerUp={isDraggable ? handlePiecePointerUp : undefined}
@@ -656,6 +755,24 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                      ))}
                   </div>
                   <button onClick={() => { setPromotionPrompt(null); setIsSubmitting(false); }} className="text-red-400 hover:text-red-300 font-medium px-4 py-2 border border-red-500/50 rounded-lg bg-red-500/10 transition-colors w-full text-center">Vazgeç</button>
+              </div>
+           </div>
+        )}
+        {premovePromotionPrompt && (
+           <div className="absolute inset-0 z-50 bg-black/70 flex items-center justify-center backdrop-blur-sm rounded-lg">
+              <div className="bg-slate-800 p-6 rounded-2xl border border-sky-600/50 shadow-2xl flex flex-col items-center">
+                  <h3 className="text-white font-bold mb-1">Ön-Hamle: Piyon Terfisi</h3>
+                  <p className="text-xs text-slate-400 mb-4 text-center max-w-[220px]">Sıra sana gelince otomatik oynanacak taşı seç.</p>
+                  <div className="flex gap-4 mb-6">
+                     {['q', 'r', 'b', 'n'].map(type => (
+                         <button key={type} onClick={() => {
+                            setPremoves((prev) => [...prev, { from: premovePromotionPrompt.from, to: premovePromotionPrompt.to, promotion: type }]);
+                            setPremovePromotionPrompt(null);
+                         }}
+                            style={chessPieceStyle} className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}>{CHESS_ICONS[type]}</button>
+                     ))}
+                  </div>
+                  <button onClick={() => setPremovePromotionPrompt(null)} className="text-red-400 hover:text-red-300 font-medium px-4 py-2 border border-red-500/50 rounded-lg bg-red-500/10 transition-colors w-full text-center">Vazgeç</button>
               </div>
            </div>
         )}
