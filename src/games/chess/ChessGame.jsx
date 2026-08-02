@@ -138,7 +138,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
      if (!piece || piece.color !== myColor) return [];
      return isMyTurn
        ? getStrictLegalMoves(interactionBoard, selectedSquare, effective.enPassantTarget)
-       : getPseudoLegalMoves(interactionBoard, selectedSquare, true, null, false);
+       : getPseudoLegalMoves(interactionBoard, selectedSquare, true, null, false, true);
   }, [selectedSquare, isMyTurn, interactionBoard, effective.enPassantTarget, myColor]);
 
   const inCheckKings = useMemo(() => {
@@ -340,7 +340,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     const targetIndex = getSquareAt(e.clientX, e.clientY);
     const legalTargets = isMyTurn
       ? getStrictLegalMoves(interactionBoard, current.from, effective.enPassantTarget)
-      : getPseudoLegalMoves(interactionBoard, current.from, true, null, false);
+      : getPseudoLegalMoves(interactionBoard, current.from, true, null, false, true);
     if (targetIndex === null || targetIndex === current.from || !legalTargets.includes(targetIndex)) {
       setSelectedSquare(current.from); // geçersiz bırakma noktası: seçili kalsın, tıklayarak devam edilebilsin
       return;

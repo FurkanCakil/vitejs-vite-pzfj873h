@@ -8,7 +8,15 @@ export function createInitialChessBoard() {
   return board;
 }
 
-export function getPseudoLegalMoves(board, index, checkCastling = true, enPassantTarget = null, attacksOnly = false) {
+// `includeOwnPieceSquares`: SADECE ön-hamle (premove) hedefi üretirken true
+// geçilir. Sıra bizde değilken, rakip henüz hamlesini yapmadığı için o anki
+// tahtada hâlâ KENDİ taşımızın durduğu bir kareyi (örn. bir taş değiş
+// tokuşunda rakibin az sonra alacağı taşımızın yerini) de hedef olarak
+// seçebilmemiz gerekir — "yerini alacağım" ön-hamlesi. Gerçek hamle anında
+// (getStrictLegalMoves, bu parametreyi hiç kullanmaz) böyle bir hedef zaten
+// yasa dışı sayılıp elenir; bu bayrak yalnızca ÖN-HAMLE seçimini genişletir,
+// gerçek kural ihlaline asla izin vermez.
+export function getPseudoLegalMoves(board, index, checkCastling = true, enPassantTarget = null, attacksOnly = false, includeOwnPieceSquares = false) {
   const piece = board[index]; if (!piece) return [];
   const moves = []; const r = Math.floor(index / 8); const c = index % 8;
 
@@ -16,7 +24,7 @@ export function getPseudoLegalMoves(board, index, checkCastling = true, enPassan
     if (nr < 0 || nr > 7 || nc < 0 || nc > 7) return false;
     const targetIdx = nr * 8 + nc; const target = board[targetIdx];
     if (!target) { moves.push(targetIdx); return true; }
-    if (target.color !== piece.color || attacksOnly) moves.push(targetIdx);
+    if (target.color !== piece.color || attacksOnly || includeOwnPieceSquares) moves.push(targetIdx);
     return false;
   };
 
@@ -32,10 +40,10 @@ export function getPseudoLegalMoves(board, index, checkCastling = true, enPassan
       const checkCapture = (nc) => {
         if (nc >= 0 && nc <= 7) {
           const targetIdx = (r + dir) * 8 + nc;
-          if (attacksOnly) { moves.push(targetIdx); } 
+          if (attacksOnly) { moves.push(targetIdx); }
           else {
-            if (board[targetIdx]?.color && board[targetIdx].color !== piece.color) moves.push(targetIdx);
-            else if (targetIdx === enPassantTarget) moves.push(targetIdx); 
+            if (board[targetIdx]?.color && (board[targetIdx].color !== piece.color || includeOwnPieceSquares)) moves.push(targetIdx);
+            else if (targetIdx === enPassantTarget) moves.push(targetIdx);
           }
         }
       };
