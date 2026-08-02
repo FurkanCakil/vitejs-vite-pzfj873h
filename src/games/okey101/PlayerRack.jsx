@@ -579,12 +579,16 @@ export default function PlayerRack({
   const rackTileCount = useMemo(() => baseRack.filter(Boolean).length, [baseRack]);
   const wouldEmptyRack = allSelectedAreCompleteGroups && (rackTileCount - selectedIds.length) < 1;
   // "Peri Güncelle" (2. madde): TAM BİR mevcut per (tümüyle seçili) + ona
-  // bitişik getirilmiş TEK bir grupsuz taş seçiliyse, peri bozup baştan
-  // seçmek yerine doğrudan büyütülmüş per olarak güncellenebilir.
+  // bitişik getirilmiş BİR YA DA DAHA FAZLA grupsuz taş seçiliyse, peri bozup
+  // baştan seçmek yerine doğrudan büyütülmüş per olarak güncellenebilir.
+  // KULLANICI İSTEĞİ: eskiden yalnızca TEK taş eklenebiliyordu (ör. per 4-5-6
+  // iken sadece 2 VEYA sadece 3 eklenebiliyordu) — artık per'in yanına
+  // sıralı dizilmiş 2 VE 3 birlikte seçilip tek hamlede eklenebilir.
   const ungroupedSelectedIds = useMemo(() => selectedIds.filter((id) => !groupOf[id]), [selectedIds, groupOf]);
+  const groupSelectedCount = selectedIds.length - ungroupedSelectedIds.length;
   const canAttemptUpdateGroup = selectedGroupIds.length === 1
-    && ungroupedSelectedIds.length === 1
-    && selectedIds.length === (baseGroups[selectedGroupIds[0]] || []).length + 1;
+    && ungroupedSelectedIds.length >= 1
+    && groupSelectedCount === (baseGroups[selectedGroupIds[0]] || []).length;
   const canOpenSeries = allSelectedAreCompleteGroups && selectedGroupIds.length >= 1 && canAct && canOpenMeldsRule && !wouldEmptyRack;
   // İlk açılışta EN AZ `minPairsToOpen` (normalde 5; katlamalı modda masadaki
   // çift barajının bir fazlası) çift gerekir — ÜST SINIR YOKTUR: elinde 6-7
@@ -1201,7 +1205,7 @@ export default function PlayerRack({
               </button>
             )}
             {canAttemptUpdateGroup && (
-              <button type="button" onClick={updateGroup} title="Seçili taşı mevcut perin yanına ekleyerek büyüt" className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/50 px-2.5 py-1 rounded-lg transition-colors">
+              <button type="button" onClick={updateGroup} title="Seçili taşları mevcut perin yanına ekleyerek büyüt" className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/50 px-2.5 py-1 rounded-lg transition-colors">
                 <RefreshCw className="w-3.5 h-3.5" /> Peri Güncelle
               </button>
             )}

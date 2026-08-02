@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { doc, runTransaction, setDoc, deleteField } from 'firebase/firestore';
-import { db, appId } from '../firebase/config.js';
+import { db, auth, appId } from '../firebase/config.js';
 
 // Küresel "aktif kullanıcı" dokümanı — diğer tüm oda verileriyle AYNI yol
 // düzenini (artifacts/{appId}/public/data/...) kullanır.
@@ -55,9 +55,20 @@ export default function usePresence(uid) {
     // diğeri etkilenmemelidir.
     const sessionId = `${uid}_${Math.random().toString(36).slice(2, 10)}`;
     let stopped = false;
+    // `leave()` sayfa kapanırken/yenilenirken çalışır; o anda Firestore SDK'sının
+    // arka planda açtığı ağ isteği tarayıcı tarafından iptal edilebilir (SDK bunun
+    // için `keepalive` kullanmaz). Bu yüzden REST API'ye `fetch(..., {keepalive:true})`
+    // ile DOĞRUDAN, kimlik doğrulama jetonunu önbelleğe alarak yazıyoruz — bu istek
+    // sekme kapansa bile tarayıcı tarafından tamamlanana kadar gönderilir. Jeton her
+    // atışta tazelenir ki `leave()` anında beklemeden senkron kullanılabilsin.
+    let cachedIdToken = null;
+    const restDeleteUrl = `https://firestore.googleapis.com/v1/projects/${appId}/databases/(default)/documents/artifacts/${appId}/public/data/serverStatus/info?updateMask.fieldPaths=${encodeURIComponent('sessions.`' + sessionId + '`')}`;
 
     const beat = async () => {
       try {
+        if (auth.currentUser) {
+          cachedIdToken = await auth.currentUser.getIdToken().catch(() => cachedIdToken);
+        }
         await runTransaction(db, async (t) => {
           const snap = await t.get(presenceCounterRef);
           const now = Date.now();
@@ -79,7 +90,17 @@ export default function usePresence(uid) {
     const leave = () => {
       if (stopped) return;
       stopped = true;
-      setDoc(presenceCounterRef, { sessions: { [sessionId]: deleteField() } }, { merge: true }).catch(() => {});
+      if (cachedIdToken) {
+        fetch(restDeleteUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cachedIdToken}` },
+          body: '{}',
+          keepalive: true
+        }).catch(() => {});
+      } else {
+        // Jeton hiç alınamadıysa (ör. çok erken kapanış) SDK ile en iyi çabayla dene.
+        setDoc(presenceCounterRef, { sessions: { [sessionId]: deleteField() } }, { merge: true }).catch(() => {});
+      }
     };
 
     beat();
