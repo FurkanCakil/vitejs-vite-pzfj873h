@@ -355,6 +355,16 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (!canInteract) return;
     const piece = interactionBoard[index];
 
+    // Zaten bir taş seçiliyken tıklanan kare GEÇERLİ BİR HEDEFSE (ön-hamle
+    // modunda kendi taşımızın durduğu bir kare olsa bile) — seçimi değiştirme,
+    // hamleyi/ön-hamleyi oyna. Aksi halde "kendi taşımı yeme" ön-hamlesinde
+    // tıklama hedef kareyi yanlışlıkla yeni seçim sanıp vurgu bir kareden
+    // diğerine "kayıyormuş" gibi görünüyordu.
+    if (selectedSquare !== null && index !== selectedSquare && validMoves.includes(index)) {
+      await performMove(selectedSquare, index);
+      return;
+    }
+
     if (selectedSquare === null || (piece && piece.color === myColor)) {
       if (piece && piece.color === myColor) setSelectedSquare(index === selectedSquare ? null : index);
       return;
