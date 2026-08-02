@@ -7,6 +7,7 @@ import { createInitialChessBoard, getStrictLegalMoves, getPseudoLegalMoves, isSq
 import { boardToFEN, uciMoveToIndices } from './fen.js';
 import { useStockfish } from './stockfishEngine.js';
 import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG } from './bot.js';
+import useViewport from '../../hooks/useViewport.js';
 
 const EMPTY_SET = new Set();
 
@@ -26,6 +27,29 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [gameToast, setGameToast] = useState(null);
   const [resignConfirm, setResignConfirm] = useState(false);
+
+  // Tahta büyüklüğü: normalde de biraz büyütüldü, tam ekrana geçilince
+  // (gerçek tarayıcı Fullscreen API'si — bkz. App.tsx#toggleFullscreen)
+  // masaüstünde EKSTRA büyür (kalan viewport genişliği/yüksekliğiyle sınırlı,
+  // asla taşmaz). Telefonda (isPhone) bu ekstra JS büyütme HİÇ uygulanmaz —
+  // iOS zaten gerçek tam ekranı desteklemiyor, Android'de de dar ekranda
+  // "ekstra büyütme" taşmaya/saçma bir görünüme yol açabilir; telefon her
+  // koşulda sadece aşağıdaki mütevazı Tailwind sınıflarıyla ölçeklenir.
+  const { width: viewportW, height: viewportH, isPhone } = useViewport();
+  const [isFullscreenView, setIsFullscreenView] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreenView(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  const desktopFullscreenBoost = isFullscreenView && !isPhone;
+  const boostedBoardPx = Math.round(Math.max(480, Math.min(viewportW * 0.5, viewportH - 260, 820)));
+  const boostedCardPx = Math.round(Math.max(560, Math.min(viewportW * 0.65, viewportH - 120, 1000)));
+  // Taş glif boyutu piksel cinsinden sabitti — tahta büyüdükçe kareye göre
+  // orantısız (küçük) kalmasın diye tam ekran modunda kare boyutuna (tahta/8)
+  // orantılı olarak yeniden hesaplanır.
+  const boostedPieceFontPx = Math.round((boostedBoardPx / 8) * 0.72);
 
   // Optimistic katman (101'deki rack sürüklemesiyle AYNI mantık): hamle oynanır
   // oynanmaz tahta yerelde ANINDA güncellenir, Firestore yazması arka planda
@@ -586,7 +610,10 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const canTakeback = !isMyTurn && effective.previousState && effective.previousState.turn === user.uid;
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+    <div
+      className={`relative flex flex-col items-center w-full ${desktopFullscreenBoost ? '' : 'max-w-xl md:max-w-2xl lg:max-w-3xl'} bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden`}
+      style={desktopFullscreenBoost ? { maxWidth: boostedCardPx } : undefined}
+    >
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
 
       {effective.drawOffer && effective.drawOffer !== user.uid && !isSpectator && !effective.winner && (
@@ -680,7 +707,11 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         </div>
       )}
 
-      <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700" onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}>
+      <div
+        className={`relative w-full ${desktopFullscreenBoost ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700`}
+        style={desktopFullscreenBoost ? { maxWidth: boostedBoardPx } : undefined}
+        onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}
+      >
         <div ref={boardGridRef} className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900 relative">
           {visualIndices.map((i) => {
             const cell = interactionBoard[i]; const r = Math.floor(i / 8); const c = i % 8;
@@ -707,12 +738,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                 {isValidMove && cell && <div className={`absolute inset-0 border-[4px] md:border-[5px] rounded-full m-1 pointer-events-none ${isMyTurn ? 'border-black/20' : 'border-sky-500/40'}`} />}
                 {cell && (
                   <div
-                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : (isPremovePending ? 0.55 : 1) }}
+                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : (isPremovePending ? 0.55 : 1), fontSize: desktopFullscreenBoost ? boostedPieceFontPx : undefined }}
                     onPointerDown={isDraggable ? (e) => handlePiecePointerDown(e, i, cell) : undefined}
                     onPointerMove={isDraggable ? handlePiecePointerMove : undefined}
                     onPointerUp={isDraggable ? handlePiecePointerUp : undefined}
                     onPointerCancel={isDraggable ? handlePiecePointerUp : undefined}
-                    className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                    className={`${desktopFullscreenBoost ? '' : 'text-[32px] sm:text-[45px] md:text-[55px] lg:text-[64px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >{CHESS_ICONS[cell.type]}</div>
                 )}
               </div>
@@ -732,8 +763,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         </div>
         {dragPiece && (
           <div
-            style={{ ...chessPieceStyle, position: 'fixed', left: dragPiece.x, top: dragPiece.y, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 9999 }}
-            className={`text-[32px] sm:text-[45px] md:text-[55px] leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+            style={{ ...chessPieceStyle, position: 'fixed', left: dragPiece.x, top: dragPiece.y, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 9999, fontSize: desktopFullscreenBoost ? boostedPieceFontPx : undefined }}
+            className={`${desktopFullscreenBoost ? '' : 'text-[32px] sm:text-[45px] md:text-[55px] lg:text-[64px]'} leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
           >{CHESS_ICONS[dragPiece.piece.type]}</div>
         )}
         {/* FIX 12: Terfi Dialoguna Vazgeç Butonu Eklendi */}
