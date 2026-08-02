@@ -175,10 +175,14 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     }
   };
 
-  // Sürükleme sırasında bir tıklama (click) olayının hamleyi ikinci kez
-  // tetiklemesini önlemek için: pointerup'ta hamle uygulanmışsa bu bayrak
-  // set edilir, ardından gelen `click` olayı bir kereliğine yok sayılır.
-  const wasDraggedRef = useRef(false);
+  // Sürükleyerek YA DA tıklayarak oynama aynı anda desteklenir. pointerup bir
+  // etkileşimi (sürükleyerek hamle YA DA basit dokunma-seç) tamamen işlediyse
+  // zaman damgası kaydedilir; hemen ardından gelebilecek `click` olayı (fare
+  // için ateşlenir; dokunmatikte tarayıcı zaten bastırabilir) kısa bir
+  // pencere içinde yok sayılır. Kalıcı bir boolean yerine zaman damgası
+  // kullanılması, dokunmatikte click hiç ateşlenmezse bayrağın sonsuza dek
+  // takılı kalıp SONRAKİ tüm tıklamaları engellemesini önler.
+  const pointerHandledAtRef = useRef(0);
   const dragMovedRef = useRef(false);
   const [dragPiece, setDragPiece] = useState(null);
 
@@ -191,22 +195,25 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const handlePiecePointerDown = (e, index, piece) => {
+    if (e.button !== undefined && e.button !== 0) return; // yalnızca sol tık/dokunma taş sürükler
     if (!isMyTurn || isSpectator || effective.winner || roomData.status === 'abandoned' || promotionPrompt || isSubmitting) return;
     if (!piece || piece.color !== myColor) return;
     e.preventDefault(); e.stopPropagation();
-    setSelectedSquare(index);
+    if (arrows.length) setArrows([]);
     dragMovedRef.current = false;
     setDragPiece({ from: index, piece, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no-op */ }
   };
 
   const handlePiecePointerMove = (e) => {
-    if (!dragPiece) return;
-    if (!dragMovedRef.current) {
-      const dx = e.clientX - dragPiece.startX, dy = e.clientY - dragPiece.startY;
-      if (Math.hypot(dx, dy) > 5) dragMovedRef.current = true;
-    }
-    if (dragMovedRef.current) setDragPiece((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev));
+    setDragPiece((prev) => {
+      if (!prev) return prev;
+      if (!dragMovedRef.current) {
+        const dx = e.clientX - prev.startX, dy = e.clientY - prev.startY;
+        if (Math.hypot(dx, dy) > 5) { dragMovedRef.current = true; setSelectedSquare(prev.from); }
+      }
+      return dragMovedRef.current ? { ...prev, x: e.clientX, y: e.clientY } : prev;
+    });
   };
 
   const handlePiecePointerUp = async (e) => {
@@ -214,16 +221,25 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     setDragPiece(null);
     if (!current) return;
     try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch { /* no-op */ }
-    if (!dragMovedRef.current) return; // hareket yoksa: normal tıklama akışı bunu ele alır
-    wasDraggedRef.current = true;
+    pointerHandledAtRef.current = Date.now();
+    if (!dragMovedRef.current) {
+      // Hareket yok: basit dokunma/tık — orijinal tıkla-oyna akışıyla BİREBİR
+      // aynı geçiş kuralı (seç / seçimi kaldır).
+      setSelectedSquare((prevSel) => (prevSel === current.from ? null : current.from));
+      return;
+    }
     const targetIndex = getSquareAt(e.clientX, e.clientY);
-    if (targetIndex === null || targetIndex === current.from) return;
-    if (!validMoves.includes(targetIndex)) return;
+    const legalTargets = getStrictLegalMoves(board, current.from, effective.enPassantTarget);
+    if (targetIndex === null || targetIndex === current.from || !legalTargets.includes(targetIndex)) {
+      setSelectedSquare(current.from); // geçersiz bırakma noktası: seçili kalsın, tıklayarak devam edilebilsin
+      return;
+    }
     await performMove(current.from, targetIndex);
   };
 
   const handleSquareClick = async (index) => {
-    if (wasDraggedRef.current) { wasDraggedRef.current = false; return; }
+    if (arrows.length) setArrows([]);
+    if (Date.now() - pointerHandledAtRef.current < 400) return; // az önce pointerup zaten işledi
     if (!isMyTurn || isSpectator || effective.winner || roomData.status === 'abandoned' || promotionPrompt || isSubmitting) return;
     const piece = board[index];
 
@@ -235,6 +251,94 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (validMoves.includes(index)) {
       await performMove(selectedSquare, index);
     }
+  };
+
+  // ============================================================
+  // TEHDİT OKU (sağ tık basılı tutup sürükleme) — chess.com tarzı, turuncu,
+  // SADECE çizen oyuncunun ekranında görünür: Firestore'a hiç yazılmaz,
+  // tamamen yerel state. Fare hareketi, tuş bırakılana kadar okun ucunu
+  // eş zamanlı takip eder. At hamlesi şeklindeyse (2+1 kare) çapraz yerine
+  // dirsekli (önce uzun bacak, sonra dik açı) çizilir — bkz. buildArrowSegments.
+  // ============================================================
+  const boardGridRef = useRef(null);
+  const [arrows, setArrows] = useState([]);
+  const [drawingArrow, setDrawingArrow] = useState(null); // { from, to }
+
+  useEffect(() => { setArrows([]); setDrawingArrow(null); }, [boardStr]);
+
+  const handleBoardMouseDown = (e) => {
+    if (e.button !== 2) return;
+    e.preventDefault();
+    const fromIdx = getSquareAt(e.clientX, e.clientY);
+    if (fromIdx === null) return;
+    setDrawingArrow({ from: fromIdx, to: fromIdx });
+  };
+
+  useEffect(() => {
+    if (!drawingArrow) return undefined;
+    const onMove = (e) => {
+      const hoverIdx = getSquareAt(e.clientX, e.clientY);
+      setDrawingArrow((prev) => (prev ? { ...prev, to: hoverIdx ?? prev.to } : prev));
+    };
+    const onUp = (e) => {
+      if (e.button !== 2) return;
+      setDrawingArrow((prev) => {
+        if (prev && prev.to !== prev.from) {
+          setArrows((arrs) => {
+            const exists = arrs.some((a) => a.from === prev.from && a.to === prev.to);
+            return exists ? arrs.filter((a) => !(a.from === prev.from && a.to === prev.to)) : [...arrs, { from: prev.from, to: prev.to }];
+          });
+        }
+        return null;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [Boolean(drawingArrow)]);
+
+  const getSquareCenterLocal = (idx) => {
+    const boardEl = boardGridRef.current;
+    if (!boardEl) return null;
+    const sqEl = boardEl.querySelector(`[data-sq="${idx}"]`);
+    if (!sqEl) return null;
+    const boardRect = boardEl.getBoundingClientRect();
+    const sqRect = sqEl.getBoundingClientRect();
+    return { x: sqRect.left - boardRect.left + sqRect.width / 2, y: sqRect.top - boardRect.top + sqRect.height / 2, size: sqRect.width };
+  };
+
+  // Bir okun "at gibi" (2+1 kare) gidip gitmediğini tespit eder; öyleyse
+  // çapraz tek çizgi yerine, atın gerçekte izlediği yola uygun dirsekli
+  // (önce 2 kare, sonra dik açıyla 1 kare) iki segment döndürür.
+  const buildArrowSegments = (fromIdx, toIdx) => {
+    const r0 = Math.floor(fromIdx / 8), c0 = fromIdx % 8;
+    const r1 = Math.floor(toIdx / 8), c1 = toIdx % 8;
+    const dr = r1 - r0, dc = c1 - c0;
+    const isKnightMove = (Math.abs(dr) === 2 && Math.abs(dc) === 1) || (Math.abs(dr) === 1 && Math.abs(dc) === 2);
+    if (!isKnightMove) return [[fromIdx, toIdx]];
+    const elbowR = Math.abs(dr) === 2 ? r0 + dr : r0;
+    const elbowC = Math.abs(dc) === 2 ? c0 + dc : c0;
+    return [[fromIdx, elbowR * 8 + elbowC], [elbowR * 8 + elbowC, toIdx]];
+  };
+
+  const renderArrow = (fromIdx, toIdx, key, isPreview) => {
+    const segments = buildArrowSegments(fromIdx, toIdx);
+    return segments.map(([segFrom, segTo], i) => {
+      const p0 = getSquareCenterLocal(segFrom); const p1 = getSquareCenterLocal(segTo);
+      if (!p0 || !p1) return null;
+      const isLast = i === segments.length - 1;
+      let ex = p1.x, ey = p1.y;
+      if (isLast) {
+        const dx = p1.x - p0.x, dy = p1.y - p0.y; const len = Math.hypot(dx, dy) || 1;
+        const pullback = p1.size * 0.28;
+        ex = p1.x - (dx / len) * pullback; ey = p1.y - (dy / len) * pullback;
+      }
+      return (
+        <line key={`${key}-${i}`} x1={p0.x} y1={p0.y} x2={ex} y2={ey}
+          stroke="#f97316" strokeOpacity={isPreview ? 0.65 : 0.9} strokeWidth={p0.size * 0.16} strokeLinecap="round"
+          markerEnd={isLast ? 'url(#chess-arrow-head)' : undefined} />
+      );
+    });
   };
 
   // Bot rakip: sıra bota geldiğinde Stockfish'e mevcut pozisyonu FEN olarak gönderip
@@ -466,8 +570,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
-      <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700">
-        <div className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900 relative">
+      <div className="relative w-full max-w-[400px] sm:max-w-[480px] bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700" onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}>
+        <div ref={boardGridRef} className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900 relative">
           {visualIndices.map((i) => {
             const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
             const isDark = (r + c) % 2 !== 0; const isSelected = selectedSquare === i; const isValidMove = validMoves.includes(i);
@@ -500,6 +604,17 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
               </div>
             );
           })}
+          {(arrows.length > 0 || (drawingArrow && drawingArrow.to !== drawingArrow.from)) && (
+            <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 30 }}>
+              <defs>
+                <marker id="chess-arrow-head" viewBox="0 0 4 4" markerWidth="3.2" markerHeight="3.2" refX="3.6" refY="2" orient="auto-start-reverse" markerUnits="strokeWidth">
+                  <path d="M0,0 L4,2 L0,4 Z" fill="#f97316" />
+                </marker>
+              </defs>
+              {arrows.map((a, idx) => renderArrow(a.from, a.to, `arr-${idx}`, false))}
+              {drawingArrow && drawingArrow.to !== drawingArrow.from && renderArrow(drawingArrow.from, drawingArrow.to, 'drawing', true)}
+            </svg>
+          )}
         </div>
         {dragPiece && (
           <div
