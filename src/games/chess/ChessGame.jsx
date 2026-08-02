@@ -49,7 +49,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // Taş glif boyutu piksel cinsinden sabitti — tahta büyüdükçe kareye göre
   // orantısız (küçük) kalmasın diye tam ekran modunda kare boyutuna (tahta/8)
   // orantılı olarak yeniden hesaplanır.
-  const boostedPieceFontPx = Math.round((boostedBoardPx / 8) * 0.72);
+  const boostedPieceFontPx = Math.round((boostedBoardPx / 8) * 0.85);
 
   // Optimistic katman (101'deki rack sürüklemesiyle AYNI mantık): hamle oynanır
   // oynanmaz tahta yerelde ANINDA güncellenir, Firestore yazması arka planda
@@ -743,7 +743,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                     onPointerMove={isDraggable ? handlePiecePointerMove : undefined}
                     onPointerUp={isDraggable ? handlePiecePointerUp : undefined}
                     onPointerCancel={isDraggable ? handlePiecePointerUp : undefined}
-                    className={`${desktopFullscreenBoost ? '' : 'text-[32px] sm:text-[45px] md:text-[55px] lg:text-[64px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                    className={`${desktopFullscreenBoost ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >{CHESS_ICONS[cell.type]}</div>
                 )}
               </div>
@@ -764,7 +764,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         {dragPiece && (
           <div
             style={{ ...chessPieceStyle, position: 'fixed', left: dragPiece.x, top: dragPiece.y, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 9999, fontSize: desktopFullscreenBoost ? boostedPieceFontPx : undefined }}
-            className={`${desktopFullscreenBoost ? '' : 'text-[32px] sm:text-[45px] md:text-[55px] lg:text-[64px]'} leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+            className={`${desktopFullscreenBoost ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
           >{CHESS_ICONS[dragPiece.piece.type]}</div>
         )}
         {/* FIX 12: Terfi Dialoguna Vazgeç Butonu Eklendi */}

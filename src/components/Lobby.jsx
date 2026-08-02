@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
@@ -94,7 +94,21 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   // ---- Bota karşı: zorluk seçimi (yalnızca DIFFICULTY_GAMES) --------------
   const [botPickerGameId, setBotPickerGameId] = useState(null);
   const startBot = (gameId, difficulty) => { setBotPickerGameId(null); startBotGame(gameId, difficulty); };
+  // Satranç botu Stockfish'i (~7MB wasm dosyası) kullanıyor ve o dosya ChessGame
+  // AÇILMADAN indirilmeye BAŞLAMIYORDU — kullanıcı "Botla Oyna"ya basıp zorluk
+  // seçip oda kurulana kadar geçen (birkaç saniyelik) süre tamamen boşa
+  // gidiyordu. Artık "Botla Oyna"ya basar basmaz (zorluk ekranı açılırken)
+  // dosya arka planda indirilmeye başlar; tarayıcı önbelleğe aldığı için oyun
+  // ekranı açıldığında Worker aynı dosyayı büyük ihtimalle önbellekten okur.
+  const stockfishPrefetchedRef = useRef(false);
+  const prefetchStockfish = () => {
+    if (stockfishPrefetchedRef.current) return;
+    stockfishPrefetchedRef.current = true;
+    fetch('/stockfish/stockfish-18-lite-single.wasm').catch(() => {});
+    fetch('/stockfish/stockfish-18-lite-single.js').catch(() => {});
+  };
   const onBotClick = (gameId) => {
+    if (gameId === 'satranc') prefetchStockfish();
     if (DIFFICULTY_GAMES.includes(gameId)) { setBotPickerGameId((cur) => (cur === gameId ? null : gameId)); return; }
     startBotGame(gameId, 'medium');
   };
