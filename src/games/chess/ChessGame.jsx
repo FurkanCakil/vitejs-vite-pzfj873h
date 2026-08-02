@@ -44,8 +44,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
   const desktopFullscreenBoost = isFullscreenView && !isPhone;
-  const boostedBoardPx = Math.round(Math.max(480, Math.min(viewportW * 0.5, viewportH - 260, 820)));
-  const boostedCardPx = Math.round(Math.max(560, Math.min(viewportW * 0.65, viewportH - 120, 1000)));
+  // Kart başlığı (skor tablosu, aksiyon butonları, olası teklif bannerları)
+  // için pay bırakılır — ÖNCEDEN bu pay yetersizdi ve tam ekranda skor
+  // tablosu viewport'un üstünden taşıp görünmez oluyordu (bkz. kullanıcı
+  // raporu). Hem sabit pay HEM oran tabanlı bir üst sınır birlikte kullanılır
+  // (ikisinin küçüğü) ki hesap az da olsa yanılsa bile bolca marj kalsın.
+  const boostedBoardPx = Math.round(Math.max(420, Math.min(viewportW * 0.46, viewportH - 340, viewportH * 0.62, 780)));
+  const boostedCardPx = Math.round(Math.max(560, Math.min(viewportW * 0.65, 1000)));
   // Taş glif boyutu piksel cinsinden sabitti — tahta büyüdükçe kareye göre
   // orantısız (küçük) kalmasın diye tam ekran modunda kare boyutuna (tahta/8)
   // orantılı olarak yeniden hesaplanır.
@@ -622,7 +627,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   return (
     <div
       className={`relative flex flex-col items-center w-full ${desktopFullscreenBoost ? '' : 'max-w-xl md:max-w-2xl lg:max-w-3xl'} bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden`}
-      style={desktopFullscreenBoost ? { maxWidth: boostedCardPx } : undefined}
+      style={desktopFullscreenBoost ? { maxWidth: boostedCardPx, maxHeight: '94vh', overflowY: 'auto' } : undefined}
     >
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
 
@@ -706,22 +711,23 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
-      {!isMyTurn && premoves.length > 0 && (
-        <div className="w-full flex items-center justify-center gap-2 mb-2">
-          <span className="text-[11px] font-bold text-sky-300 bg-sky-500/10 border border-sky-500/30 px-2.5 py-1 rounded-full">
-            {premoves.length} ön-hamle sırada
-          </span>
-          <button onClick={() => { setPremoves([]); setSelectedSquare(null); }} className="text-[11px] font-bold text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-600 px-2.5 py-1 rounded-full border border-slate-600 transition-colors">
-            İptal Et
-          </button>
-        </div>
-      )}
-
       <div
         className={`relative w-full ${desktopFullscreenBoost ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700`}
         style={desktopFullscreenBoost ? { maxWidth: boostedBoardPx } : undefined}
         onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}
       >
+        {/* Konumu MUTLAK (absolute): akışa girmez, göründüğü/kaybolduğu anda
+            tahtayı aşağı itip "kayma" hissi yaratmaz — bkz. kullanıcı raporu. */}
+        {!isMyTurn && premoves.length > 0 && (
+          <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 whitespace-nowrap">
+            <span className="text-[11px] font-bold text-sky-300 bg-sky-500/20 border border-sky-500/40 px-2.5 py-1 rounded-full shadow-lg backdrop-blur-sm">
+              {premoves.length} ön-hamle sırada
+            </span>
+            <button onClick={() => { setPremoves([]); setSelectedSquare(null); }} className="text-[11px] font-bold text-slate-200 hover:text-white bg-slate-700/90 hover:bg-slate-600 px-2.5 py-1 rounded-full border border-slate-600 shadow-lg transition-colors">
+              İptal Et
+            </button>
+          </div>
+        )}
         <div ref={boardGridRef} className="grid grid-cols-8 grid-rows-8 w-full aspect-square bg-[#769656] rounded-sm overflow-hidden select-none shadow-inner border-[3px] border-slate-900 relative">
           {visualIndices.map((i) => {
             const cell = interactionBoard[i]; const r = Math.floor(i / 8); const c = i % 8;
