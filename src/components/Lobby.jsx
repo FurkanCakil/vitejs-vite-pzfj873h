@@ -198,7 +198,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
             <div key={game.id} className={`p-6 rounded-xl border-2 flex flex-col transition-all duration-300 relative overflow-hidden
                 ${!game.available ? 'bg-slate-800/60 border-slate-700 opacity-70 grayscale' : ''}
                 ${isPremium && game.id !== 'dama' && game.id !== 'connect4' ? 'bg-slate-800 border-indigo-500/40 hover:border-indigo-400 shadow-[0_0_20px_rgba(99,102,241,0.15)] cursor-pointer hover:-translate-y-1' : ''}
-                ${game.id === 'dama' ? 'bg-slate-900 border-slate-700 hover:border-slate-400 shadow-[0_0_20px_rgba(255,255,255,0.07)] cursor-pointer hover:-translate-y-1' : ''}
+                ${game.id === 'dama' ? 'bg-slate-900 border-violet-500/40 hover:border-violet-400 shadow-[0_0_20px_rgba(139,92,246,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.id === 'connect4' ? 'bg-slate-900 border-blue-600/40 hover:border-blue-400 shadow-[0_0_20px_rgba(37,99,235,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.id === 'amiralbatti' ? 'bg-slate-900 border-sky-600/40 hover:border-sky-400 shadow-[0_0_20px_rgba(2,132,199,0.15)] cursor-pointer hover:-translate-y-1' : ''}
                 ${game.available && !isPremium ? 'bg-slate-800 border-slate-600 hover:border-indigo-400 hover:bg-slate-700 cursor-pointer' : ''}`}>
@@ -206,7 +206,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
               {game.id === 'xox' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-purple-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'tavla' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-600/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-orange-700/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'satranc' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-emerald-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-teal-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
-              {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-white/10 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-400/10 blur-[40px] rounded-full pointer-events-none"></div></> )}
+              {game.id === 'dama' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-violet-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-fuchsia-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'okey101' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-rose-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-cyan-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'connect4' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-red-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-blue-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
               {game.id === 'amiralbatti' && ( <><div className="absolute -top-10 -left-10 w-32 h-32 bg-sky-500/20 blur-[40px] rounded-full pointer-events-none"></div><div className="absolute -bottom-10 -right-10 w-32 h-32 bg-slate-500/20 blur-[40px] rounded-full pointer-events-none"></div></> )}
@@ -229,7 +229,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                           ${game.id === 'xox' ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600 hover:text-white' : ''}
                           ${game.id === 'tavla' ? 'bg-amber-600/20 text-amber-300 border-amber-600/50 hover:bg-amber-600 hover:text-white' : ''}
                           ${game.id === 'satranc' ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-600 hover:text-white' : ''}
-                          ${game.id === 'dama' ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-black hover:text-white hover:border-slate-500' : ''}
+                          ${game.id === 'dama' ? 'bg-violet-600/20 text-violet-300 border-violet-500/50 hover:bg-violet-600 hover:text-white' : ''}
                           ${game.id === 'connect4' ? 'bg-blue-600/20 text-blue-300 border-blue-500/50 hover:bg-blue-600 hover:text-white' : ''}
                           ${game.id === 'amiralbatti' ? 'bg-sky-600/20 text-sky-300 border-sky-500/50 hover:bg-sky-600 hover:text-white' : ''}
                         `}><UserPlus className="w-4 h-4" /> Arkadaşla Oyna</button>

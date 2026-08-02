@@ -202,18 +202,25 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   const p1ColorStr = roomData.playerColors?.[p1Uid] === 'w' ? 'Beyaz' : 'Siyah';
   const p2ColorStr = roomData.playerColors?.[p2Uid] === 'w' ? 'Beyaz' : 'Siyah';
+  // İki oyuncunun ismi de beyaz yazıldığında (taş rengi ne olursa olsun) garip
+  // duruyordu — artık isim rengi oyuncunun taş rengini yansıtıyor: beyaz taş
+  // beyaz yazı, siyah taş SİYAH yazı. Siyah yazı koyu paneldeki koyu arkaplanda
+  // kaybolmasın diye etrafına ince beyaz bir çerçeve (text-shadow ile) eklendi.
+  const blackNameStyle = { color: '#0f172a', textShadow: '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 4px rgba(255,255,255,0.5)' };
+  const nameStyleFor = (uid) => (roomData.playerColors?.[uid] === 'w' ? undefined : blackNameStyle);
+  const nameClassFor = (uid) => `font-bold ${roomData.playerColors?.[uid] === 'w' ? 'text-white' : ''}`;
 
   return (
     <div className="relative flex flex-col items-center w-full max-w-xl bg-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
       {isBot && !isSpectator && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       <div className="w-full flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 mb-4">
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p1Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
-           <span className="font-bold text-white">{p1Name} ({p1ColorStr})</span>
+           <span className={nameClassFor(p1Uid)} style={nameStyleFor(p1Uid)}>{p1Name} ({p1ColorStr})</span>
            <span className="text-xl font-mono text-slate-300 mt-1">{roomData.scores?.[p1Uid] || 0}</span>
         </div>
         <div className="px-4 font-bold text-slate-500">VS</div>
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p2Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
-           <span className="font-bold text-white">{p2Name} ({p2ColorStr})</span>
+           <span className={nameClassFor(p2Uid)} style={nameStyleFor(p2Uid)}>{p2Name} ({p2ColorStr})</span>
            <span className="text-xl font-mono text-slate-300 mt-1">{roomData.scores?.[p2Uid] || 0}</span>
         </div>
       </div>
