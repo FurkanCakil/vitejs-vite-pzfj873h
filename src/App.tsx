@@ -72,7 +72,7 @@ export default function App() {
   // Aktif Kullanıcı Sayacı: oturum boyunca (auth tamamlanınca) küresel sayacı
   // +1/-1 yazar — SADECE yazar, hiç okuma yapmaz (bkz. usePresence.js).
   usePresence(user?.uid);
-  const { isCompact } = useViewport();
+  const { isCompact, isPhone } = useViewport();
   const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -843,7 +843,7 @@ export default function App() {
         <header className="max-w-5xl mx-auto flex items-center justify-between mb-4 md:mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
           <div className="flex items-center gap-3">
             <Gamepad2 className="w-8 h-8 text-indigo-400" />
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Masa Oyunları Portalı</h1>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Oyun Portalı</h1>
           </div>
           <div className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-full truncate max-w-[120px]">{nickname || `Oyuncu: ${user?.uid.substring(0,4)}`}</div>
         </header>
@@ -861,21 +861,12 @@ export default function App() {
           )}
 
           <div className={isFullscreen
-            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 ${isCompact ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden flex flex-col items-center justify-center ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
+            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center ${(isCompact || isPhone) ? 'justify-start' : 'justify-center'} ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
             : `w-full bg-slate-800 ${okeyCompact ? 'h-full rounded-none border-0' : 'rounded-2xl border border-slate-700 shadow-2xl'} ${cardPadding} flex flex-col items-center relative transition-all duration-300`}>
             {isFullscreen && (
-               <>
-                 <div className="fixed top-3 left-3 sm:top-6 sm:left-6 z-[6000] flex items-center gap-2 bg-slate-800/80 px-4 py-2 rounded-full border border-slate-600 shadow-lg backdrop-blur-md">
-                    {isBotGame ? (
-                      <span className="text-xs font-bold text-indigo-300">Bot Modu</span>
-                    ) : (
-                      <><span className="text-xs text-slate-400">Kod:</span><span className="font-mono font-bold text-indigo-300">{roomCode}</span></>
-                    )}
-                 </div>
                  <button onClick={toggleFullscreen} className="fixed top-3 right-3 sm:top-6 sm:right-6 z-[6000] bg-slate-800/80 hover:bg-slate-700 p-2 sm:p-3 rounded-full text-slate-300 transition-all shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-600 backdrop-blur-md" title="Tam Ekrandan Çık">
                     <Minimize className="w-5 h-5 sm:w-6 sm:h-6" />
                  </button>
-               </>
             )}
 
             {/* Telefon YATAY (okeyCompact) modda üst başlık — dolayısıyla

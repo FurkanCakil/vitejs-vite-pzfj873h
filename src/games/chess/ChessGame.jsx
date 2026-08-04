@@ -290,12 +290,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   // Sürükleyerek YA DA tıklayarak oynama aynı anda desteklenir. pointerup bir
   // etkileşimi (sürükleyerek hamle YA DA basit dokunma-seç) tamamen işlediyse
-  // zaman damgası kaydedilir; hemen ardından gelebilecek `click` olayı (fare
-  // için ateşlenir; dokunmatikte tarayıcı zaten bastırabilir) kısa bir
-  // pencere içinde yok sayılır. Kalıcı bir boolean yerine zaman damgası
-  // kullanılması, dokunmatikte click hiç ateşlenmezse bayrağın sonsuza dek
-  // takılı kalıp SONRAKİ tüm tıklamaları engellemesini önler.
-  const pointerHandledAtRef = useRef(0);
+  // { zaman, kare } kaydedilir; hemen ardından AYNI KAREYE bubbling ile gelen
+  // `click` olayı (fare için ateşlenir; dokunmatikte tarayıcı zaten
+  // bastırabilir) kısa bir pencere içinde yok sayılır. Sadece zamana bakmak
+  // (eski davranış) BİR SONRAKİ farklı kareye yapılan gerçek tıklamayı da
+  // yutuyordu — taş seçilir seçilmez hedef kareye basınca ilk tık bazen hiç
+  // işlenmiyordu (bkz. kullanıcı raporu). Kareyi de eşleştirerek bu düzeltildi.
+  const pointerHandledAtRef = useRef(null);
   const dragMovedRef = useRef(false);
   const [dragPiece, setDragPiece] = useState(null);
 
@@ -335,14 +336,15 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     setDragPiece(null);
     if (!current) return;
     try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch { /* no-op */ }
-    pointerHandledAtRef.current = Date.now();
     if (!dragMovedRef.current) {
       // Hareket yok: basit dokunma/tık — orijinal tıkla-oyna akışıyla BİREBİR
       // aynı geçiş kuralı (seç / seçimi kaldır).
+      pointerHandledAtRef.current = { time: Date.now(), index: current.from };
       setSelectedSquare((prevSel) => (prevSel === current.from ? null : current.from));
       return;
     }
     const targetIndex = getSquareAt(e.clientX, e.clientY);
+    pointerHandledAtRef.current = { time: Date.now(), index: targetIndex ?? current.from };
     const legalTargets = isMyTurn
       ? getStrictLegalMoves(interactionBoard, current.from, effective.enPassantTarget)
       : getPseudoLegalMoves(interactionBoard, current.from, true, null, false, true);
@@ -356,7 +358,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const handleSquareClick = async (index) => {
     if (arrows.length) setArrows([]);
     if (redSquares.size) setRedSquares(new Set());
-    if (Date.now() - pointerHandledAtRef.current < 400) return; // az önce pointerup zaten işledi
+    const lastPointer = pointerHandledAtRef.current;
+    if (lastPointer && lastPointer.index === index && Date.now() - lastPointer.time < 400) return; // az önce pointerup AYNI karede zaten işledi
     if (!canInteract) return;
     const piece = interactionBoard[index];
 
