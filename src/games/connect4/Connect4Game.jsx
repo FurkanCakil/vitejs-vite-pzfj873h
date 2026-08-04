@@ -34,7 +34,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   const boardFit = isFullscreenView && (isPhone || isCompact);
   // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
   const tightHeader = isFullscreenView && isCompact;
-  const { wrapRef, boardRef: scaleBoardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
+  const { wrapRef, boardRef: scaleBoardRef, wrapStyle, boardStyle, scale: boardScale } = useBoardScale(boardFit);
 
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
@@ -197,19 +197,25 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
       const firstEl = el.querySelector(`[data-cell-index="${sorted[0]}"]`);
       const lastEl = el.querySelector(`[data-cell-index="${sorted[sorted.length - 1]}"]`);
       if (!firstEl || !lastEl) { setWinLineCoords(null); return; }
+      // NOT: `el` (board) bir CSS transform: scale(...) taşıyabilir (bkz.
+      // useBoardScale — telefonda tam ekranda tahta büyütülür). getBoundingClientRect
+      // zaten ÖLÇEKLENMİŞ ekran pikseli döndürür; ama bu SVG çizgisi de aynı
+      // ölçeklenen kapsayıcının İÇİNDE olduğundan koordinatları kendi (ÖLÇEKSİZ)
+      // yerel uzayında bekler — aksi halde ofset iki kez ölçeklenip çizgi yanlış
+      // yere düşer. Bu yüzden ekran-pikseli farkı `boardScale`'e bölünür.
       const boardRect = el.getBoundingClientRect();
       const r1 = firstEl.getBoundingClientRect(); const r2 = lastEl.getBoundingClientRect();
       setWinLineCoords({
-        x1: r1.left + r1.width / 2 - boardRect.left,
-        y1: r1.top + r1.height / 2 - boardRect.top,
-        x2: r2.left + r2.width / 2 - boardRect.left,
-        y2: r2.top + r2.height / 2 - boardRect.top,
+        x1: (r1.left + r1.width / 2 - boardRect.left) / boardScale,
+        y1: (r1.top + r1.height / 2 - boardRect.top) / boardScale,
+        x2: (r2.left + r2.width / 2 - boardRect.left) / boardScale,
+        y2: (r2.top + r2.height / 2 - boardRect.top) / boardScale,
       });
     };
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [roomData.winningLine]);
+  }, [roomData.winningLine, boardScale]);
 
   // Telefon YATAY'da kartın renkli zemini/çerçevesi kaldırılır: tahtadan çok
   // daha geniş kaldığı için gereksiz büyük bir panel gibi duruyordu.

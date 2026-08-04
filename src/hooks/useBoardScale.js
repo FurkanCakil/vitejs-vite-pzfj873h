@@ -84,5 +84,5 @@ export default function useBoardScale(active, { maxScale = 2.4 } = {}) {
     ? { transform: `scale(${fit.scale})`, transformOrigin: 'top center', flexShrink: 0 }
     : undefined;
 
-  return { wrapRef, boardRef, wrapStyle, boardStyle };
+  return { wrapRef, boardRef, wrapStyle, boardStyle, scale: active && fit.measured ? fit.scale : 1 };
 }
