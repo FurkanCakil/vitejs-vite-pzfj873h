@@ -3,8 +3,26 @@ import { Eye, Crown, Users, Loader2, Check, X, Bot } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { BOT_UID, checkWinner, getBotMove, DIFFICULTY_LABELS } from './bot.js';
+import useViewport from '../../hooks/useViewport.js';
+import useBoardScale from '../../hooks/useBoardScale.js';
 
 export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+  // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
+  // koşulsuz çağrılmalı.
+  const { isPhone, isCompact } = useViewport();
+  const [isFullscreenView, setIsFullscreenView] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreenView(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  // Telefonda tam ekranken tahta, üstteki başlık/skor tablosunun ALTINDA
+  // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
+  // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
+  const boardFit = isFullscreenView && (isPhone || isCompact);
+  const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
+
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
   const isPlayer1 = roomData.players[0] === user.uid;
@@ -89,24 +107,26 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   }
 
   return (
-     <div className="relative flex flex-col items-center w-full max-w-md bg-gradient-to-br from-indigo-900/60 to-purple-900/60 p-4 md:p-8 rounded-[2rem] border border-indigo-500/40 shadow-xl overflow-hidden">
-        <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Tic-Tac-Toe</h2>
+     <div className={`relative flex flex-col items-center w-full max-w-md bg-gradient-to-br from-indigo-900/60 to-purple-900/60 rounded-[2rem] border border-indigo-500/40 shadow-xl overflow-hidden ${boardFit ? 'p-2' : 'p-4 md:p-8'}`}>
+        {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Tic-Tac-Toe</h2>}
         <div className="w-full flex flex-col items-center z-10">
-          <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">
+          <div className={`flex flex-col w-full bg-slate-900/80 backdrop-blur-md rounded-xl border border-indigo-500/30 shadow-lg ${boardFit ? 'p-2 mb-2' : 'p-4 mb-6'}`}>
             {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
-            {isBot && !isSpectator && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
-            <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor} drop-shadow-md`}>{statusMsg}</div>
+            {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
+            <div className={`text-center font-bold ${boardFit ? 'text-base mb-1' : 'text-xl md:text-2xl mb-4'} ${statusColor} drop-shadow-md`}>{statusMsg}</div>
             <div className="flex justify-between items-start w-full px-2">
               <div className={`text-center flex flex-col items-center text-indigo-400 flex-1 min-w-0 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-indigo-400/50' : ''}`}><div className="flex items-center gap-1 mb-1 shrink-0">{p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}<span className="text-2xl font-bold">X</span></div><div className="text-xs truncate w-full px-1 font-medium">{p1Name} {isPlayer1 ? '(Sen)' : ''}</div><div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p1Score}</div></div>
               <div className="text-slate-500 font-bold text-xl md:text-2xl shrink-0 px-4 opacity-50 flex items-center justify-center h-full pt-4">VS</div>
               <div className={`text-center flex flex-col items-center text-purple-400 flex-1 min-w-0 p-1 rounded-lg transition-colors ${roomData.turn === p2Uid ? 'bg-slate-700/50 ring-1 ring-purple-400/50' : ''}`}><div className="flex items-center gap-1 mb-1 shrink-0">{p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}<span className="text-2xl font-bold">O</span></div><div className="text-xs truncate w-full px-1 font-medium">{p2Name} {isPlayer2 ? '(Sen)' : ''}</div><div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p2Score}</div></div>
             </div>
-            <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0} İzleyici</div>
+            {!boardFit && <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0} İzleyici</div>}
           </div>
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 w-fit mb-8 p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
-            {board.map((cell, index) => (
-               <button key={index} onClick={() => handleMove(index)} disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner} className={`w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] rounded-xl text-6xl font-black ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900 cursor-default'} ${roomData.winningLine?.includes(index) ? 'border-2 border-indigo-400 bg-indigo-500/40 shadow-lg' : 'border border-slate-700'} ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}`}>{cell}</button>
-            ))}
+          <div ref={wrapRef} style={wrapStyle} className={`w-full ${boardFit ? '' : 'mb-8'}`}>
+            <div ref={boardRef} style={boardStyle} className="grid grid-cols-3 gap-2 sm:gap-3 w-fit p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
+              {board.map((cell, index) => (
+                 <button key={index} onClick={() => handleMove(index)} disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner} className={`w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] rounded-xl text-6xl font-black ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900 cursor-default'} ${roomData.winningLine?.includes(index) ? 'border-2 border-indigo-400 bg-indigo-500/40 shadow-lg' : 'border border-slate-700'} ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}`}>{cell}</button>
+              ))}
+            </div>
           </div>
           {roomData.winner && roomData.status !== 'abandoned' && (
             <div className="w-full flex flex-col items-center bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-indigo-500/30 shadow-lg">

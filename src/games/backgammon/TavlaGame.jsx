@@ -5,6 +5,8 @@ import { playSound } from '../../utils/sound.js';
 import { rollDie, createInitialBoard, applyMove, getStrictValidMoves } from './logic.js';
 import { BOT_UID, DIFFICULTY_LABELS, shouldOfferDouble, shouldAcceptDouble } from './bot.js';
 import { useBackgammonBot } from './backgammonEngine.js';
+import useViewport from '../../hooks/useViewport.js';
+import useBoardScale from '../../hooks/useBoardScale.js';
 
 export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
@@ -12,6 +14,20 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const myColor = roomData.playerColors?.[user.uid] || null;
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
   const myPhase = roomData.phase;
+
+  // Telefonda tam ekranken tahta, üstteki başlık/skor tablosunun ALTINDA
+  // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
+  // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
+  const { isPhone, isCompact } = useViewport();
+  const [isFullscreenView, setIsFullscreenView] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreenView(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  const boardFit = isFullscreenView && (isPhone || isCompact);
+  const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   const updateRoom = async (patch) => {
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
@@ -489,8 +505,8 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const blackName = roomData.playerNames?.[blackUid] || 'Siyah';
 
   return (
-    <div className="relative w-full max-w-4xl flex flex-col items-center gap-4 bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 p-4 md:p-6 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] overflow-hidden">
-      {isBot && !isSpectator && <div className="text-center text-xs text-amber-300 font-bold tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
+    <div className={`relative w-full max-w-4xl flex flex-col items-center bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] overflow-hidden ${boardFit ? 'gap-1 p-2' : 'gap-4 p-4 md:p-6'}`}>
+      {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-amber-300 font-bold tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
       
       {roomData.cubeOfferBy && !roomData.winner && (
@@ -508,24 +524,24 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       )}
 
-      <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-amber-500/30">
+      <div className={`w-full flex items-center justify-between bg-slate-900/80 rounded-xl border border-amber-500/30 ${boardFit ? 'p-1.5' : 'p-3'}`}>
         <div className={`flex flex-col items-start flex-1 min-w-0 pr-2 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-amber-400/50' : ''}`}>
           <div className="flex items-center gap-2 w-full"><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} /><div className="text-sm font-bold text-slate-200 truncate">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>{p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}</div>
-          <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {p1Color === 'white' ? borneW : borneB}/15 çıktı</div>
+          {!boardFit && <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p1Color === 'white' ? 'Beyaz' : 'Siyah'} • {p1Color === 'white' ? borneW : borneB}/15 çıktı</div>}
         </div>
         <div className="flex flex-col items-center px-4 shrink-0 group">
            <div className="text-lg font-mono font-bold">{p1Score} — {p2Score}</div>
-           <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center gap-1"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0}</div>
+           {!boardFit && <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center gap-1"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0}</div>}
         </div>
         <div className={`flex flex-col items-end flex-1 min-w-0 pl-2 text-right p-1 rounded-lg transition-colors ${roomData.turn === p2Uid ? 'bg-slate-700/50 ring-1 ring-amber-400/50' : ''}`}>
           <div className="flex items-center justify-end gap-2 w-full">{p2Score > p1Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}<div className="text-sm font-bold text-slate-200 truncate">{p2Name} {p2Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} /></div>
-          <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {p2Color === 'white' ? borneW : borneB}/15 çıktı</div>
+          {!boardFit && <div className="text-[10px] sm:text-xs text-slate-400 mt-1 truncate">{p2Color === 'white' ? 'Beyaz' : 'Siyah'} • {p2Color === 'white' ? borneW : borneB}/15 çıktı</div>}
         </div>
       </div>
 
-      <div className="w-full flex justify-between items-end mb-2 px-2">
-         {isSpectator && <button onClick={() => setSpectatorFlipped(!spectatorFlipped)} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded flex items-center gap-1 transition-colors"><ArrowUpDown className="w-3 h-3" /> Tahtayı Çevir</button>}
-         <div className={`text-center font-bold text-lg drop-shadow-md flex-grow ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase==='opening' && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
+      <div className={`w-full flex justify-between items-end px-2 ${boardFit ? '' : 'mb-2'}`}>
+         {isSpectator && !boardFit && <button onClick={() => setSpectatorFlipped(!spectatorFlipped)} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded flex items-center gap-1 transition-colors"><ArrowUpDown className="w-3 h-3" /> Tahtayı Çevir</button>}
+         <div className={`text-center font-bold ${boardFit ? 'text-sm' : 'text-lg'} drop-shadow-md flex-grow ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase==='opening' && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
            {roomData.winner ? `🏆 ${roomData.winner === p1Uid ? p1Name : p2Name} Kazandı!` : myPhase === 'opening' ? 'Açılış Zarları Bekleniyor...' : isMyTurn ? (myPhase === 'rolling' ? 'Zarları At!' : 'Hamle Yap') : `${roomData.turn === p1Uid ? p1Name : p2Name} düşünüyor...`}
          </div>
          <button disabled={!isMyTurn || isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className={`bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1 transition-colors disabled:opacity-50 ${(!isSpectator && myPhase === 'rolling' && (roomData.cubeOwner === user.uid || roomData.cubeOwner === null)) ? 'hover:bg-amber-500' : ''}`} onClick={handleCubeOffer} title={isSpectator ? "Küp Değeri" : roomData.cubeOwner === user.uid || roomData.cubeOwner === null ? "Bahsi Katla" : "Küp Rakipte"}>
@@ -533,6 +549,8 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
          </button>
       </div>
 
+      <div ref={wrapRef} style={wrapStyle} className="w-full flex flex-col items-center">
+      <div ref={boardRef} style={boardStyle} className="w-full flex flex-col items-center">
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner min-h-[64px]">
         {myPhase === 'opening' ? (
            <div className="flex gap-8 items-center text-center">
@@ -573,6 +591,8 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
           </div>
           <div className="flex-1 flex gap-[1px]">{bottomPoints.slice(6, 12).map(idx => renderPoint(idx, false))}</div>
         </div>
+      </div>
+      </div>
       </div>
 
       <div className="flex flex-wrap justify-center gap-4 items-center w-full mt-2">

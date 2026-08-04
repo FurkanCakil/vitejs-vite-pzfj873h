@@ -7,6 +7,8 @@ import {
   findDropRow, isColumnFull, isConnect4BoardFull, checkConnect4Winner,
 } from './logic.js';
 import { BOT_UID, getBotColumn, DIFFICULTY_LABELS } from './bot.js';
+import useViewport from '../../hooks/useViewport.js';
+import useBoardScale from '../../hooks/useBoardScale.js';
 
 // Kullanıcı isteği: klasik sarı/kırmızı yerine KIRMIZI ve MAVİ oyuncu.
 // `connect4-disc-*` sınıfları .connect4-drop animasyonunun YANINDA aşağıdaki
@@ -16,6 +18,22 @@ const TEXT_CLASS = { red: 'text-red-400', blue: 'text-blue-400' };
 
 // FAZ 2: Minimax + Alpha-Beta budamalı bot yapay zekası (bkz. bot.js).
 export default function Connect4Game({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+  // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
+  // koşulsuz çağrılmalı.
+  const { isPhone, isCompact } = useViewport();
+  const [isFullscreenView, setIsFullscreenView] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreenView(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  // Telefonda tam ekranken tahta, üstteki başlık/skor tablosunun ALTINDA
+  // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
+  // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
+  const boardFit = isFullscreenView && (isPhone || isCompact);
+  const { wrapRef, boardRef: scaleBoardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
+
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
   const isPlayer1 = roomData.players[0] === user.uid;
@@ -192,7 +210,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   }, [roomData.winningLine]);
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl bg-gradient-to-br from-amber-950/40 to-slate-900 p-4 md:p-8 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden">
+    <div className={`relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl bg-gradient-to-br from-amber-950/40 to-slate-900 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden ${boardFit ? 'p-2' : 'p-4 md:p-8'}`}>
       <style>{`
         @keyframes connect4Drop {
           0% { transform: translateY(-520%); opacity: 0.5; }
@@ -253,13 +271,13 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
         }
       `}</style>
 
-      <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Connect 4</h2>
+      {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Connect 4</h2>}
 
       <div className="w-full flex flex-col items-center z-10">
-        <div className="flex flex-col w-full mb-6 bg-slate-900/80 backdrop-blur-md p-4 rounded-xl border border-amber-800/20 shadow-lg">
+        <div className={`flex flex-col w-full bg-slate-900/80 backdrop-blur-md rounded-xl border border-amber-800/20 shadow-lg ${boardFit ? 'p-2 mb-2' : 'p-4 mb-6'}`}>
           {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
-          {isBot && !isSpectator && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
-          <div className={`text-center font-bold text-xl md:text-2xl mb-4 ${statusColor} drop-shadow-md`}>{statusMsg}</div>
+          {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
+          <div className={`text-center font-bold ${boardFit ? 'text-base mb-1' : 'text-xl md:text-2xl mb-4'} ${statusColor} drop-shadow-md`}>{statusMsg}</div>
           <div className="flex justify-between items-start w-full px-2">
             <div className={`text-center flex flex-col items-center ${TEXT_CLASS.red} flex-1 min-w-0 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-red-400/50' : ''}`}>
               <div className="flex items-center gap-1 mb-1 shrink-0">{p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 drop-shadow-md" />}<span className="w-5 h-5 rounded-full bg-gradient-to-br from-red-400 to-red-600 border border-red-300 shadow" /></div>
@@ -273,13 +291,14 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
               <div className="text-xl font-mono font-bold text-white mt-1 shrink-0">{p2Score}</div>
             </div>
           </div>
-          <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3" /> {roomData.spectators?.length || 0} İzleyici</div>
+          {!boardFit && <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3" /> {roomData.spectators?.length || 0} İzleyici</div>}
         </div>
 
         {/* 1. MADDE (7x6 Tahta): gerçekçi AHŞAP dokulu çerçeve + oyulmuş
             delikler (bkz. üstteki .connect4-board / .connect4-hole). Sütuna
             tıklamak için tüm sütun (üstteki "düşürme" ipucu dahil) tıklanabilir. */}
-        <div ref={boardRef} className="connect4-board relative flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
+        <div ref={wrapRef} style={wrapStyle} className="w-full">
+        <div ref={(el) => { boardRef.current = el; scaleBoardRef.current = el; }} style={boardStyle} className="connect4-board relative flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
           {Array.from({ length: CONNECT4_COLS }, (_, col) => {
             const colFull = isColumnFull(board, col);
             const clickable = isMyTurn && !roomData.winner && !colFull;
@@ -328,6 +347,7 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
               />
             </svg>
           )}
+        </div>
         </div>
 
         {roomData.winner && roomData.status !== 'abandoned' && (

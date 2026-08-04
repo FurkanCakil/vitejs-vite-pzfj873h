@@ -4,12 +4,28 @@ import { playSound } from '../../utils/sound.js';
 import { getValidCheckersMoves, checkCheckersWinner, createInitialCheckersBoard } from './logic.js';
 import { BOT_UID, DIFFICULTY_LABELS, getBotTurn } from './bot.js';
 import { Crown, Loader2, Check, X, Bot } from 'lucide-react';
+import useViewport from '../../hooks/useViewport.js';
+import useBoardScale from '../../hooks/useBoardScale.js';
 
 export default function CheckersGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
+
+  // Telefonda tam ekranken tahta, üstteki başlık/skor tablosunun ALTINDA
+  // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
+  // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
+  const { isPhone, isCompact } = useViewport();
+  const [isFullscreenView, setIsFullscreenView] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsFullscreenView(!!document.fullscreenElement);
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+  const boardFit = isFullscreenView && (isPhone || isCompact);
+  const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -211,9 +227,9 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   const nameClassFor = (uid) => `font-bold ${roomData.playerColors?.[uid] === 'w' ? 'text-white' : ''}`;
 
   return (
-    <div className="relative flex flex-col items-center w-full max-w-xl bg-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
-      {isBot && !isSpectator && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
-      <div className="w-full flex items-center justify-between bg-slate-800 rounded-xl p-3 border border-slate-700 mb-4">
+    <div className={`relative flex flex-col items-center w-full max-w-xl bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl ${boardFit ? 'p-2' : 'p-4 md:p-6'}`}>
+      {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
+      <div className={`w-full flex items-center justify-between bg-slate-800 rounded-xl border border-slate-700 ${boardFit ? 'p-1.5 mb-1' : 'p-3 mb-4'}`}>
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p1Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
            <span className={nameClassFor(p1Uid)} style={nameStyleFor(p1Uid)}>{p1Name} ({p1ColorStr})</span>
            <span className="text-xl font-mono text-slate-300 mt-1">{roomData.scores?.[p1Uid] || 0}</span>
@@ -225,33 +241,35 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         </div>
       </div>
 
-      <div className="text-center font-bold text-lg mb-4 text-slate-300">
-        {roomData.winner 
-          ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!` 
-          : isSpectator 
+      <div className={`text-center font-bold text-slate-300 ${boardFit ? 'text-sm mb-1' : 'text-lg mb-4'}`}>
+        {roomData.winner
+          ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!`
+          : isSpectator
             ? (roomData.turn === p1Uid ? `${p1Name} Hamle Yapıyor...` : `${p2Name} Hamle Yapıyor...`)
             : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
       </div>
 
-      <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
-        {visualIndices.map((i) => {
-          const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
-          const isDark = (r + c) % 2 !== 0; 
-          const isSelected = selectedSquare === i || roomData.multiJumpIdx === i; 
-          const isValidMove = validMoves.some(m => m.to === i);
-          const isMandatory = mandatoryPieces.includes(i); // <-- EKLENDİ
+      <div ref={wrapRef} style={wrapStyle} className="w-full flex flex-col items-center">
+        <div ref={boardRef} style={boardStyle} className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
+          {visualIndices.map((i) => {
+            const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
+            const isDark = (r + c) % 2 !== 0;
+            const isSelected = selectedSquare === i || roomData.multiJumpIdx === i;
+            const isValidMove = validMoves.some(m => m.to === i);
+            const isMandatory = mandatoryPieces.includes(i); // <-- EKLENDİ
 
-          return (
-            <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
-              {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
-              {cell && (
-                <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none transition-all ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'} ${isMandatory ? 'ring-4 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.9)] animate-pulse' : ''}`}>
-                  {cell.isKing && <Crown className={`w-1/2 h-1/2 ${cell.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            return (
+              <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
+                {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
+                {cell && (
+                  <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none transition-all ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'} ${isMandatory ? 'ring-4 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.9)] animate-pulse' : ''}`}>
+                    {cell.isKing && <Crown className={`w-1/2 h-1/2 ${cell.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {roomData.winner && roomData.status !== 'abandoned' && (
