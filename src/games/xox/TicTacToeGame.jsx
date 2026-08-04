@@ -21,6 +21,8 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
   // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
   const boardFit = isFullscreenView && (isPhone || isCompact);
+  // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
+  const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
@@ -106,10 +108,30 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
     else { statusMsg = isMyTurn ? "Senin Sıran!" : "Rakibin Sırası..."; statusColor = isMyTurn ? "text-indigo-400" : "text-slate-400"; }
   }
 
+  // Telefon YATAY'da kartın renkli zemini/çerçevesi kaldırılır: tahtadan çok
+  // daha geniş kaldığı için gereksiz büyük bir panel gibi duruyordu.
+  const cardClass = tightHeader
+    ? 'p-1'
+    : `bg-gradient-to-br from-indigo-900/60 to-purple-900/60 rounded-[2rem] border border-indigo-500/40 shadow-xl ${boardFit ? 'p-2' : 'p-4 md:p-8'}`;
+
   return (
-     <div className={`relative flex flex-col items-center w-full max-w-md bg-gradient-to-br from-indigo-900/60 to-purple-900/60 rounded-[2rem] border border-indigo-500/40 shadow-xl overflow-hidden ${boardFit ? 'p-2' : 'p-4 md:p-8'}`}>
+     <div className={`relative flex flex-col items-center w-full max-w-md overflow-hidden ${cardClass}`}>
         {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Tic-Tac-Toe</h2>}
         <div className="w-full flex flex-col items-center z-10">
+          {/* Telefon YATAY tam ekranda skor tablosu TEK SATIRA iner: dikeyde
+              ~190px yer kaplayıp tahtayı ekranın dışına itiyordu. Artan alanın
+              tamamı tahtaya gider (bkz. useBoardScale). */}
+          {tightHeader ? (
+            <div className="flex items-center justify-center gap-2 w-full bg-slate-900/80 backdrop-blur-md rounded-lg border border-indigo-500/30 px-2 py-1 mb-1 text-xs">
+              <span className="text-xl font-bold text-indigo-400 leading-none">X</span>
+              <span className="truncate max-w-[64px] text-slate-300 font-medium">{p1Name}</span>
+              <span className="font-mono font-bold text-white">{p1Score}</span>
+              <span className={`px-2 font-bold ${statusColor}`}>{statusMsg}</span>
+              <span className="font-mono font-bold text-white">{p2Score}</span>
+              <span className="truncate max-w-[64px] text-slate-300 font-medium">{p2Name}</span>
+              <span className="text-xl font-bold text-purple-400 leading-none">O</span>
+            </div>
+          ) : (
           <div className={`flex flex-col w-full bg-slate-900/80 backdrop-blur-md rounded-xl border border-indigo-500/30 shadow-lg ${boardFit ? 'p-2 mb-2' : 'p-4 mb-6'}`}>
             {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
             {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
@@ -121,6 +143,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
             </div>
             {!boardFit && <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3"/> {roomData.spectators?.length || 0} İzleyici</div>}
           </div>
+          )}
           <div ref={wrapRef} style={wrapStyle} className={`w-full ${boardFit ? '' : 'mb-8'}`}>
             <div ref={boardRef} style={boardStyle} className="grid grid-cols-3 gap-2 sm:gap-3 w-fit p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
               {board.map((cell, index) => (

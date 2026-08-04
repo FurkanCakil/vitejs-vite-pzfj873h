@@ -25,6 +25,8 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
   const boardFit = isFullscreenView && (isPhone || isCompact);
+  // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
+  const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -226,9 +228,33 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   const nameStyleFor = (uid) => (roomData.playerColors?.[uid] === 'w' ? undefined : blackNameStyle);
   const nameClassFor = (uid) => `font-bold ${roomData.playerColors?.[uid] === 'w' ? 'text-white' : ''}`;
 
+  // Telefon YATAY'da kartın zemini/çerçevesi kaldırılır: tahtadan çok daha
+  // geniş kaldığı için gereksiz büyük bir panel gibi duruyordu.
+  const cardClass = tightHeader
+    ? 'p-1'
+    : `bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl ${boardFit ? 'p-2' : 'p-4 md:p-6'}`;
+
   return (
-    <div className={`relative flex flex-col items-center w-full max-w-xl bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl ${boardFit ? 'p-2' : 'p-4 md:p-6'}`}>
+    <div className={`relative flex flex-col items-center w-full max-w-xl ${cardClass}`}>
       {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
+      {/* Telefon YATAY tam ekranda skor tablosu + durum yazısı TEK SATIRDA
+          birleşir; artan alanın tamamı tahtaya gider (bkz. useBoardScale). */}
+      {tightHeader ? (
+        <div className="w-full flex items-center justify-center gap-2 bg-slate-800 rounded-lg border border-slate-700 px-2 py-1 mb-1 text-xs">
+          <span className={`truncate max-w-[90px] ${nameClassFor(p1Uid)}`} style={nameStyleFor(p1Uid)}>{p1Name}</span>
+          <span className="font-mono font-bold text-slate-200">{roomData.scores?.[p1Uid] || 0}</span>
+          <span className="px-2 font-bold text-slate-300">
+            {roomData.winner
+              ? `Kazanan: ${roomData.winner === p1Uid ? p1Name : p2Name}!`
+              : isSpectator
+                ? (roomData.turn === p1Uid ? `${p1Name} oynuyor...` : `${p2Name} oynuyor...`)
+                : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
+          </span>
+          <span className="font-mono font-bold text-slate-200">{roomData.scores?.[p2Uid] || 0}</span>
+          <span className={`truncate max-w-[90px] ${nameClassFor(p2Uid)}`} style={nameStyleFor(p2Uid)}>{p2Name}</span>
+        </div>
+      ) : (
+      <>
       <div className={`w-full flex items-center justify-between bg-slate-800 rounded-xl border border-slate-700 ${boardFit ? 'p-1.5 mb-1' : 'p-3 mb-4'}`}>
         <div className={`flex flex-col items-center flex-1 ${roomData.turn === p1Uid ? 'ring-2 ring-slate-400 rounded-lg' : ''}`}>
            <span className={nameClassFor(p1Uid)} style={nameStyleFor(p1Uid)}>{p1Name} ({p1ColorStr})</span>
@@ -248,9 +274,11 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
             ? (roomData.turn === p1Uid ? `${p1Name} Hamle Yapıyor...` : `${p2Name} Hamle Yapıyor...`)
             : (isMyTurn ? (roomData.multiJumpIdx !== null && roomData.multiJumpIdx !== undefined ? "Atlamaya Devam Et!" : "Senin Sıran!") : "Rakip Bekleniyor...")}
       </div>
+      </>
+      )}
 
-      <div ref={wrapRef} style={wrapStyle} className="w-full flex flex-col items-center">
-        <div ref={boardRef} style={boardStyle} className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
+      <div ref={wrapRef} style={wrapStyle} className="w-full">
+        <div ref={boardRef} style={boardStyle} className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square mx-auto bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
           {visualIndices.map((i) => {
             const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
             const isDark = (r + c) % 2 !== 0;

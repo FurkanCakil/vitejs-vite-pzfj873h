@@ -32,6 +32,8 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
   // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
   const boardFit = isFullscreenView && (isPhone || isCompact);
+  // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
+  const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef: scaleBoardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
@@ -209,8 +211,14 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
     return () => window.removeEventListener('resize', measure);
   }, [roomData.winningLine]);
 
+  // Telefon YATAY'da kartın renkli zemini/çerçevesi kaldırılır: tahtadan çok
+  // daha geniş kaldığı için gereksiz büyük bir panel gibi duruyordu.
+  const cardClass = tightHeader
+    ? 'p-1'
+    : `bg-gradient-to-br from-amber-950/40 to-slate-900 rounded-[2rem] border border-amber-800/30 shadow-xl ${boardFit ? 'p-2' : 'p-4 md:p-8'}`;
+
   return (
-    <div className={`relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl bg-gradient-to-br from-amber-950/40 to-slate-900 rounded-[2rem] border border-amber-800/30 shadow-xl overflow-hidden ${boardFit ? 'p-2' : 'p-4 md:p-8'}`}>
+    <div className={`relative flex flex-col items-center w-full max-w-xl lg:max-w-2xl overflow-hidden ${cardClass}`}>
       <style>{`
         @keyframes connect4Drop {
           0% { transform: translateY(-520%); opacity: 0.5; }
@@ -274,6 +282,19 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
       {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Connect 4</h2>}
 
       <div className="w-full flex flex-col items-center z-10">
+        {tightHeader ? (
+          /* Telefon YATAY tam ekranda skor tablosu TEK SATIRA iner — artan
+             alanın tamamı tahtaya gider (bkz. useBoardScale). */
+          <div className="flex items-center justify-center gap-2 w-full bg-slate-900/80 backdrop-blur-md rounded-lg border border-amber-800/20 px-2 py-1 mb-1 text-xs">
+            <span className="w-4 h-4 rounded-full bg-gradient-to-br from-red-400 to-red-600 border border-red-300 shrink-0" />
+            <span className="truncate max-w-[64px] text-slate-300 font-medium">{p1Name}</span>
+            <span className="font-mono font-bold text-white">{p1Score}</span>
+            <span className={`px-2 font-bold ${statusColor}`}>{statusMsg}</span>
+            <span className="font-mono font-bold text-white">{p2Score}</span>
+            <span className="truncate max-w-[64px] text-slate-300 font-medium">{p2Name}</span>
+            <span className="w-4 h-4 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border border-blue-300 shrink-0" />
+          </div>
+        ) : (
         <div className={`flex flex-col w-full bg-slate-900/80 backdrop-blur-md rounded-xl border border-amber-800/20 shadow-lg ${boardFit ? 'p-2 mb-2' : 'p-4 mb-6'}`}>
           {isSpectator && <div className="text-center text-xs text-yellow-400 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Eye className="w-4 h-4" /> SEYİRCİ MODU</div>}
           {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-indigo-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
@@ -293,12 +314,13 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
           </div>
           {!boardFit && <div className="text-[10px] text-slate-500 font-bold tracking-widest flex items-center justify-center gap-1 mt-3"><Users className="w-3 h-3" /> {roomData.spectators?.length || 0} İzleyici</div>}
         </div>
+        )}
 
         {/* 1. MADDE (7x6 Tahta): gerçekçi AHŞAP dokulu çerçeve + oyulmuş
             delikler (bkz. üstteki .connect4-board / .connect4-hole). Sütuna
             tıklamak için tüm sütun (üstteki "düşürme" ipucu dahil) tıklanabilir. */}
         <div ref={wrapRef} style={wrapStyle} className="w-full">
-        <div ref={(el) => { boardRef.current = el; scaleBoardRef.current = el; }} style={boardStyle} className="connect4-board relative flex gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
+        <div ref={(el) => { boardRef.current = el; scaleBoardRef.current = el; }} style={boardStyle} className="connect4-board relative flex w-fit gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
           {Array.from({ length: CONNECT4_COLS }, (_, col) => {
             const colFull = isColumnFull(board, col);
             const clickable = isMyTurn && !roomData.winner && !colFull;

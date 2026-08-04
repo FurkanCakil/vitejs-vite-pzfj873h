@@ -27,6 +27,8 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
   const boardFit = isFullscreenView && (isPhone || isCompact);
+  // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
+  const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   const updateRoom = async (patch) => {
@@ -504,8 +506,15 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const whiteName = roomData.playerNames?.[whiteUid] || 'Beyaz';
   const blackName = roomData.playerNames?.[blackUid] || 'Siyah';
 
+  // Telefon YATAY'da kartın renkli zemini/çerçevesi kaldırılır: tahtadan çok
+  // daha geniş kaldığı için "kocaman renkli panel" gibi duruyordu (kullanıcı
+  // raporu). Tahta doğrudan koyu tam ekran zemininde durur.
+  const cardClass = tightHeader
+    ? 'gap-1 p-1'
+    : `bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] ${boardFit ? 'gap-1 p-2' : 'gap-4 p-4 md:p-6'}`;
+
   return (
-    <div className={`relative w-full max-w-4xl flex flex-col items-center bg-gradient-to-br from-amber-900/40 via-slate-900/80 to-yellow-900/40 rounded-[2rem] border border-amber-500/30 shadow-[0_0_40px_rgba(217,119,6,0.15)] overflow-hidden ${boardFit ? 'gap-1 p-2' : 'gap-4 p-4 md:p-6'}`}>
+    <div className={`relative w-full max-w-4xl flex flex-col items-center overflow-hidden ${cardClass}`}>
       {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-amber-300 font-bold tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
       
@@ -524,6 +533,22 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       )}
 
+      {/* Telefon YATAY tam ekranda isimler + skor + sıra bilgisi + küp TEK
+          SATIRDA toplanır; artan alanın tamamı zar+tahtaya gider. */}
+      {tightHeader ? (
+        <div className="w-full flex items-center justify-center gap-2 bg-slate-900/80 rounded-lg border border-amber-500/30 px-2 py-1 text-xs">
+          <div className={`w-3 h-3 rounded-full border-2 shrink-0 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
+          <span className="truncate max-w-[70px] text-slate-200 font-bold">{p1Name}</span>
+          <span className="font-mono font-bold">{p1Score} — {p2Score}</span>
+          <span className="truncate max-w-[70px] text-slate-200 font-bold">{p2Name}</span>
+          <div className={`w-3 h-3 rounded-full border-2 shrink-0 ${p2Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} />
+          <span className={`px-1 font-bold ${roomData.winner ? 'text-yellow-400' : (isMyTurn || (myPhase === 'opening' && !roomData.openingRolls?.[myColor === 'white' ? 'p1' : 'p2'])) ? 'text-amber-400' : 'text-slate-400'}`}>
+            {roomData.winner ? `🏆 ${roomData.winner === p1Uid ? p1Name : p2Name}` : myPhase === 'opening' ? 'Açılış Zarı' : isMyTurn ? (myPhase === 'rolling' ? 'Zar At!' : 'Hamle Yap') : 'Rakip oynuyor...'}
+          </span>
+          <button disabled={!isMyTurn || isSpectator || myPhase !== 'rolling' || (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid)} className="bg-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded disabled:opacity-50 shrink-0" onClick={handleCubeOffer} title="Küp">x{roomData.cubeValue || 1}</button>
+        </div>
+      ) : (
+      <>
       <div className={`w-full flex items-center justify-between bg-slate-900/80 rounded-xl border border-amber-500/30 ${boardFit ? 'p-1.5' : 'p-3'}`}>
         <div className={`flex flex-col items-start flex-1 min-w-0 pr-2 p-1 rounded-lg transition-colors ${roomData.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-amber-400/50' : ''}`}>
           <div className="flex items-center gap-2 w-full"><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'white' ? 'bg-slate-100 border-slate-300' : 'bg-slate-800 border-slate-500'}`} /><div className="text-sm font-bold text-slate-200 truncate">{p1Name} {p1Uid === user.uid && !isSpectator ? '(Sen)' : ''}</div>{p1Score > p2Score && <Crown className="w-4 h-4 text-yellow-400 shrink-0" />}</div>
@@ -548,9 +573,11 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
             KÜP: x{roomData.cubeValue || 1}
          </button>
       </div>
+      </>
+      )}
 
-      <div ref={wrapRef} style={wrapStyle} className="w-full flex flex-col items-center">
-      <div ref={boardRef} style={boardStyle} className="w-full flex flex-col items-center">
+      <div ref={wrapRef} style={wrapStyle} className="w-full">
+      <div ref={boardRef} style={boardStyle} className="w-full flex flex-col items-center gap-2">
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner min-h-[64px]">
         {myPhase === 'opening' ? (
            <div className="flex gap-8 items-center text-center">
@@ -595,14 +622,16 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
       </div>
       </div>
 
-      <div className="flex flex-wrap justify-center gap-4 items-center w-full mt-2">
-        <div onClick={handleBearOffClick} className={`flex items-center gap-3 p-3 sm:px-6 rounded-xl border-2 transition-all cursor-pointer ${canBearOff ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_15px_rgba(52,211,153,0.4)]' : 'border-slate-700 bg-slate-800/60 cursor-default'}`}>
-          <div className="text-xs sm:text-sm text-slate-300 font-bold uppercase">Pulları Topla</div>
-          <div className="flex gap-2">
+      {/* Telefon YATAY'da bu satır da sıkılaştırılır: tahtanın ALTINDA kalan
+          her piksel, useBoardScale sayesinde doğrudan tahtaya yer açar. */}
+      <div className={`flex flex-wrap justify-center items-center w-full ${tightHeader ? 'gap-2 mt-1' : 'gap-4 mt-2'}`}>
+        <div onClick={handleBearOffClick} className={`flex items-center transition-all cursor-pointer ${tightHeader ? 'gap-1.5 px-2 py-0.5 rounded-lg border' : 'gap-3 p-3 sm:px-6 rounded-xl border-2'} ${canBearOff ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_15px_rgba(52,211,153,0.4)]' : 'border-slate-700 bg-slate-800/60 cursor-default'}`}>
+          <div className={`text-slate-300 font-bold uppercase ${tightHeader ? 'text-[9px]' : 'text-xs sm:text-sm'}`}>{tightHeader ? 'Topla' : 'Pulları Topla'}</div>
+          <div className={`flex ${tightHeader ? 'gap-1' : 'gap-2'}`}>
             {['white', 'black'].map(color => (
-              <div key={`bear-${color}`} className="flex flex-col items-center bg-slate-900/50 px-2 py-1 rounded">
-                <div className={`w-3 h-3 rounded-full mb-1 ${color === 'white' ? 'bg-slate-100 border border-slate-400' : 'bg-slate-700 border border-slate-500'}`} />
-                <div className="text-xs sm:text-sm font-mono font-bold text-slate-300">{color === 'white' ? borneW : borneB}</div>
+              <div key={`bear-${color}`} className={`flex items-center bg-slate-900/50 rounded ${tightHeader ? 'gap-1 px-1' : 'flex-col px-2 py-1'}`}>
+                <div className={`w-3 h-3 rounded-full ${tightHeader ? '' : 'mb-1'} ${color === 'white' ? 'bg-slate-100 border border-slate-400' : 'bg-slate-700 border border-slate-500'}`} />
+                <div className={`font-mono font-bold text-slate-300 ${tightHeader ? 'text-[10px]' : 'text-xs sm:text-sm'}`}>{color === 'white' ? borneW : borneB}</div>
               </div>
             ))}
           </div>

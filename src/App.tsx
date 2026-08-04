@@ -860,8 +860,14 @@ export default function App() {
             <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} isPublicRoom={!!roomData?.isPublic} />
           )}
 
+          {/* Tam ekranda içerik DİKEYDE ORTALANIR ama `justify-center` ile
+              DEĞİL: flex'te justify-center, içerik kaba sığmadığında taşan
+              kısmı kaydırmayla ULAŞILAMAZ hale getirir (üst taraf kesilir).
+              Bunun yerine aşağıdaki içerik sarmalayıcısına `m-auto` verilir;
+              yer varken ortalar, yokken otomatik kenar boşlukları 0'a düşüp
+              normal kaydırma çalışmaya devam eder. */}
           <div className={isFullscreen
-            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center ${(isCompact || isPhone) ? 'justify-start' : 'justify-center'} ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
+            ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
             : `w-full bg-slate-800 ${okeyCompact ? 'h-full rounded-none border-0' : 'rounded-2xl border border-slate-700 shadow-2xl'} ${cardPadding} flex flex-col items-center relative transition-all duration-300`}>
             {isFullscreen && (
                  <button onClick={toggleFullscreen} className="fixed top-3 right-3 sm:top-6 sm:right-6 z-[6000] bg-slate-800/80 hover:bg-slate-700 p-2 sm:p-3 rounded-full text-slate-300 transition-all shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-600 backdrop-blur-md" title="Tam Ekrandan Çık">
@@ -902,7 +908,7 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''}`}>
+              <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''} ${isFullscreen && !isOkeyTable ? 'm-auto' : ''}`}>
                  <ErrorBoundary>
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}

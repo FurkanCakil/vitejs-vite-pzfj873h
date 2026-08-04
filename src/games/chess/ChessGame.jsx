@@ -35,7 +35,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // iOS zaten gerçek tam ekranı desteklemiyor, Android'de de dar ekranda
   // "ekstra büyütme" taşmaya/saçma bir görünüme yol açabilir; telefon her
   // koşulda sadece aşağıdaki mütevazı Tailwind sınıflarıyla ölçeklenir.
-  const { width: viewportW, height: viewportH, isPhone } = useViewport();
+  const { width: viewportW, height: viewportH, isPhone, isCompact } = useViewport();
   const [isFullscreenView, setIsFullscreenView] = useState(false);
   useEffect(() => {
     const sync = () => setIsFullscreenView(!!document.fullscreenElement);
@@ -43,7 +43,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
-  const desktopFullscreenBoost = isFullscreenView && !isPhone;
+  // Telefon YATAY (isCompact) tam ekran, masaüstünden AYRI ele alınır. Daha
+  // önce `isPhone` (genişlik < 640px) tek ölçüttü; telefon yatayken genişlik
+  // 844px olduğu için bu koşul yanlışlıkla MASAÜSTÜ dalına düşüyordu ve
+  // aşağıdaki `Math.max(420, ...)` tabanı, 390px yüksekliğindeki bir ekrana
+  // 420px'lik tahta dayatıp tahtanın ekrana sığmamasına yol açıyordu.
+  const phoneLandscapeFullscreen = isFullscreenView && isCompact;
+  const desktopFullscreenBoost = isFullscreenView && !isPhone && !isCompact;
   // Kart başlığı (skor tablosu, aksiyon butonları, olası teklif bannerları)
   // için pay bırakılır — ÖNCEDEN bu pay yetersizdi ve tam ekranda skor
   // tablosu viewport'un üstünden taşıp görünmez oluyordu (bkz. kullanıcı
@@ -51,10 +57,20 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // (ikisinin küçüğü) ki hesap az da olsa yanılsa bile bolca marj kalsın.
   const boostedBoardPx = Math.round(Math.max(420, Math.min(viewportW * 0.46, viewportH - 340, viewportH * 0.62, 780)));
   const boostedCardPx = Math.round(Math.max(560, Math.min(viewportW * 0.65, 1000)));
-  // Taş glif boyutu piksel cinsinden sabitti — tahta büyüdükçe kareye göre
-  // orantısız (küçük) kalmasın diye tam ekran modunda kare boyutuna (tahta/8)
-  // orantılı olarak yeniden hesaplanır.
-  const boostedPieceFontPx = Math.round((boostedBoardPx / 8) * 0.85);
+  // Telefon yatayda tahta ekran YÜKSEKLİĞİNE göre ölçülür (taban YOK): oynamak
+  // için kaydırma gerekmesin diye ekranın büyük kısmını kaplar, skor tablosu
+  // ise yukarı kaydırılarak görülür (kullanıcı isteği).
+  // `viewportH - 108`: 108px, aşağıda yatay için sıkılaştırılmış başlık
+  // (tek satır skor + aksiyon butonları) + kart dolgusu payıdır.
+  const phoneLandscapeBoardPx = Math.round(Math.max(180, Math.min(viewportW * 0.5, viewportH - 108)));
+  // Tahta piksel ölçüsünü JS ile veren TEK kaynak — hem masaüstü büyütmesi
+  // hem telefon-yatay sığdırması buradan geçer.
+  const sizedBoardPx = desktopFullscreenBoost ? boostedBoardPx : (phoneLandscapeFullscreen ? phoneLandscapeBoardPx : null);
+  const hasSizedBoard = sizedBoardPx !== null;
+  // Taş glif boyutu piksel cinsinden sabitti — tahta büyüdükçe/küçüldükçe
+  // kareye göre orantısız kalmasın diye kare boyutuna (tahta/8) orantılı
+  // olarak yeniden hesaplanır.
+  const boostedPieceFontPx = Math.round((sizedBoardPx || boostedBoardPx) / 8 * 0.85);
 
   // Optimistic katman (101'deki rack sürüklemesiyle AYNI mantık): hamle oynanır
   // oynanmaz tahta yerelde ANINDA güncellenir, Firestore yazması arka planda
@@ -629,8 +645,10 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   return (
     <div
-      className={`relative flex flex-col items-center w-full ${desktopFullscreenBoost ? '' : 'max-w-xl md:max-w-2xl lg:max-w-3xl'} bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden`}
-      style={desktopFullscreenBoost ? { maxWidth: boostedCardPx, maxHeight: '94vh', overflowY: 'auto' } : undefined}
+      className={`relative flex flex-col items-center w-full overflow-hidden ${hasSizedBoard ? '' : 'max-w-xl md:max-w-2xl lg:max-w-3xl'} ${phoneLandscapeFullscreen ? 'p-1 gap-0.5' : 'bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl'}`}
+      style={desktopFullscreenBoost
+        ? { maxWidth: boostedCardPx, maxHeight: '94vh', overflowY: 'auto' }
+        : (phoneLandscapeFullscreen ? { maxWidth: phoneLandscapeBoardPx + 32 } : undefined)}
     >
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
 
@@ -654,8 +672,20 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       )}
       
-      {isBot && !isSpectator && <div className="text-center text-xs text-emerald-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty}){!isEngineReady && ' — Motor yükleniyor...'}</div>}
+      {isBot && !isSpectator && !phoneLandscapeFullscreen && <div className="text-center text-xs text-emerald-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty}){!isEngineReady && ' — Motor yükleniyor...'}</div>}
 
+      {/* Telefon YATAY tam ekranda skor tablosu TEK SATIRA iner (alınan taşlar
+          ve izleyici sayısı gizlenir): eskiden ~230px yer kaplayıp tahtayı
+          ekranın dışına itiyordu. */}
+      {phoneLandscapeFullscreen ? (
+        <div className="w-full flex items-center justify-center gap-2 bg-slate-900/80 rounded-lg px-2 py-1 border border-slate-700/50 text-xs">
+          <div className={`w-3 h-3 rounded-full border-2 shrink-0 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+          <span className="truncate max-w-[80px] font-bold text-slate-200">{p1Name}</span>
+          <span className="font-mono font-bold">{p1Score} — {p2Score}</span>
+          <span className="truncate max-w-[80px] font-bold text-slate-200">{p2Name}</span>
+          <div className={`w-3 h-3 rounded-full border-2 shrink-0 ${p2Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} />
+        </div>
+      ) : (
       <div className="w-full flex items-center justify-between bg-slate-900/80 rounded-xl p-3 border border-slate-700/50 mb-4 min-h-[70px]">
          <div className={`flex flex-col items-start flex-1 min-w-0 pr-2 p-1 rounded-lg transition-colors ${effective.turn === p1Uid ? 'bg-slate-700/50 ring-1 ring-emerald-400/50' : ''}`}>
             <div className="flex items-center gap-2 w-full"><div className={`w-4 h-4 rounded-full border-2 shrink-0 ${p1Color === 'w' ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-500'}`} /><div className="text-sm font-bold text-slate-200 truncate">{p1Name}</div></div>
@@ -675,13 +705,14 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
             </div>
          </div>
       </div>
+      )}
 
-      <div className="w-full flex justify-between items-center mb-2 min-h-[40px]">
+      <div className={`w-full flex justify-between items-center ${phoneLandscapeFullscreen ? 'my-1' : 'mb-2 min-h-[40px]'}`}>
          <div className="flex-1 flex justify-start items-center">
              {isSpectator && <button onClick={() => setSpectatorFlipped(!spectatorFlipped)} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded flex items-center gap-1 transition-colors"><ArrowUpDown className="w-3 h-3" /> Tahtayı Çevir</button>}
          </div>
          
-         <div className={`text-center font-bold text-lg drop-shadow-md flex-1 ${statusColor}`}>{statusMsg}</div>
+         <div className={`text-center font-bold drop-shadow-md flex-1 ${phoneLandscapeFullscreen ? 'text-xs' : 'text-lg'} ${statusColor}`}>{statusMsg}</div>
          
          <div className="flex-1 flex justify-end items-center gap-2">
             {!isSpectator && !effective.winner && (
@@ -715,8 +746,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       </div>
 
       <div
-        className={`relative w-full ${desktopFullscreenBoost ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 p-2 md:p-3 rounded-lg shadow-2xl mx-auto border border-slate-700`}
-        style={desktopFullscreenBoost ? { maxWidth: boostedBoardPx } : undefined}
+        className={`relative w-full ${hasSizedBoard ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 ${phoneLandscapeFullscreen ? 'p-1' : 'p-2 md:p-3'} rounded-lg shadow-2xl mx-auto border border-slate-700`}
+        style={hasSizedBoard ? { maxWidth: sizedBoardPx } : undefined}
         onMouseDown={handleBoardMouseDown} onContextMenu={(e) => e.preventDefault()}
       >
         {/* Konumu MUTLAK (absolute): akışa girmez, göründüğü/kaybolduğu anda
@@ -757,12 +788,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                 {isValidMove && cell && <div className={`absolute inset-0 border-[4px] md:border-[5px] rounded-full m-1 pointer-events-none ${isMyTurn ? 'border-black/20' : 'border-sky-500/40'}`} />}
                 {cell && (
                   <div
-                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : (isPremovePending ? 0.55 : 1), fontSize: desktopFullscreenBoost ? boostedPieceFontPx : undefined }}
+                    style={{ ...chessPieceStyle, touchAction: isDraggable ? 'none' : undefined, opacity: isBeingDragged ? 0 : (isPremovePending ? 0.55 : 1), fontSize: hasSizedBoard ? boostedPieceFontPx : undefined }}
                     onPointerDown={isDraggable ? (e) => handlePiecePointerDown(e, i, cell) : undefined}
                     onPointerMove={isDraggable ? handlePiecePointerMove : undefined}
                     onPointerUp={isDraggable ? handlePiecePointerUp : undefined}
                     onPointerCancel={isDraggable ? handlePiecePointerUp : undefined}
-                    className={`${desktopFullscreenBoost ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+                    className={`${hasSizedBoard ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >{CHESS_ICONS[cell.type]}</div>
                 )}
               </div>
@@ -782,8 +813,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         </div>
         {dragPiece && (
           <div
-            style={{ ...chessPieceStyle, position: 'fixed', left: dragPiece.x, top: dragPiece.y, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 9999, fontSize: desktopFullscreenBoost ? boostedPieceFontPx : undefined }}
-            className={`${desktopFullscreenBoost ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
+            style={{ ...chessPieceStyle, position: 'fixed', left: dragPiece.x, top: dragPiece.y, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 9999, fontSize: hasSizedBoard ? boostedPieceFontPx : undefined }}
+            className={`${hasSizedBoard ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-2xl select-none font-sans scale-125 ${dragPiece.piece.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
           >{CHESS_ICONS[dragPiece.piece.type]}</div>
         )}
         {/* FIX 12: Terfi Dialoguna Vazgeç Butonu Eklendi */}
