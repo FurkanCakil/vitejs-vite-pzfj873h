@@ -11,6 +11,7 @@ import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence from './hooks/usePresence.js';
 
 import useViewport from './hooks/useViewport.js';
+import useFitScale from './hooks/useFitScale.js';
 
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Lobby from './components/Lobby.jsx';
@@ -795,6 +796,15 @@ export default function App() {
     } catch (err) { console.error("Kopyalama hatası:", err); }
   };
 
+  // Telefonda tam ekranken tahtanın TAMAMI kaydırmadan görünsün istendi.
+  // 101 Okey ve Amiral Battı kendi düzenlerini zaten farklı yönetiyor, o
+  // yüzden sadece bu dört oyunda devreye girer — içerik ekran yüksekliğine
+  // sığmıyorsa oranlı küçültülür. Hook'lar (Rules of Hooks gereği) aşağıdaki
+  // `loadingAuth` erken return'ünden ÖNCE, koşulsuz çağrılmalı.
+  const fullscreenBoxRef = useRef(null);
+  const fitScaleActive = isFullscreen && (isPhone || isCompact) && ['xox', 'tavla', 'dama', 'connect4'].includes(roomData?.gameId);
+  const { innerRef: fitScaleRef, wrapperStyle: fitScaleWrapperStyle, innerStyle: fitScaleInnerStyle } = useFitScale(fitScaleActive, fullscreenBoxRef);
+
   if (loadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white"><Loader2 className="animate-spin w-8 h-8" /></div>;
 
   // 101 Okey ıstakası 15 sütunluk iki sıradan oluşuyor ve telefonda her piksel
@@ -860,7 +870,7 @@ export default function App() {
             <RoomHeader leaveRoom={leaveRoom} toggleFullscreen={toggleFullscreen} roomCode={roomCode} copyToClipboard={copyToClipboard} copySuccess={copySuccess} isBotGame={isBotGame} isPublicRoom={!!roomData?.isPublic} />
           )}
 
-          <div className={isFullscreen
+          <div ref={fullscreenBoxRef} className={isFullscreen
             ? `fixed inset-0 z-[5000] w-full h-[100dvh] bg-slate-900 overflow-y-auto overflow-x-hidden flex flex-col items-center ${(isCompact || isPhone) ? 'justify-start' : 'justify-center'} ${isOkeyTable ? (isCompact ? 'p-0' : 'p-1 sm:p-3') : 'p-2 sm:p-4'}`
             : `w-full bg-slate-800 ${okeyCompact ? 'h-full rounded-none border-0' : 'rounded-2xl border border-slate-700 shadow-2xl'} ${cardPadding} flex flex-col items-center relative transition-all duration-300`}>
             {isFullscreen && (
@@ -904,12 +914,16 @@ export default function App() {
             ) : (
               <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''}`}>
                  <ErrorBoundary>
-                   {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                   <div style={fitScaleWrapperStyle} className="w-full flex flex-col items-center">
+                     <div ref={fitScaleRef} style={fitScaleInnerStyle} className="w-full flex flex-col items-center">
+                       {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                       {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                       {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                       {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                     </div>
+                   </div>
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
-                   {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} />}
                  </ErrorBoundary>
               </div>
