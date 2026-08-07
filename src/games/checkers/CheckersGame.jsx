@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { getValidCheckersMoves, checkCheckersWinner, createInitialCheckersBoard } from './logic.js';
@@ -69,37 +69,22 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     return globalJumpExists ? mandatories : [];
   }, [board, isMyTurn, myColor, roomData.multiJumpIdx, roomData.winner]);
 
-  const handleSquareClick = async (index) => {
-    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
-
-    const piece = board[index];
-    
-    // GÜNCELLEME (Bug 8): Zorunlu yeme bildirimi eklendi
-    if (roomData.multiJumpIdx !== undefined && roomData.multiJumpIdx !== null && index !== roomData.multiJumpIdx && piece?.color === myColor) {
-        playSound('error'); // Uyarı sesi
-        // Animasyonlu uyarı için seçimi o taşa zorla
-        setSelectedSquare(roomData.multiJumpIdx); 
-        return; 
-    }
-
-    if (piece && piece.color === myColor) {
-      setSelectedSquare(index === selectedSquare ? null : index);
-      return;
-    }
-
-    const move = validMoves.find(m => m.to === index);
-    if (move) {
-      setIsSubmitting(true);
+  // Bir hamlenin UYGULANMASI. Hem tıklama hem SÜRÜKLE-BIRAK bu tek yoldan
+  // geçer — böylece iki etkileşim biçimi arasında kural farkı oluşamaz
+  // (taç, zincirleme yeme, blokaj, skor, kazanan tespiti hepsi burada).
+  const applyMove = async (fromIndex, move) => {
+    const index = move.to;
+    setIsSubmitting(true);
       try {
         const newBoard = [...board];
-        const movingPiece = { ...newBoard[selectedSquare] };
-        
+        const movingPiece = { ...newBoard[fromIndex] };
+
         const targetRow = Math.floor(index / 8);
         if (movingPiece.color === 'w' && targetRow === 0) movingPiece.isKing = true;
         if (movingPiece.color === 'b' && targetRow === 7) movingPiece.isKing = true;
 
         newBoard[index] = movingPiece;
-        newBoard[selectedSquare] = null;
+        newBoard[fromIndex] = null;
 
         let nextTurn = roomData.players.find(id => id !== user.uid) || null;
         let newMultiJumpIdx = null;
@@ -157,7 +142,168 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         setSelectedSquare(null);
       } catch (err) { console.error(err); }
       finally { setIsSubmitting(false); }
+  };
+
+  // Bu taşın ŞU AN oynanabilir olup olmadığı (kendi taşım mı, sıra bende mi,
+  // zincirleme yeme sürüyorsa doğru taş mı, geçerli hamlesi var mı).
+  // Sürükleme SADECE bu koşulları sağlayan taşlarda başlar.
+  const canPlayFrom = (index) => {
+    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return false;
+    const piece = board[index];
+    if (!piece || piece.color !== myColor) return false;
+    const chain = roomData.multiJumpIdx ?? null;
+    if (chain !== null && index !== chain) return false;
+    return getValidCheckersMoves(board, index, chain).length > 0;
+  };
+
+  const handleSquareClick = async (index) => {
+    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
+
+    const piece = board[index];
+
+    // GÜNCELLEME (Bug 8): Zorunlu yeme bildirimi eklendi
+    if (roomData.multiJumpIdx !== undefined && roomData.multiJumpIdx !== null && index !== roomData.multiJumpIdx && piece?.color === myColor) {
+        playSound('error'); // Uyarı sesi
+        // Animasyonlu uyarı için seçimi o taşa zorla
+        setSelectedSquare(roomData.multiJumpIdx);
+        return;
     }
+
+    if (piece && piece.color === myColor) {
+      setSelectedSquare(index === selectedSquare ? null : index);
+      return;
+    }
+
+    const move = validMoves.find(m => m.to === index);
+    if (move) await applyMove(selectedSquare, move);
+  };
+
+  // ==========================================================================
+  // SÜRÜKLE-BIRAK (kullanıcı isteği: taşlar tıklamayla oynandığı gibi
+  // sürüklenerek de oynanabilsin)
+  // ==========================================================================
+  // Tıklama yolu OLDUĞU GİBİ durur; bu yalnızca ikinci bir giriş biçimidir ve
+  // geçerlilik kontrolü için AYNI `getValidCheckersMoves` + `applyMove`
+  // ikilisini kullanır. Geçersiz bir kareye bırakmak hiçbir şey yapmaz (taş
+  // seçili kalır, oyuncu istersе tıklayarak devam eder).
+  //
+  // PERFORMANS: sürüklenen taşın ("ghost") KONUMU React state'iyle değil,
+  // doğrudan DOM'a (style.transform) yazılarak güncellenir — her piksel için
+  // tüm tahtayı yeniden çizmek telefonda takılmaya yol açardı (aynı yaklaşım:
+  // okey101/useDrawDrag.js). State yalnızca sürükleme BAŞLADIĞINDA ve hedef
+  // kare DEĞİŞTİĞİNDE güncellenir.
+  const dragRef = useRef(null);
+  const ghostElRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const [dragVisual, setDragVisual] = useState(null); // { from, piece, size, targets }
+  const [hoverSquare, setHoverSquare] = useState(null);
+
+  // useBoardScale'in ref'i ile kendi ölçüm ref'imizi birleştirir.
+  const boardElRef = useRef(null);
+  const setBoardRef = useCallback((el) => {
+    boardElRef.current = el;
+    boardRef.current = el;
+  }, [boardRef]);
+
+  const applyGhostPos = (x, y) => {
+    if (ghostElRef.current) ghostElRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  };
+  // Ghost YENİ mount olduğunda son bilinen konumu HEMEN uygula; aksi halde bir
+  // kare boyunca (0,0)'da görünüp sıçrar.
+  const ghostRef = useCallback((el) => {
+    ghostElRef.current = el;
+    const d = dragRef.current;
+    if (el && d) applyGhostPos(d.x, d.y);
+  }, []);
+
+  // Ekran koordinatını TAHTA KARESİNE çevirir. Ölçüm `getBoundingClientRect`
+  // ile yapılır: tahta `transform: scale()` ile büyütülmüş olsa da (bkz.
+  // useBoardScale) bu dikdörtgen ekranda GÖRÜNEN boyutu verdiği için hesap
+  // her iki modda da doğrudur.
+  const squareFromPoint = (x, y) => {
+    const el = boardElRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return null;
+    const col = Math.floor(((x - rect.left) / rect.width) * 8);
+    const row = Math.floor(((y - rect.top) / rect.height) * 8);
+    if (col < 0 || col > 7 || row < 0 || row > 7) return null;
+    const visualIdx = row * 8 + col;
+    // Siyah oyuncuda tahta 180° döner (bkz. visualIndices).
+    return isBlackPerspective ? 63 - visualIdx : visualIdx;
+  };
+
+  const endDrag = () => {
+    dragRef.current = null;
+    setDragVisual(null);
+    setHoverSquare(null);
+  };
+
+  const onSquarePointerDown = (index, e) => {
+    // Önceki etkileşimden kalmış olabilecek bayrağı temizle.
+    suppressClickRef.current = false;
+    if (e.button !== undefined && e.button !== 0) return; // sadece sol tuş
+    if (!canPlayFrom(index)) return;
+    const moves = getValidCheckersMoves(board, index, roomData.multiJumpIdx ?? null);
+    dragRef.current = {
+      from: index, pointerId: e.pointerId, moved: false,
+      startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY,
+      hover: null, moves,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  // Parmağın/farenin küçük titremeleri sürükleme sayılmamalı — bu eşiğin
+  // altındaki hareketler normal TIKLAMA olarak işlenir.
+  const DRAG_THRESHOLD_PX = 6;
+
+  const onSquarePointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    if (!d.moved) {
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < DRAG_THRESHOLD_PX) return;
+      d.moved = true;
+      const rect = boardElRef.current?.getBoundingClientRect();
+      setSelectedSquare(d.from); // sürüklerken geçerli hamle noktaları görünsün
+      setDragVisual({
+        from: d.from,
+        piece: board[d.from],
+        size: rect ? rect.width / 8 : 44,
+        targets: d.moves.map((m) => m.to),
+      });
+    }
+    d.x = e.clientX; d.y = e.clientY;
+    applyGhostPos(e.clientX, e.clientY);
+    const target = squareFromPoint(e.clientX, e.clientY);
+    if (target !== d.hover) { d.hover = target; setHoverSquare(target); }
+  };
+
+  const onSquarePointerUp = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    endDrag();
+    if (!d.moved) return; // hiç hareket etmedi: klasik tık, onClick halleder
+    // Sürüklemenin ardından tarayıcı bir `click` daha üretir; o, taşın
+    // seçimini kapatıp kullanıcıyı şaşırtmasın diye yutulur.
+    suppressClickRef.current = true;
+    const target = squareFromPoint(e.clientX, e.clientY);
+    if (target === null || target === d.from) return; // tahta dışı / yerine bırakma
+    const move = d.moves.find((m) => m.to === target);
+    if (move) applyMove(d.from, move);
+    // Geçersiz kareye bırakıldıysa hiçbir şey yapılmaz; taş seçili kaldığı
+    // için oyuncu tıklayarak devam edebilir.
+  };
+
+  const onSquarePointerCancel = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    endDrag();
+  };
+
+  const handleSquareClickGuarded = (index) => {
+    if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+    handleSquareClick(index);
   };
 
   // Bot rakip: sıra bota geldiğinde küçük bir gecikmeyle elini (zıplama zinciri dahil) tek seferde oynar.
@@ -286,19 +432,37 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
       )}
 
       <div ref={wrapRef} style={desktopFullscreenBoost ? { width: boostedBoardPx, margin: '0 auto' } : wrapStyle} className="w-full">
-        <div ref={boardRef} style={desktopFullscreenBoost ? { width: boostedBoardPx, height: boostedBoardPx } : boardStyle} className={`grid grid-cols-8 grid-rows-8 ${desktopFullscreenBoost ? '' : 'w-full max-w-[400px]'} aspect-square mx-auto bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation`}>
+        <div ref={setBoardRef} style={desktopFullscreenBoost ? { width: boostedBoardPx, height: boostedBoardPx } : boardStyle} className={`grid grid-cols-8 grid-rows-8 ${desktopFullscreenBoost ? '' : 'w-full max-w-[400px]'} aspect-square mx-auto bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800`}>
           {visualIndices.map((i) => {
             const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
             const isDark = (r + c) % 2 !== 0;
             const isSelected = selectedSquare === i || roomData.multiJumpIdx === i;
             const isValidMove = validMoves.some(m => m.to === i);
             const isMandatory = mandatoryPieces.includes(i); // <-- EKLENDİ
+            // Sürüklenen taşın kendi karesi: taş "elde" olduğu için yerinde
+            // soluk gösterilir (ghost imleci takip ediyor).
+            const isDragSource = dragVisual?.from === i;
+            // Parmağın/farenin ÜZERİNDE durduğu ve gerçekten oynanabilir olan
+            // kare vurgulanır — bırakmadan önce hamlenin geçerliliği görünür.
+            const isDropTarget = !!dragVisual && hoverSquare === i && dragVisual.targets.includes(i);
+            const draggableHere = canPlayFrom(i);
 
             return (
-              <div key={i} onClick={() => handleSquareClick(i)} className={`w-full h-full flex items-center justify-center relative cursor-pointer ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}>
+              <div
+                key={i}
+                onClick={() => handleSquareClickGuarded(i)}
+                onPointerDown={(e) => onSquarePointerDown(i, e)}
+                onPointerMove={onSquarePointerMove}
+                onPointerUp={onSquarePointerUp}
+                onPointerCancel={onSquarePointerCancel}
+                // Sürüklenebilir karelerde dokunmatik kaydırma kapatılır; aksi
+                // halde telefonda taşı sürüklemek sayfayı kaydırıyordu.
+                style={draggableHere ? { touchAction: 'none' } : undefined}
+                className={`w-full h-full flex items-center justify-center relative ${draggableHere ? 'cursor-grab' : 'cursor-pointer'} ${isDark ? 'bg-[#5c4033]' : 'bg-[#e0c9a6]'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''} ${isDropTarget ? 'ring-inset ring-4 ring-green-400 bg-green-400/25' : ''}`}
+              >
                 {isValidMove && !cell && <div className="w-4 h-4 bg-black/30 rounded-full" />}
                 {cell && (
-                  <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none transition-all ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'} ${isMandatory ? 'ring-4 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.9)] animate-pulse' : ''}`}>
+                  <div className={`w-[80%] h-[80%] rounded-full shadow-[0_4px_4px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center pointer-events-none transition-all ${cell.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'} ${isMandatory ? 'ring-4 ring-red-500 shadow-[0_0_20px_rgba(239,68,68,0.9)] animate-pulse' : ''} ${isDragSource ? 'opacity-30' : ''}`}>
                     {cell.isKing && <Crown className={`w-1/2 h-1/2 ${cell.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
                   </div>
                 )}
@@ -307,6 +471,27 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           })}
         </div>
       </div>
+
+      {/* Sürüklenen taş ("ghost"). Tahtanın DIŞINDA çizilir: tahtaya
+          `transform: scale()` uygulanabildiği için (bkz. useBoardScale), içine
+          konan bir `position: fixed` öğe ekrana değil TAHTAYA göre
+          konumlanır ve imlecin altından kaçardı. */}
+      {dragVisual?.piece && (
+        <div
+          ref={ghostRef}
+          className="fixed left-0 top-0 z-[4000] pointer-events-none flex items-center justify-center"
+          style={{
+            width: dragVisual.size,
+            height: dragVisual.size,
+            marginLeft: -dragVisual.size / 2,
+            marginTop: -dragVisual.size / 2,
+          }}
+        >
+          <div className={`w-[80%] h-[80%] rounded-full shadow-[0_8px_12px_rgba(0,0,0,0.6)] border-2 flex items-center justify-center scale-110 ${dragVisual.piece.color === 'w' ? 'bg-slate-200 border-white' : 'bg-slate-800 border-slate-900'}`}>
+            {dragVisual.piece.isKing && <Crown className={`w-1/2 h-1/2 ${dragVisual.piece.color === 'w' ? 'text-slate-800' : 'text-slate-300'}`} />}
+          </div>
+        </div>
+      )}
 
       {roomData.winner && roomData.status !== 'abandoned' && (
         <div className="w-full max-w-[400px] mt-6 flex flex-col items-center bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-slate-700/50 shadow-lg">
