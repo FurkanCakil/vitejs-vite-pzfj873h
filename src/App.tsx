@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
@@ -23,13 +23,26 @@ import DisconnectOverlay from './components/overlays/DisconnectOverlay.jsx';
 import LeftOverlay from './components/overlays/LeftOverlay.jsx';
 import SpectatePrompt from './components/overlays/SpectatePrompt.jsx';
 
-import TicTacToeGame from './games/xox/TicTacToeGame.jsx';
-import TavlaGame from './games/backgammon/TavlaGame.jsx';
-import ChessGame from './games/chess/ChessGame.jsx';
-import CheckersGame from './games/checkers/CheckersGame.jsx';
-import Okey101Game from './games/okey101/Okey101Game.jsx';
-import Connect4Game from './games/connect4/Connect4Game.jsx';
-import BattleshipGame from './games/battleship/BattleshipGame.jsx';
+// KOD BÖLME (code splitting) — oyun EKRANLARI ayrı paketlere ayrılır.
+//
+// NEDEN: Bu yedi bileşen STATİK import edildiğinde, lobiyi açan herkes
+// hepsini (toplamda ~8.000 satır JSX) tek bir dosyada indirmek zorunda
+// kalıyordu; oysa bir oturumda genelde tek bir oyun oynanır. `lazy` ile her
+// oyun kendi parçasına iner ve YALNIZCA o oyuna girildiğinde indirilir —
+// telefonda ilk açılış belirgin şekilde hızlanır.
+//
+// GÜVENLİK: Parça indirilemezse (mobil ağ kesintisi) `lazy` hata fırlatır;
+// bu hata zaten var olan <ErrorBoundary>'ye düşer ve kullanıcı "Masaya Geri
+// Dön" ile yeniden dener — sessiz bir boş ekran OLUŞMAZ. Oyun mantığı
+// (logic.js / bot.js dosyaları) aşağıda hâlâ statik import edilir; oda kurmak
+// için ana pakette gerekli oldukları için onlar bölünmez.
+const TicTacToeGame = lazy(() => import('./games/xox/TicTacToeGame.jsx'));
+const TavlaGame = lazy(() => import('./games/backgammon/TavlaGame.jsx'));
+const ChessGame = lazy(() => import('./games/chess/ChessGame.jsx'));
+const CheckersGame = lazy(() => import('./games/checkers/CheckersGame.jsx'));
+const Okey101Game = lazy(() => import('./games/okey101/Okey101Game.jsx'));
+const Connect4Game = lazy(() => import('./games/connect4/Connect4Game.jsx'));
+const BattleshipGame = lazy(() => import('./games/battleship/BattleshipGame.jsx'));
 
 import { createInitialBoard } from './games/backgammon/logic.js';
 import { createInitialChessBoard, getBoardStateString } from './games/chess/logic.js';
@@ -1154,6 +1167,17 @@ export default function App() {
             ) : (
               <div className={`w-full flex flex-col items-center ${okeyCompact ? 'h-full' : ''} ${isFullscreen && !isOkeyTable ? 'm-auto' : ''}`}>
                  <ErrorBoundary>
+                   {/* Oyun bileşenleri `lazy` olduğu için (bkz. yukarıdaki kod
+                       bölme notu) ilk açılışta parçaları inerken bu kısa
+                       yükleniyor göstergesi görünür. <ErrorBoundary> DIŞTA
+                       durur ki indirme başarısız olursa hata onun tarafından
+                       yakalansın. */}
+                   <Suspense fallback={(
+                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+                       <Loader2 className="w-10 h-10 animate-spin text-indigo-400" />
+                       <span className="text-sm font-medium">Oyun yükleniyor...</span>
+                     </div>
+                   )}>
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
@@ -1161,6 +1185,7 @@ export default function App() {
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} />}
+                   </Suspense>
                  </ErrorBoundary>
               </div>
             )}

@@ -65,17 +65,3 @@ export function checkConnect4Winner(board, lastRow, lastCol) {
   }
   return null;
 }
-
-// Tüm tahtayı (son hamleden bağımsız) tarar — sadece bir tahtayı SIFIRDAN
-// doğrulamak gerektiğinde (ör. gelecekte bot/test kullanımı) işe yarar; asıl
-// oyun akışı performans için `checkConnect4Winner` (son hamleye göre) kullanır.
-export function checkConnect4WinnerFullBoard(board) {
-  for (let row = 0; row < CONNECT4_ROWS; row++) {
-    for (let col = 0; col < CONNECT4_COLS; col++) {
-      if (!board[row * CONNECT4_COLS + col]) continue;
-      const result = checkConnect4Winner(board, row, col);
-      if (result) return result;
-    }
-  }
-  return null;
-}

@@ -165,15 +165,28 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
     finally { setIsSubmitting(false); }
   };
 
+  // Açılış zarları EŞİT çıkarsa sıfırlanıp yeniden atılır.
+  //
+  // KİM YAZAR? Bu efekt masadaki HER istemcide çalışır ve uyarı yazısı/sesi
+  // (showToast) herkeste görünmeye DEVAM EDER — orası değişmedi. Değişen tek
+  // şey SIFIRLAMA YAZIMI: eskiden iki oyuncu da aynı değeri aynı anda
+  // yazıyordu (gereksiz ikinci bir Firestore yazımı). Artık oda sahibi (host)
+  // 1.5sn sonra yazar, diğerleri 3sn'lik bir YEDEK zamanlayıcı kurar. Host'un
+  // yazımı geldiği anda `openingRolls` değişir, bu efekt yeniden çalışır ve
+  // yedek zamanlayıcı cleanup'ta temizlenir — yani normal akışta ikinci yazım
+  // HİÇ gerçekleşmez. Host'un bağlantısı koptuysa yedek devreye girer, yani
+  // eski çift-yazımın sağladığı "biri düşse de masa kilitlenmez" dayanıklılığı
+  // korunur.
+  const isRoomHost = roomData.host === user.uid;
   useEffect(() => {
      if (myPhase === 'opening' && roomData.openingRolls?.p1 && roomData.openingRolls?.p2 && roomData.openingRolls.p1 === roomData.openingRolls.p2) {
          showToast("Zarlar eşit! Tekrar atılacak.");
          const timer = setTimeout(() => {
              updateRoom({ openingRolls: { p1: null, p2: null } }).catch(()=>{});
-         }, 1500);
+         }, isRoomHost ? 1500 : 3000);
          return () => clearTimeout(timer);
      }
-  }, [roomData.openingRolls?.p1, roomData.openingRolls?.p2, myPhase, roomCode, appId, db]);
+  }, [roomData.openingRolls?.p1, roomData.openingRolls?.p2, myPhase, roomCode, appId, db, isRoomHost]);
 
   // ============================================================
   // BOT OTOMASYONU (yalnızca isBot=true iken çalışır)

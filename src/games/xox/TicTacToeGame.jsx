@@ -25,25 +25,34 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
-  if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isPlayer1 = roomData.players[0] === user.uid;
-  const isPlayer2 = roomData.players?.[1] === user.uid;
+  // RULES OF HOOKS: "Veri henüz gelmediyse bekle" kontrolü ESKİDEN tam burada,
+  // `return null` şeklinde ERKEN bir çıkıştı — oysa `useState(isSubmitting)` ve
+  // aşağıdaki bot `useEffect`'i onun ALTINDA kalıyordu. Koşul bir kez bile
+  // gerçekleşseydi o render'da 2 hook eksik çalışır, bir sonraki render'da React
+  // "Rendered fewer hooks than expected" diyerek TÜM ekranı çökertirdi.
+  // Kontrol artık TÜM hook çağrılarından SONRA yapılıyor (bkz. aşağıdaki
+  // `if (!players) return null;`). Görünen davranış birebir aynı: veri yoksa
+  // yine `null` render edilir. Bu satırla o kontrol arasındaki türetmeler bu
+  // yüzden eksik veriye dayanıklı (`?.`) yazılmıştır.
+  const players = roomData?.players;
+  const isPlayer1 = players?.[0] === user.uid;
+  const isPlayer2 = players?.[1] === user.uid;
   const isSpectator = !isPlayer1 && !isPlayer2;
   const mySymbol = isPlayer1 ? 'X' : (isPlayer2 ? 'O' : null);
-  const isMyTurn = roomData.turn === user.uid;
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isMyTurn = roomData?.turn === user.uid;
 
   const updateRoom = async (patch) => {
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
 
-  const p1Uid = roomData.players[0]; const p2Uid = roomData.players?.[1];
-  const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
-  const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
-  
-  const board = roomData.board || Array(9).fill(null); // GÜVENLİK: Tahta boşsa çökme
+  const p1Uid = players?.[0]; const p2Uid = players?.[1];
+  const p1Name = roomData?.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData?.playerNames?.[p2Uid] || 'Oyuncu 2';
+  const p1Score = roomData?.scores?.[p1Uid] || 0; const p2Score = roomData?.scores?.[p2Uid] || 0;
+
+  const board = roomData?.board || Array(9).fill(null); // GÜVENLİK: Tahta boşsa çökme
 
   const handleMove = async (index) => {
     if (!isMyTurn || isSpectator || board[index] || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
@@ -61,8 +70,11 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   };
 
   // Bot rakip: sıra bota geldiğinde küçük bir gecikmeyle hamlesini oynar.
+  // NOT: Veri henüz gelmemişse `isSpectator` true olur (iki koltuk da eşleşmez)
+  // ve efekt daha ilk satırda çıkar — yani aşağıdaki gövde asla eksik veriyle
+  // çalışmaz.
   useEffect(() => {
-    if (!isBot || isSpectator || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    if (!isBot || isSpectator || roomData?.turn !== BOT_UID || roomData?.winner || roomData?.status === 'abandoned') return;
     const timer = setTimeout(() => {
       const botSymbol = p1Uid === user.uid ? 'O' : 'X';
       const humanSymbol = botSymbol === 'O' ? 'X' : 'O';
@@ -75,7 +87,12 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
       updateRoom(up);
     }, 500 + Math.random() * 400);
     return () => clearTimeout(timer);
-  }, [isBot, roomData.turn, roomData.winner, roomData.status]);
+  }, [isBot, roomData?.turn, roomData?.winner, roomData?.status]);
+
+  // GÜVENLİK: Veri henüz gelmediyse bekle. Bu kontrol BİLEREK burada — yani son
+  // hook'tan SONRA — duruyor (bkz. yukarıdaki "RULES OF HOOKS" notu). Buradan
+  // aşağısı `roomData` ve `players` dolu olduğunu güvenle varsayabilir.
+  if (!players) return null;
 
   const requestRematch = async () => {
     if (isSpectator) return;

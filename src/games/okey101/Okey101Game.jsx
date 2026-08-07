@@ -833,7 +833,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // ref, `roomData.openedHands`/`okeyInfo` REFERANSI değişmediği sürece
   // (yani gerçekten yeni bir Firestore verisi gelmediği sürece) sonucu
   // önbellekte tutan elle yazılmış bir memoizasyondur.
-  const openEndsCacheRef = useRef({ opened: null, okeyInfoRef: null, map: {} });
+  const openEndsCacheRef = useRef({ signature: null, map: {} });
 
   // 6. madde: uzun basılarak ters çevrilen (bkz. PlayerRack) Okey taşının
   // durumu BURADA (PlayerRack'in İÇİNDE değil) tutulur. Sebep: alt-tab
@@ -2316,13 +2316,38 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // sürüklemeye açılır — masanın şekli sabit kaldığı için "nereye ne
   // işlenebilir" bilgisi her zaman okunabilir.
   {
+    // ÖNBELLEK ANAHTARI ARTIK REFERANS DEĞİL, İÇERİK.
+    //
+    // Eski hâli `cache.opened !== view.openedHands || cache.okeyInfoRef !== okeyInfo`
+    // idi — yani NESNE REFERANSI karşılaştırıyordu. Firestore `onSnapshot` her
+    // pakette (ilgisiz bir alan değişse bile) iç içe nesneleri YENİDEN ürettiği
+    // için bu iki referans sürekli değişiyor, dolayısıyla önbellek pratikte HİÇ
+    // tutmuyordu: pahalı `getGroupOpenEnds` taraması (her per için 1..13 arası
+    // taşları iki uçta deneyen doğrulama) her snapshot'ta baştan çalışıyordu.
+    //
+    // İmzanın DOĞRULUĞU: `getGroupOpenEnds` SAF bir fonksiyondur ve yalnızca
+    // (tiles, type, okeyInfo) üçlüsüne bağlıdır — üçü de imzada var. Taş
+    // kimlikleri `tiles.js#createTileSet` içinde İÇERİKTEN deterministik
+    // üretilir (aynı `id` her elde aynı renk+sayı demektir), bu yüzden id
+    // listesi taşların içeriğini eksiksiz temsil eder. `okeyInfo` da
+    // `{color, number}`den ibarettir (bkz. computeOkeyInfo).
+    //
+    // MALİYET: imza, masadaki taş sayısı kadar string birleştirmedir; kaçındığı
+    // taramanın yanında ihmal edilebilir.
+    const signature = `${okeyInfo?.color ?? ''}#${okeyInfo?.number ?? ''}|`
+      + Object.entries(view.openedHands || {})
+        .flatMap(([uid, groups]) => (groups || []).map((g, gi) => (
+          `${uid}:${gi}:${g?.type ?? ''}:${(g?.tiles || []).map((t) => t?.id).join(',')}`
+        )))
+        .sort()
+        .join('|');
     const cache = openEndsCacheRef.current;
-    if (cache.opened !== view.openedHands || cache.okeyInfoRef !== okeyInfo) {
+    if (cache.signature !== signature) {
       const map = {};
       Object.entries(view.openedHands || {}).forEach(([uid, groups]) => {
         (groups || []).forEach((g, gi) => { map[`${uid}:${gi}`] = getGroupOpenEnds(g.tiles, g.type, okeyInfo); });
       });
-      openEndsCacheRef.current = { opened: view.openedHands, okeyInfoRef: okeyInfo, map };
+      openEndsCacheRef.current = { signature, map };
     }
   }
   const openEndsMap = openEndsCacheRef.current.map;

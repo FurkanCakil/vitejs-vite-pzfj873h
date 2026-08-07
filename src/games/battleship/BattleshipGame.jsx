@@ -168,7 +168,16 @@ function applyDotPathPatch(prev, patch) {
 // `setLocalRoomData` üzerinden tamamen YEREL state güncellemesine döner
 // (bkz. `updateRoom`) — gerçek çok oyunculu (Firestore) akışa HİÇ dokunulmaz.
 export default function BattleshipGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, setLocalRoomData }) {
-  if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
+  // RULES OF HOOKS: "Veri henüz gelmediyse bekle" kontrolü ESKİDEN tam burada,
+  // `return null` şeklinde ERKEN bir çıkıştı — oysa bu bileşende ondan SONRA
+  // ~25 hook (useState/useRef/useEffect/useMemo) çağrılıyor. Koşul bir kez bile
+  // gerçekleşseydi o render'da hepsi atlanır, bir sonraki render'da React
+  // "Rendered fewer hooks than expected" diyerek TÜM ekranı çökertirdi.
+  // Kontrol artık TÜM hook çağrılarından SONRA yapılıyor (bkz. aşağıdaki
+  // `if (!players) return null;`). Görünen davranış birebir aynı: veri yoksa
+  // yine `null` render edilir. Bu satırla o kontrol arasındaki türetmeler bu
+  // yüzden eksik veriye dayanıklı (`?.`) yazılmıştır.
+  const players = roomData?.players;
 
   const roomRef = isBot ? null : doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
 
@@ -182,15 +191,15 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     await updateDoc(roomRef, patch);
   };
 
-  const isPlayer1 = roomData.players[0] === user.uid;
-  const isPlayer2 = roomData.players?.[1] === user.uid;
+  const isPlayer1 = players?.[0] === user.uid;
+  const isPlayer2 = players?.[1] === user.uid;
   const isSpectator = !isPlayer1 && !isPlayer2;
 
-  const opponentUid = roomData.players.find((uid) => uid !== user.uid) || null;
-  const myName = roomData.playerNames?.[user.uid] || 'Sen';
-  const opponentName = roomData.playerNames?.[opponentUid] || 'Rakip';
-  const myScore = roomData.scores?.[user.uid] || 0;
-  const opponentScore = roomData.scores?.[opponentUid] || 0;
+  const opponentUid = players?.find((uid) => uid !== user.uid) || null;
+  const myName = roomData?.playerNames?.[user.uid] || 'Sen';
+  const opponentName = roomData?.playerNames?.[opponentUid] || 'Rakip';
+  const myScore = roomData?.scores?.[user.uid] || 0;
+  const opponentScore = roomData?.scores?.[opponentUid] || 0;
 
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -202,13 +211,13 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   const toastColors = { red: 'bg-red-500/95 border-red-400', amber: 'bg-amber-500/95 border-amber-400', emerald: 'bg-emerald-500/95 border-emerald-400' };
 
-  const amIReady = !!roomData.readyPlayers?.[user.uid];
-  const isOpponentReady = !!roomData.readyPlayers?.[opponentUid];
+  const amIReady = !!roomData?.readyPlayers?.[user.uid];
+  const isOpponentReady = !!roomData?.readyPlayers?.[opponentUid];
 
   // ============================================================
   // FAZ 1: gemi yerleştirme state'i (bkz. üstteki dosya notu)
   // ============================================================
-  const [placedShips, setPlacedShips] = useState(() => roomData.ships?.[user.uid] || []);
+  const [placedShips, setPlacedShips] = useState(() => roomData?.ships?.[user.uid] || []);
   const [selectedShipId, setSelectedShipId] = useState(null);
   const [pendingOrientation, setPendingOrientation] = useState('H');
   const [hoverOrigin, setHoverOrigin] = useState(null);
@@ -228,16 +237,16 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // geçtiğinde (yeni bir el başladığında) bu yerel yerleştirme state'i de
   // burada senkron sıfırlanır. Aksi halde bir önceki elden kalma gemiler yeni
   // yerleştirme ekranında "zaten yerleştirilmiş" gibi hayalet olarak kalırdı.
-  const prevSetupPhaseRef = useRef(roomData.setupPhase);
+  const prevSetupPhaseRef = useRef(roomData?.setupPhase);
   useEffect(() => {
-    if (roomData.setupPhase && !prevSetupPhaseRef.current) {
-      setPlacedShips(roomData.ships?.[user.uid] || []);
+    if (roomData?.setupPhase && !prevSetupPhaseRef.current) {
+      setPlacedShips(roomData?.ships?.[user.uid] || []);
       setSelectedShipId(null);
       setHoverOrigin(null);
       setShipMenu(null);
     }
-    prevSetupPhaseRef.current = roomData.setupPhase;
-  }, [roomData.setupPhase, roomData.ships, user.uid]);
+    prevSetupPhaseRef.current = roomData?.setupPhase;
+  }, [roomData?.setupPhase, roomData?.ships, user.uid]);
 
   const setupLocked = amIReady || isSaving;
 
@@ -582,12 +591,15 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // ============================================================
   // FAZ 2: atış / batırma / kazanma
   // ============================================================
-  const isPlaying = !roomData.setupPhase;
-  const myShots = roomData.shots?.[user.uid] || [];
-  const opponentShots = roomData.shots?.[opponentUid] || [];
-  const myShips = roomData.ships?.[user.uid] || [];
-  const opponentShips = roomData.ships?.[opponentUid] || [];
-  const isMyTurn = isPlaying && roomData.turn === user.uid && !roomData.winner;
+  // NOT: `isPlaying`, veri henüz gelmemişken de `true` olabilir (`setupPhase`
+  // undefined) — ama o durumda aşağıdaki diziler boş kalır ve bu bölümdeki
+  // efektler zararsız çalışır; asıl render `if (!players)` kontrolüne takılır.
+  const isPlaying = !roomData?.setupPhase;
+  const myShots = roomData?.shots?.[user.uid] || [];
+  const opponentShots = roomData?.shots?.[opponentUid] || [];
+  const myShips = roomData?.ships?.[user.uid] || [];
+  const opponentShips = roomData?.ships?.[opponentUid] || [];
+  const isMyTurn = isPlaying && roomData?.turn === user.uid && !roomData?.winner;
 
   const myShotMap = {}; myShots.forEach((s) => { myShotMap[cellKey(s.row, s.col)] = s; });
   const opponentShotMap = {}; opponentShots.forEach((s) => { opponentShotMap[cellKey(s.row, s.col)] = s; });
@@ -646,12 +658,12 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
 
   const prevWinnerRef = useRef(null);
   useEffect(() => {
-    if (roomData.winner && prevWinnerRef.current !== roomData.winner) {
+    if (roomData?.winner && prevWinnerRef.current !== roomData.winner) {
       playSound(roomData.winner === user.uid ? 'win' : 'error');
       prevWinnerRef.current = roomData.winner;
     }
-    if (!roomData.winner) prevWinnerRef.current = null;
-  }, [roomData.winner, user.uid]);
+    if (!roomData?.winner) prevWinnerRef.current = null;
+  }, [roomData?.winner, user.uid]);
 
   const handleShoot = async (row, col) => {
     if (!isMyTurn) return;
@@ -694,8 +706,10 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // ÇALINMAMASI: bu ses zaten `opponentShots` büyüdüğünde (bkz. yukarıdaki
   // reaktif useEffect) otomatik tetikleniyor; burada da çalınsaydı ses İKİ KEZ
   // duyulurdu (bot modu tamamen yerel/tek istemci olduğu için).
+  // NOT: Veri henüz gelmemişse `isSpectator` true olur (iki koltuk da eşleşmez)
+  // ve efekt daha ilk satırda çıkar — gövde asla eksik veriyle çalışmaz.
   useEffect(() => {
-    if (!isBot || isSpectator || !isPlaying || roomData.turn !== BOT_UID || roomData.winner || roomData.status === 'abandoned') return;
+    if (!isBot || isSpectator || !isPlaying || roomData?.turn !== BOT_UID || roomData?.winner || roomData?.status === 'abandoned') return;
     const timer = setTimeout(() => {
       const botShots = roomData.shots?.[BOT_UID] || [];
       const humanShips = roomData.ships?.[user.uid] || [];
@@ -730,7 +744,12 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     // için, sıra hâlâ botta olduğu sürece efekt bir sonraki atış için de
     // güvenilir şekilde yeniden çalışır.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBot, roomData.turn, roomData.winner, roomData.status, isPlaying, roomData.shots?.[BOT_UID]?.length]);
+  }, [isBot, roomData?.turn, roomData?.winner, roomData?.status, isPlaying, roomData?.shots?.[BOT_UID]?.length]);
+
+  // GÜVENLİK: Veri henüz gelmediyse bekle. Bu kontrol BİLEREK burada — yani son
+  // hook'tan SONRA — duruyor (bkz. bileşenin başındaki "RULES OF HOOKS" notu).
+  // Buradan aşağısı `roomData` ve `players` dolu olduğunu güvenle varsayabilir.
+  if (!players) return null;
 
   const requestRematch = async () => {
     if (isSpectator) return;
