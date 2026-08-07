@@ -21,6 +21,26 @@ const LEGACY_MUTE_KEY = 'okeySoundMuted';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+// KULAK SESİ DOĞRUSAL DEĞİL, LOGARİTMİK ALGILAR: çubuğun konumunu (0..1)
+// doğrudan `GainNode.gain`e (genlik çarpanı) yazmak, kullanıcının yaşadığı
+// tam olarak şu hissi verir — "100'de gürültülü, 30'a indirsem bile hemen
+// hemen aynı yükseklikte". Sebep: genlik 0.3 sadece ~-10.5dB'lik bir azalma
+// demektir ve kulak bunu "biraz kısıldı" olarak duyar, "belirgin şekilde
+// kısıldı" değil (algılanan yükseklik yaklaşık her -10dB'de YARIYA iner).
+//
+// Çözüm: çubuk konumunu ÖNCE desibel cinsinden doğrusal bir aralığa
+// (0dB..MIN_DB), SONRA o desibeli gerçek genliğe çeviriyoruz. Böylece çubuğu
+// eşit adımlarla hareket ettirmek KULAĞA eşit adımlı bir yükseklik değişimi
+// gibi gelir. `MIN_DB = -40`, çubuk neredeyse dibe vurduğunda (ama TAM sıfır
+// değilken) "duyulur duyulmaz" bir seviyeye karşılık gelir; tam sıfırda ise
+// (aşağıdaki özel durum) ses TAMAMEN kesilir.
+const MIN_DB = -40;
+function sliderToGain(v) {
+  const vv = clamp01(v);
+  if (vv <= 0) return 0;
+  return Math.pow(10, (MIN_DB / 20) * (1 - vv));
+}
+
 function readInitialVolume() {
   try {
     const raw = localStorage.getItem(VOLUME_KEY);
@@ -48,8 +68,10 @@ export function setVolume(next) {
   try { localStorage.setItem(VOLUME_KEY, String(v)); } catch { /* yok say */ }
   if (master && ctx) {
     // `setValueAtTime` yerine kısa bir rampa: sürgü sürüklenirken her adımda
-    // ani sıçrama yapılırsa o an çalan sesler "çıt" diye kırılır.
-    try { master.gain.setTargetAtTime(v, ctx.currentTime, 0.01); } catch { /* yok say */ }
+    // ani sıçrama yapılırsa o an çalan sesler "çıt" diye kırılır. Düğüme
+    // yazılan değer çubuğun HAM konumu değil, `sliderToGain` ile algısal
+    // olarak doğrusallaştırılmış gerçek genliktir.
+    try { master.gain.setTargetAtTime(sliderToGain(v), ctx.currentTime, 0.01); } catch { /* yok say */ }
   }
   listeners.forEach((fn) => { try { fn(v); } catch { /* dinleyici hatası sesi bozmasın */ } });
 }
@@ -70,7 +92,7 @@ export function getAudioContext() {
       if (!Ctor) return null;
       ctx = new Ctor();
       master = ctx.createGain();
-      master.gain.setValueAtTime(volume, ctx.currentTime);
+      master.gain.setValueAtTime(sliderToGain(volume), ctx.currentTime);
       master.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') ctx.resume();
