@@ -1463,7 +1463,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       // oturan) ya da Okey bir taş atılırsa, atan oyuncuya +101 ceza yazılır
       // (tur/eli bitiren atışlar hariç — o puanlama computeRoundEnd'de ayrı
       // ele alınıyor, üstüne ayrıca bu ceza eklenmez). İkisi AYRI durumlardır
-      // ve oyuncuya da ayrı ayrı bildirilir.
+      // ve oyuncuya da ayrı ayrı bildirilir. Sahte Okey'in kendine özgü bir
+      // ayrıcalığı/cezası YOKTUR (kullanıcı isteği) — o da tıpkı diğer taşlar
+      // gibi sadece gerçekten işlekse (findTackableSpotsForTile'a yakalanırsa)
+      // cezalandırılır.
       const discardedOkey = isOkeyTile(tile, okeyNow);
       const tackSpots = discardedOkey ? [] : findTackableSpotsForTile(tile, data.openedHands || {}, okeyNow);
       const discardedTackable = !discardedOkey && tackSpots.length > 0;

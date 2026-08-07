@@ -551,7 +551,14 @@ export function findJokerReplacements(groupTiles, groupType, newTile, okeyInfo) 
 //   b) içindeki bir Okey'in YERİNE geçebiliyorsa (seri/set/ÇİFT — bkz.
 //      findJokerReplacements; ör. mavi+sarı+kırmızı 13 + Okey açıksa siyah 13,
 //      ya da kırmızı 13 + Okey çifti açıksa diğer kırmızı 13),
-// o taş işlektir. Okey/Sahte Okey taşının kendisi de HER ZAMAN işlek sayılır.
+// o taş işlektir. Okey taşının kendisi de HER ZAMAN işlek sayılır.
+// NOT: Sahte Okey bu koşulsuz korumaya DAHİL DEĞİLDİR — kullanıcı isteği:
+// "Sahte Okey'in bizim yazdığımız oyun kurallarına göre hiçbir ekstra
+// özelliği yok"; bu oyunda joker DEĞİLDİR (bkz. tiles.js#isOkeyTile), sadece
+// o elin Okey'inin renk/sayısını SABİT olarak temsil eden normal bir taştır.
+// Dolayısıyla Sahte Okey de diğer HER taş gibi yalnızca (a)/(b) koşullarını
+// sağlıyorsa (yani gerçekten bir pere işliyorsa) korunur — kendine özgü
+// koşulsuz bir istisnası yoktur.
 // Bu, "işlek ya da Okey bir taş atan oyuncuya +101 ceza yazılır" kuralını
 // uygulamak için kullanılır (bkz. handleDiscardTile).
 export function isTileTackable(tile, openedHandsAllPlayers, okeyInfo) {
