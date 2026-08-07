@@ -1,12 +1,16 @@
-let audioCtx = null;
+// Ses bağlamı ve seviye kontrolü artık TEK merkezden gelir (bkz. audioBus.js):
+// bu modül kendi AudioContext'ini açmaz ve doğrudan `destination`'a bağlanmaz,
+// böylece lobideki/oyunlardaki ses çubuğu bu efektleri de kapsar.
+import { getAudioContext, getMaster, isMuted } from './audioBus.js';
 
 export const playSound = (type) => {
   try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (isMuted()) return; // sessizken ses bağlamını hiç uyandırma
+    const audioCtx = getAudioContext();
+    if (!audioCtx) return;
     const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-    osc.connect(gain); gain.connect(audioCtx.destination); const now = audioCtx.currentTime;
-    
+    osc.connect(gain); gain.connect(getMaster()); const now = audioCtx.currentTime;
+
     if (type === 'move') { 
       osc.type = 'sine'; osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
       gain.gain.setValueAtTime(1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1); osc.start(now); osc.stop(now + 0.1);

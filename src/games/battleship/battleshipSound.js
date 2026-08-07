@@ -12,16 +12,13 @@
 // yorum). Sadece geminin SAHİBİNİN kendi ekranında (kendi tahtası zaten
 // tamamen görünür olduğu için bilgi sızıntısı olmadan) çalan `ownShipSunk`
 // bu kuralın istisnasıdır.
-let ctx = null;
+// Ses bağlamı ve seviye kontrolü TEK merkezden gelir (bkz. utils/audioBus.js).
+import { getAudioContext, getMaster, isMuted } from '../../utils/audioBus.js';
+
 let noiseBuffer = null;
 
 function audio() {
-  if (typeof window === 'undefined') return null;
-  try {
-    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === 'suspended') ctx.resume();
-    return ctx;
-  } catch { return null; }
+  return getAudioContext();
 }
 
 // Beyaz gürültü tamponu (bir kez üretilip tüm efektlerde paylaşılır).
@@ -78,7 +75,7 @@ function noiseBurst(ac, t0, { type = 'lowpass', freq, freqEnd, q, vol, dur, driv
   } else {
     filt.connect(g);
   }
-  g.connect(ac.destination);
+  g.connect(getMaster());
   src.start(t0); src.stop(t0 + dur + 0.02);
 }
 
@@ -92,7 +89,7 @@ function thump(ac, t0, { freq = 90, vol = 0.7, dur = 0.18 } = {}) {
   osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq * 0.4), t0 + dur);
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
-  osc.connect(g); g.connect(ac.destination);
+  osc.connect(g); g.connect(getMaster());
   osc.start(t0); osc.stop(t0 + dur);
 }
 
@@ -108,7 +105,7 @@ function subBoom(ac, t0, { freq = 160, freqEnd = 32, vol = 0.9, dur = 0.42 } = {
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
   g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur);
-  osc.connect(g); g.connect(ac.destination);
+  osc.connect(g); g.connect(getMaster());
   osc.start(t0); osc.stop(t0 + dur + 0.02);
 }
 
@@ -167,7 +164,7 @@ function readyChime(ac) {
     g.gain.setValueAtTime(0.0001, t0 + at);
     g.gain.exponentialRampToValueAtTime(0.2, t0 + at + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0005, t0 + at + dur);
-    osc.connect(g); g.connect(ac.destination);
+    osc.connect(g); g.connect(getMaster());
     osc.start(t0 + at); osc.stop(t0 + at + dur + 0.02);
   });
 }
@@ -189,6 +186,7 @@ const SOUNDS = { hit: explosionHit, miss: splashMiss, ownShipSunk, ready: readyC
 
 export function playBattleshipSound(type) {
   try {
+    if (isMuted()) return; // sessizken ses bağlamını hiç uyandırma
     const fn = SOUNDS[type];
     if (!fn) return;
     const ac = audio();

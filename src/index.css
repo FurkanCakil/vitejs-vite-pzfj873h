@@ -1,3 +1,61 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* --- Ses seviyesi çubuğu (bkz. components/VolumeControl.jsx) --------------
+   Tarayıcıların yerel `input[type=range]` görünümü platformdan platforma
+   (özellikle iOS'ta parlak mavi) tamamen farklı ve uygulamanın koyu temasıyla
+   uyumsuz. Bu yüzden çubuk sıfırdan çizilir: dolu kısım (seviye) indigo,
+   kalanı koyu gri; tutamaç dokunmatikte rahat yakalanacak büyüklükte.
+   Doluluk oranı bileşen tarafından `--vol-fill` CSS değişkeniyle verilir. */
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;              /* dokunma alanı — görsel çubuk daha ince */
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;        /* sürüklerken sayfa kaymasın */
+}
+.volume-slider:focus { outline: none; }
+
+.volume-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #6366f1 0%,
+    #6366f1 var(--vol-fill, 100%),
+    #334155 var(--vol-fill, 100%),
+    #334155 100%
+  );
+}
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;          /* 6px'lik ray üzerinde ortalar */
+  border-radius: 9999px;
+  background: #e2e8f0;
+  border: 2px solid #6366f1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.volume-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: #334155;
+}
+.volume-slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 9999px;
+  background: #6366f1;
+}
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #e2e8f0;
+  border: 2px solid #6366f1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}

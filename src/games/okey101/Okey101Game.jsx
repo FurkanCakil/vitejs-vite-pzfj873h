@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, getDocFromServer, updateDoc, runTransaction, deleteField } from 'firebase/firestore';
-import { Loader2, Volume2, VolumeX, UserPlus } from 'lucide-react';
+import { Loader2, UserPlus } from 'lucide-react';
 import Okey101Lobby from './Okey101Lobby.jsx';
 import PlayerRack, { maxRackContentWidth } from './PlayerRack.jsx';
 import OpponentStrip from './OpponentStrip.jsx';
@@ -10,7 +10,7 @@ import RoundResultBoard from './RoundResultBoard.jsx';
 import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
-import { playOkeySound, isOkeySoundMuted, setOkeySoundMuted, subscribeOkeySoundMuted } from '../../utils/okeySound.js';
+import { playOkeySound } from '../../utils/okeySound.js';
 import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
@@ -297,10 +297,6 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // da sayfayı yenileyen biri, çoktan olup bitmiş hamlelerin seslerini
   // topluca duymasın diye.
   const soundRefs = useRef({ discardCount: null, openedCount: null, roundEnded: null, roundKey: undefined, drawPileLen: null, tackCount: null, tackSignature: null });
-
-  // Ses aç/kapa tercihi (tarayıcıda kalıcı — bkz. okeySound#setOkeySoundMuted).
-  const [soundMuted, setSoundMuted] = useState(() => isOkeySoundMuted());
-  useEffect(() => subscribeOkeySoundMuted(setSoundMuted), []);
 
   // Atış sesi: masadaki TÜM atış yığınlarının toplam uzunluğu her arttığında
   // (yani biri taş attığında) bir kez çalar. Tek tek oyuncu takip etmek yerine
@@ -2513,18 +2509,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         <span className={`text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full ${assisted ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300' : 'bg-slate-900/80 border-slate-700 text-slate-500'}`}>
           {assisted ? 'Yardımlı' : 'Yardımsız'}
         </span>
-        {/* Ses aç/kapa. Sarmalayıcı `pointer-events-none` olduğu için buton
-            kendi üzerinde bunu geri açar. Tercih tarayıcıda saklanır. */}
-        <button
-          type="button"
-          onClick={() => setOkeySoundMuted(!soundMuted)}
-          title={soundMuted ? 'Sesi aç' : 'Sesi kapat'}
-          aria-label={soundMuted ? 'Sesi aç' : 'Sesi kapat'}
-          className={`pointer-events-auto flex items-center gap-1 text-[8px] sm:text-[9px] font-bold uppercase tracking-wider border px-1.5 py-0.5 rounded-full transition-colors ${soundMuted ? 'bg-slate-900/80 border-slate-700 text-slate-500 hover:text-slate-300' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'}`}
-        >
-          {soundMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
-          {soundMuted ? 'Ses Kapalı' : 'Ses Açık'}
-        </button>
+        {/* NOT: Buradaki eski "Ses Açık/Kapalı" rozeti KALDIRILDI. Ses artık
+            uygulamanın TAMAMINDA tek bir seviye çubuğuyla yönetiliyor
+            (bkz. components/VolumeControl.jsx): normal görünümde üst başlıkta,
+            tam ekran/telefon-yatay modlarda ise ekrana sabitlenmiş halde
+            App.tsx tarafından çiziliyor. */}
       </div>
 
       {roomData.roundEnded && (

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useRef } from 'react';
-import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize } from 'lucide-react';
+import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
 
@@ -12,9 +12,12 @@ import usePresence from './hooks/usePresence.js';
 
 import useViewport from './hooks/useViewport.js';
 
+import { getPlayerId, formatPlayerId, lineupKey, byToken, byUid } from './utils/playerId.js';
+
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Lobby from './components/Lobby.jsx';
 import RoomHeader from './components/RoomHeader.jsx';
+import VolumeControl from './components/VolumeControl.jsx';
 import DisconnectOverlay from './components/overlays/DisconnectOverlay.jsx';
 import LeftOverlay from './components/overlays/LeftOverlay.jsx';
 import SpectatePrompt from './components/overlays/SpectatePrompt.jsx';
@@ -66,6 +69,9 @@ const sessionRoomStorage = {
 };
 
 export default function App() {
+  // Bu CİHAZIN kalıcı oyuncu kimliği (bkz. utils/playerId.js). Odalardaki skor
+  // sürekliliği `uid` yerine buna bağlanır.
+  const myPlayerId = getPlayerId();
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const isOnline = useOnlineStatus(); // Custom Hook'umuzu kullanıyoruz
@@ -207,7 +213,7 @@ export default function App() {
   const leaveRoomLocal = () => {
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); sessionRoomStorage.remove();
-    setIsBotGame(false);
+    setIsBotGame(false); setResumeNoticeAt(null);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
 
@@ -267,6 +273,27 @@ export default function App() {
     });
     return () => unsubscribe();
   }, [user, roomCode, isBotGame]);
+
+  // "Kaldığınız yerden devam ediyorsunuz" bildirimi. `resumeNotice` odaya,
+  // ESKİ bir dizilim geri geldiği anda yazılır (bkz. attemptJoinRoom) — yani
+  // masadaki herkes bunu aynı anda görür. Bildirim kısa ömürlüdür.
+  const [resumeNoticeAt, setResumeNoticeAt] = useState(null);
+  const shownResumeRef = useRef(null);
+  const resumeNoticeStamp = roomData?.resumeNotice?.at || null;
+  useEffect(() => {
+    // Alan TEMİZLENDİĞİNDE hiçbir şey yapılmaz: görünen bir bildirimi erken
+    // kapatmak yerine aşağıdaki 12sn'lik sayaç kapatsın.
+    if (!resumeNoticeStamp) return undefined;
+    // Her bildirim bir KEZ gösterilir (aynı snapshot birden çok kez gelebilir).
+    if (shownResumeRef.current === resumeNoticeStamp) return undefined;
+    // Odaya sonradan (ör. sayfa yenileyerek) girenlerde eski bir kayıt tekrar
+    // tetiklenmesin: bildirim yalnızca TAZE bir devam işlemine aittir.
+    if (Date.now() - new Date(resumeNoticeStamp).getTime() > 60_000) return undefined;
+    shownResumeRef.current = resumeNoticeStamp;
+    setResumeNoticeAt(resumeNoticeStamp);
+    const t = setTimeout(() => setResumeNoticeAt(null), 12_000);
+    return () => clearTimeout(t);
+  }, [resumeNoticeStamp]);
 
   useEffect(() => {
     if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
@@ -451,7 +478,16 @@ export default function App() {
       const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' },
          scores: { [user.uid]: 0 }, status: 'waiting', isPublic, board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
-         turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString()
+         turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
+         // --- Oyuncu kimliği & skor sürekliliği (bkz. utils/playerId.js) ---
+         // `playerIds`  : koltuktaki uid -> o cihazın kalıcı 9 haneli kimliği
+         // `matchKey`   : masadaki oyuncu kümesini temsil eden anahtar
+         // `matchHistory`: geçmiş dizilimlerin skorları (aynı kişiler geri
+         //                 gelirse maç oradan devam eder)
+         playerIds: { [user.uid]: myPlayerId },
+         matchKey: lineupKey([user.uid], { [user.uid]: myPlayerId }),
+         matchHistory: {},
+         resumeNotice: null,
        };
        
        if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); }
@@ -599,10 +635,82 @@ export default function App() {
                 if (data.turn === missingUid) updatePayload.turn = user.uid; if (data.startingPlayer === missingUid) updatePayload.startingPlayer = user.uid; if (data.winner === missingUid) updatePayload.winner = user.uid;
             } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
           }
+
+          // ============================================================
+          // OYUNCU KİMLİĞİNE DAYALI SKOR SÜREKLİLİĞİ
+          // ============================================================
+          // Yukarıdaki "resume" dalı boşalan KOLTUĞU (renk, sıra, başlangıç
+          // oyuncusu) yeni gelene devreder — bu doğru: masa düzeni korunmalı.
+          // Ama SKOR koltuğun değil KİŞİNİN'dir. Buraya kadar skor da koltukla
+          // birlikte devrediliyordu; yani 3-1 biten bir maçtan sonra rakip
+          // çıkıp yerine BAŞKA biri girdiğinde tabela 3-1'den devam ediyordu.
+          //
+          // Çözüm: masadaki kişilerden bir "dizilim anahtarı" (lineupKey)
+          // üretilir. Dizilim değiştiyse:
+          //   * eski dizilimin skoru `matchHistory`e ARŞİVLENİR,
+          //   * yeni dizilimin arşivde kaydı varsa skor ORADAN geri yüklenir
+          //     (+ herkese "kaldığınız yerden devam" bildirimi yazılır),
+          //   * kaydı yoksa maç 0-0'dan başlar.
+          // Böylece oda yaşadığı sürece, kim gelip giderse gitsin, her ikili/
+          // dörtlü kendi maçını kaldığı yerden sürdürür.
+          const newPlayerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
+          updatePayload.playerIds = newPlayerIds;
+
+          const prevScoresByToken = byToken(data.scores, data.playerIds);
+          // Eski (bu özellikten önce kurulmuş) odalarda `matchKey` yoktur;
+          // o durumda dizilim, skor tablosundaki kayıtlardan çıkarılır —
+          // masadan AYRILMIŞ ama skoru duran oyuncular da dahil.
+          const prevKey = data.matchKey || Object.keys(prevScoresByToken).sort().join('|');
+          const newKey = lineupKey(updatedPlayers, newPlayerIds);
+          updatePayload.matchKey = newKey;
+
+          if (newKey !== prevKey) {
+            const history = { ...(data.matchHistory || {}) };
+            // Sadece GERÇEKTEN oynanmış (en az iki kişilik, skoru işlemiş) bir
+            // dizilim arşivlenir — 0-0 duran lobi dizilimleri kaydı şişirir.
+            if (prevKey && Object.keys(prevScoresByToken).length >= 2 && Object.values(prevScoresByToken).some((v) => Number(v) > 0)) {
+              history[prevKey] = {
+                scores: prevScoresByToken,
+                names: byToken(data.playerNames, data.playerIds),
+                at: new Date().toISOString(),
+              };
+            }
+
+            const restored = history[newKey];
+            if (restored?.scores) {
+              updatePayload.scores = byUid(restored.scores, updatedPlayers, newPlayerIds, 0);
+              updatePayload.resumeNotice = { at: new Date().toISOString(), key: newKey };
+            } else {
+              updatePayload.scores = Object.fromEntries(updatedPlayers.map((uid) => [uid, 0]));
+              updatePayload.resumeNotice = null;
+            }
+            updatePayload.matchHistory = history;
+
+            // Masadan ayrılmış oyuncuların isimleri tabelada asılı kalmasın.
+            const namesSource = updatePayload.playerNames || data.playerNames || {};
+            updatePayload.playerNames = Object.fromEntries(
+              updatedPlayers.map((uid) => [uid, namesSource[uid] || (uid === user.uid ? (nickname || `Oyuncu ${updatedPlayers.length}`) : 'Oyuncu')]),
+            );
+          } else if (data.resumeNotice) {
+            // Dizilim DEĞİŞMEDİ (aynı kişi kopan bağlantısından geri döndü).
+            // Bu bir "eski rakiple devam" durumu değildir; önceki devam
+            // bildirimi odada asılı kalıp yeniden tetiklenmesin.
+            updatePayload.resumeNotice = null;
+          }
+
           transaction.update(roomRef, updatePayload);
           optimisticData = { ...data, ...updatePayload };
         } else {
-          optimisticData = data;
+          // Zaten masadayız (ör. sayfa yenilendi). Bu özellikten ÖNCE kurulmuş
+          // odalarda kimlik haritası boş olabilir; kendi kaydımızı bir kez
+          // yazarız ki skor sürekliliği bu odada da çalışsın.
+          if (data.playerIds?.[user.uid] !== myPlayerId) {
+            const patch = { playerIds: { ...(data.playerIds || {}), [user.uid]: myPlayerId } };
+            transaction.update(roomRef, patch);
+            optimisticData = { ...data, ...patch };
+          } else {
+            optimisticData = data;
+          }
         }
       });
 
@@ -849,13 +957,53 @@ export default function App() {
       )}
 
       {!hideChrome && (
-        <header className="max-w-5xl mx-auto flex items-center justify-between mb-4 md:mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
-          <div className="flex items-center gap-3">
-            <Gamepad2 className="w-8 h-8 text-indigo-400" />
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Oyun Portalı</h1>
+        <header className="max-w-5xl mx-auto flex items-center justify-between gap-2 mb-4 md:mb-8 pb-4 border-b border-slate-700 mt-4 md:mt-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <Gamepad2 className="w-8 h-8 text-indigo-400 shrink-0" />
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent truncate">Oyun Portalı</h1>
           </div>
-          <div className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-full truncate max-w-[120px]">{nickname || `Oyuncu: ${user?.uid.substring(0,4)}`}</div>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Ses seviyesi: lobide de, oyunların içinde de AYNI düğme
+                (bkz. components/VolumeControl.jsx). */}
+            <VolumeControl />
+            {/* İsim yerine CİHAZA ÖZEL oyuncu kimliği gösterilir: skorların
+                kaldığı yerden devam edip etmeyeceğini belirleyen şey isim
+                değil, bu kimliktir (bkz. utils/playerId.js). */}
+            <div
+              className="text-[11px] sm:text-xs text-slate-400 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-full font-mono tracking-wider whitespace-nowrap"
+              title={nickname ? `${nickname} — Oyuncu ID: ${myPlayerId}` : `Oyuncu ID: ${myPlayerId}`}
+            >
+              <span className="text-slate-500 mr-1">ID</span>{formatPlayerId(myPlayerId)}
+            </div>
+          </div>
         </header>
+      )}
+
+      {/* Başlığın gizlendiği modlarda (tam ekran / telefon yatay 101 Okey)
+          ses kontrolü ekrana sabitlenir — bu modlarda da sese ulaşılabilsin.
+          Konum, o modlardaki mevcut "Çık"/"Tam Ekran" düğmeleriyle çakışmayacak
+          şekilde seçildi. */}
+      {hideChrome && (
+        <VolumeControl
+          variant="floating"
+          className={okeyCompact ? 'fixed top-1 right-[5.5rem] z-[6100]' : 'fixed top-3 right-14 sm:top-6 sm:right-[4.5rem] z-[6100]'}
+        />
+      )}
+
+      {resumeNoticeAt && currentView === 'room' && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-md z-[99000] bg-emerald-600/95 backdrop-blur-sm border border-emerald-400 text-white px-4 py-3 rounded-xl flex items-center gap-3 shadow-2xl">
+          <RotateCcw className="w-5 h-5 shrink-0" />
+          <span className="font-medium text-sm flex-grow text-center">
+            {(() => {
+              const others = (roomData?.players || [])
+                .filter((uid) => uid !== user?.uid)
+                .map((uid) => roomData?.playerNames?.[uid] || 'Rakip');
+              const who = others.length ? others.join(', ') : 'Eski rakibin';
+              return `${who} oyuncusuyla kaldığınız yerden devam ediyorsunuz.`;
+            })()}
+          </span>
+          <button onClick={() => setResumeNoticeAt(null)} className="bg-black/20 hover:bg-black/40 p-1 rounded transition-colors shrink-0"><X className="w-4 h-4" /></button>
+        </div>
       )}
 
       {currentView === 'lobby' ? (

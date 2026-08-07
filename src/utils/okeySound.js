@@ -13,48 +13,25 @@
 //       * ana katman LOWPASS'tır (tıslamayı komple keser),
 //       * tiz "kenar" katmanı ya kaldırıldı ya da duyulur-duyulmaz seviyeye
 //         indirildi (sadece darbenin başlangıcına netlik katsın diye).
-let ctx = null;
+// Ses bağlamı ve seviye kontrolü artık UYGULAMA GENELİNDE tek merkezden gelir
+// (bkz. utils/audioBus.js): eskiden bu modülün kendine ait bir AudioContext'i,
+// kendi master gain'i ve kendi "kapalı/açık" tercihi vardı — o tercih sadece
+// 101 Okey'in seslerini etkiliyordu. Artık lobideki/oyunlardaki tek ses
+// çubuğu bütün oyunların sesini birlikte yönetir.
+import { getAudioContext, getMaster, isMuted, setVolume, subscribeVolume } from './audioBus.js';
+
 let noiseBuffer = null;
-let masterGain = null;
 
-// --- Ses aç/kapa (kullanıcı tercihi, tarayıcıda kalıcı) --------------------
-const MUTE_KEY = 'okeySoundMuted';
-const readMuted = () => {
-  try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return false; }
-};
-let muted = readMuted();
-const listeners = new Set();
-
-export function isOkeySoundMuted() { return muted; }
-
-export function setOkeySoundMuted(next) {
-  muted = !!next;
-  try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch { /* depolama engelliyse yok say */ }
-  if (masterGain && ctx) masterGain.gain.setValueAtTime(muted ? 0 : 1, ctx.currentTime);
-  listeners.forEach((fn) => { try { fn(muted); } catch { /* dinleyici hatası sesi bozmasın */ } });
-}
-
-// React tarafının (buton ikonu) durumu takip edebilmesi için basit abonelik.
-export function subscribeOkeySoundMuted(fn) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
-}
+// --- Geriye dönük uyumluluk ------------------------------------------------
+// 101 Okey ekranındaki eski aç/kapa düğmesi bu üç fonksiyonu kullanıyordu;
+// artık hepsi merkezi ses seviyesine yönlendirilir (kapatmak = seviye 0,
+// açmak = seviye 1).
+export function isOkeySoundMuted() { return isMuted(); }
+export function setOkeySoundMuted(next) { setVolume(next ? 0 : 1); }
+export function subscribeOkeySoundMuted(fn) { return subscribeVolume((v) => fn(v <= 0)); }
 
 function audio() {
-  if (typeof window === 'undefined') return null;
-  try {
-    if (!ctx) {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
-      // TÜM sesler bu tek düğümden geçer — susturma tek noktadan yapılır.
-      masterGain = ctx.createGain();
-      masterGain.gain.setValueAtTime(muted ? 0 : 1, ctx.currentTime);
-      masterGain.connect(ctx.destination);
-    }
-    // Tarayıcılar, kullanıcı etkileşimi olmadan başlatılan bağlamları askıya
-    // alır; her çalmadan önce devam ettirmeyi deneriz.
-    if (ctx.state === 'suspended') ctx.resume();
-    return ctx;
-  } catch { return null; }
+  return getAudioContext();
 }
 
 // Beyaz gürültü tamponu (bir kez üretilip tüm efektlerde paylaşılır).
@@ -77,7 +54,7 @@ function noiseBurst(ac, t0, { type = 'lowpass', freq, q, vol, dur }) {
   const g = ac.createGain();
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
-  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.connect(filt); filt.connect(g); g.connect(getMaster());
   src.start(t0); src.stop(t0 + dur);
 }
 
@@ -108,7 +85,7 @@ function windSweep(ac, { dur = 0.55, vol = 0.16 } = {}) {
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(vol, t0 + dur * 0.18); // hızlı yüksel
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);     // sonra sön
-  src.connect(lp); lp.connect(g); g.connect(masterGain);
+  src.connect(lp); lp.connect(g); g.connect(getMaster());
   src.start(t0); src.stop(t0 + dur + 0.02);
 }
 
@@ -161,7 +138,7 @@ export const OKEY_SOUNDS = {
 // engellenmiş bir ses bağlamı sessizce yok sayılır — ses ASLA oyunu bozmaz.
 export function playOkeySound(type) {
   try {
-    if (muted) return; // susturulmuşken ses bağlamını hiç uyandırma
+    if (isMuted()) return; // susturulmuşken ses bağlamını hiç uyandırma
     const fn = OKEY_SOUNDS[type];
     if (!fn) return;
     const ac = audio();
