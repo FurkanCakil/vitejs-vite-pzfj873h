@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs, deleteField } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
@@ -321,8 +321,22 @@ export default function App() {
     const isOkeyRoom = () => roomStateRef.current.roomData?.gameId === 'okey101';
     const handleDisconnect = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot || isOkeyRoom()) return;
-      if (code && u && data && data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code), { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
+      if (isBot) return;
+      if (!code || !u || !data) return;
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+      // İZLEYİCİ sekmeyi kapatıyorsa kendini listeden düşürür. Eskiden bu hiç
+      // yapılmıyordu: "Odadan Çık"a basmadan sekmeyi kapatan bir izleyici
+      // sonsuza dek sayılmaya devam ediyor, izleyici sayacı şişiyordu.
+      // `arrayRemove` atomiktir — kapanış anında okuma yapmaya gerek kalmaz.
+      // EN İYİ ÇABA: tarayıcı sayfayı kapatırken isteği göndermeye fırsat
+      // bulamayabilir; bu yüzden katılım/izleme işlemleri de listeyi ayrıca
+      // temizler (bkz. cleanSpectators).
+      if (data.spectators?.includes(u.uid)) {
+        updateDoc(roomRef, { spectators: arrayRemove(u.uid) }).catch(() => {});
+        return;
+      }
+      if (isOkeyRoom()) return;
+      if (data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
     };
     // GÖRÜNÜRLÜK GECİKMESİ (kısa süreliğine sekmeden ayrılmanın odayı yanlışlıkla
     // "terk edilmiş" yapması): `visibilitychange` telefonlarda son derece
@@ -719,6 +733,14 @@ export default function App() {
           // bildirimi odada asılı kalıp yeniden tetiklenmesin.
           if (!lineupChanged && data.resumeNotice) updatePayload.resumeNotice = null;
 
+          // KOLTUĞA OTURAN İZLEYİCİ artık izleyici değildir. Eskiden
+          // `spectators`'tan çıkarılmadığı için aynı kişi hem oyuncu hem
+          // izleyici sayılıyor, izleyici sayacı olduğundan fazla görünüyordu.
+          const cleanedSpectators = cleanSpectators({ ...data, playerIds: newPlayerIds }, user.uid);
+          if (cleanedSpectators.length !== (data.spectators || []).length) {
+            updatePayload.spectators = cleanedSpectators;
+          }
+
           transaction.update(roomRef, updatePayload);
           // Yerel (iyimser) kopyaya `deleteField()` işaretçileri sızmamalı:
           // onlar Firestore'a özel nesnelerdir, oyunlar onları veri sanıp
@@ -809,8 +831,34 @@ export default function App() {
     }
   };
 
+  // İZLEYİCİ LİSTESİNİ TEKİLLEŞTİRİR (kullanıcı raporu: "bir arkadaşım
+  // izlemesine rağmen sayaç 0 -> 1 -> 2 oldu").
+  // Üç ayrı kaynak aynı kişiyi birden çok kez saydırabiliyordu:
+  //   1) Aynı uid listeye İKİ KEZ eklenebiliyordu (aşağıdaki `acceptSpectate`
+  //      eskiden koşulsuz `[...spectators, uid]` yazıyordu; "İzle" düğmesine
+  //      çift dokunmak ya da isteğin yeniden denenmesi listeyi ikizliyordu).
+  //   2) Aynı CİHAZ yeni bir anonim `uid` ile geri döndüğünde (Firebase
+  //      oturumu yenilendiğinde — bkz. bellek-içi kalıcılık yedeği) eski uid
+  //      listede ÖLÜ kayıt olarak kalıyordu.
+  //   3) İzleyiciyken boşalan bir koltuğa OTURAN kişi `players`'a eklenirken
+  //      `spectators`'tan çıkarılmıyordu; hem oyuncu hem izleyici sayılıyordu.
+  // Bu yardımcı üçünü birden temizler: kalıcı oyuncu kimliği (bkz.
+  // utils/playerId.js) aynı olan eski uid'ler, kendi uid'imiz ve artık
+  // oyuncu koltuğunda olanlar listeden düşer.
+  const cleanSpectators = (data, selfUid) => {
+    const ids = data.playerIds || {};
+    const players = data.players || [];
+    return [...new Set(data.spectators || [])].filter((uid) =>
+      uid !== selfUid && ids[uid] !== myPlayerId && !players.includes(uid),
+    );
+  };
+
+  const [isSpectateJoining, setIsSpectateJoining] = useState(false);
   const acceptSpectate = async () => {
-    if (!spectatePrompt || !user) return; 
+    // Çift dokunuşa karşı kilit: iki eşzamanlı işlem, aynı uid'i listeye iki
+    // kez yazabiliyordu.
+    if (!spectatePrompt || !user || isSpectateJoining) return;
+    setIsSpectateJoining(true);
     const cleanCode = spectatePrompt;
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     try {
@@ -818,12 +866,18 @@ export default function App() {
         const snap = await transaction.get(roomRef);
         if (!snap.exists()) throw new Error("not-found");
         const data = snap.data();
-        const newSpectators = data.spectators ? [...data.spectators, user.uid] : [user.uid];
-        transaction.update(roomRef, { spectators: newSpectators });
+        // İzleyiciler de kalıcı kimlik haritasına yazılır; böylece aynı cihaz
+        // yeni bir uid ile döndüğünde eski kaydı tanınıp temizlenebilir.
+        const playerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
+        transaction.update(roomRef, {
+          spectators: [...cleanSpectators({ ...data, playerIds }, user.uid), user.uid],
+          playerIds,
+        });
       });
-      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); 
+      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode);
       setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
     } catch (err) { setErrorMsg("Seyirci olarak bağlanılamadı."); }
+    finally { setIsSpectateJoining(false); }
   };
 
   const leaveRoom = async () => {
@@ -970,7 +1024,7 @@ export default function App() {
       )}
 
       {spectatePrompt && (
-        <SpectatePrompt spectatePrompt={spectatePrompt} acceptSpectate={acceptSpectate} setSpectatePrompt={setSpectatePrompt} />
+        <SpectatePrompt spectatePrompt={spectatePrompt} acceptSpectate={acceptSpectate} setSpectatePrompt={setSpectatePrompt} isJoining={isSpectateJoining} />
       )}
 
       {errorMsg && (
