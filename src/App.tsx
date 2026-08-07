@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs, deleteField } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
@@ -12,7 +12,8 @@ import usePresence from './hooks/usePresence.js';
 
 import useViewport from './hooks/useViewport.js';
 
-import { getPlayerId, formatPlayerId, lineupKey, byToken, byUid } from './utils/playerId.js';
+import { getPlayerId, formatPlayerId, lineupKey } from './utils/playerId.js';
+import { snapshotMatchState, encodeUids, decodeUids, freshMatchState, staleFieldDeletions, pruneHistory } from './utils/matchState.js';
 
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Lobby from './components/Lobby.jsx';
@@ -570,9 +571,32 @@ export default function App() {
         }
 
         if (!data.players?.includes(user.uid)) {
+          const updatedPlayers = [...(data.players || []), user.uid];
+          // Maç sıfırlandığında/geri yüklendiğinde artık geçersiz kalan
+          // alanların `deleteField()` işaretçileri (bkz. aşağısı).
+          let deletions = {};
+
+          // ============================================================
+          // MASA DİZİLİMİ: bu katılım maçı DEVAM mı ettiriyor, SIFIRDAN mı
+          // başlatıyor, yoksa ESKİ bir maçı GERİ mi getiriyor?
+          // ============================================================
+          // Bkz. utils/playerId.js + utils/matchState.js. Karar, artık "boşta
+          // koltuk var mı" (isResume) sorusuna değil, MASADA KİMLER OLDUĞUNA
+          // göre verilir — çünkü boş koltuğu dolduran kişi eskisiyle AYNI kişi
+          // olmak zorunda değil.
+          const newPlayerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
+          const prevSnapshot = snapshotMatchState(data);
+          const prevEncoded = encodeUids(prevSnapshot, data);
+          // Eski (bu özellikten önce kurulmuş) odalarda `matchKey` yoktur; o
+          // durumda dizilim, skor tablosundaki kayıtlardan çıkarılır — masadan
+          // AYRILMIŞ ama skoru duran oyuncular da dahil.
+          const prevKey = data.matchKey || Object.keys(encodeUids(data.scores || {}, data)).sort().join('|');
+          const newKey = lineupKey(updatedPlayers, newPlayerIds);
+          const lineupChanged = newKey !== prevKey;
+          const archived = lineupChanged ? (data.matchHistory || {})[newKey] : null;
+
           const missingUid = data.scores ? Object.keys(data.scores).find(uid => !data.players.includes(uid)) : null;
           const isResume = !!missingUid;
-          const updatedPlayers = [...(data.players || []), user.uid];
           // Okey101'de el zaten dağıtılmışken (racks var) VE masa hâlâ 'playing'
           // durumundaysa (bkz. DisconnectOverlay#Bekle — artık ayrılmayan diğer
           // oyuncular için oyunu 'playing'de tutuyor), buraya 'waiting' yazmak
@@ -582,9 +606,61 @@ export default function App() {
           // dönüşlerinde mevcut 'playing' durumu KORUNUR; sadece henüz hiç el
           // dağıtılmamış (lobi aşaması) katılımlarda eskisi gibi 'waiting' yazılır.
           const okeyMidMatchResume = data.gameId === 'okey101' && !!data.racks && data.status === 'playing';
-          let updatePayload = { players: updatedPlayers, status: okeyMidMatchResume ? 'playing' : (data.gameId === 'okey101' ? 'waiting' : 'playing'), abandonedBy: null, abandonReason: null };
+          let updatePayload = { players: updatedPlayers, status: okeyMidMatchResume ? 'playing' : (data.gameId === 'okey101' ? 'waiting' : 'playing'), abandonedBy: null, abandonReason: null, playerIds: newPlayerIds, matchKey: newKey };
 
-          if (!isResume) {
+          // ÖNCEKİ dizilimin gerçekten bir MAÇI var mıydı? İki durum ayırt
+          // edilir:
+          //   * Masa ilk kez doluyor (A tek başına bekliyordu, B katıldı;
+          //     ya da 101 Okey lobisinde 3. / 4. oyuncu geliyor) -> ortada
+          //     sıfırlanacak/arşivlenecek bir maç YOK, eski hafif davranış
+          //     aynen sürer (takım seçimleri vb. bozulmaz).
+          //   * Boşalan bir koltuğa (skoru hâlâ duran biri ayrılmış) yeni
+          //     birisi oturuyor -> önceki dizilimin maçı vardı.
+          // `status !== 'waiting'` koşulu 101 Okey lobisini dışarıda tutar:
+          // orada masa henüz dağıtılmamıştır.
+          const prevMatchExisted = isResume || ((data.players || []).length >= 2 && data.status !== 'waiting');
+
+          if (lineupChanged && (archived || prevMatchExisted)) {
+            // ============================================================
+            // DİZİLİM DEĞİŞTİ — MAÇIN TAMAMI arşivlenir / geri yüklenir /
+            // sıfırlanır (bkz. utils/matchState.js).
+            // ============================================================
+            // Bu dalın var oluş sebebi kullanıcı raporu: "B ilk hamlesini
+            // yapıp çıktı, C girince oyun B'nin hamlesiyle DOLU tahtadan
+            // başladı." Skoru sıfırlamak yetmiyor; TAHTA, sıra, renkler,
+            // kazanan — maça ait ne varsa hepsi birlikte taşınmalı.
+            let history = { ...(data.matchHistory || {}) };
+            if (prevMatchExisted && prevKey) {
+              history[prevKey] = {
+                state: prevEncoded,
+                // Odanın o anki durumu 'abandoned' olabilir; arşive maçın
+                // OYNANABİLİR hâli yazılır ki geri dönüşte masa donmasın.
+                status: (data.status === 'playing' || data.status === 'abandoned') ? 'playing' : data.status,
+                at: new Date().toISOString(),
+              };
+              history = pruneHistory(history);
+            }
+
+            const nextState = archived
+              ? decodeUids(archived.state || {}, updatedPlayers, newPlayerIds)
+              : freshMatchState(data.gameId, updatedPlayers);
+            // Yeni durumda KARŞILIĞI OLMAYAN eski maç alanları (ör. 101
+            // Okey'in dağıtılmış `racks`/`drawPile`'ı) odada asılı kalmasın.
+            deletions = staleFieldDeletions(data, nextState, deleteField);
+
+            Object.assign(updatePayload, nextState, deletions);
+            updatePayload.matchHistory = history;
+            updatePayload.resumeNotice = archived ? { at: new Date().toISOString(), key: newKey } : null;
+            if (archived?.status === 'playing') updatePayload.status = 'playing';
+
+            // Masadan ayrılmış oyuncuların isimleri tabelada asılı kalmasın.
+            const namesSource = data.playerNames || {};
+            updatePayload.playerNames = Object.fromEntries(
+              updatedPlayers.map((uid) => [uid, uid === user.uid
+                ? (nickname || namesSource[uid] || `Oyuncu ${updatedPlayers.length}`)
+                : (namesSource[uid] || 'Oyuncu')]),
+            );
+          } else if (!isResume) {
             // Madde 12 (kullanıcı isteği): isim girmeyen misafirlere HEP sabit
             // 'Oyuncu 2' yazılıyordu — Okey101 gibi 3-4 kişilik odalarda 3.
             // ve 4. oyuncu da (hepsi boş isimle girerse) aynı "Oyuncu 2"
@@ -623,7 +699,9 @@ export default function App() {
               updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
             }
           } else {
-            let missingUid = null; if (data.scores) missingUid = Object.keys(data.scores).find(uid => !(data.players || []).includes(uid));
+            // AYNI dizilim, boşalmış bir koltuk var: bu, aynı kişinin geri
+            // dönmesidir (dizilim anahtarı değişmediği için). Koltuğu —
+            // gerekiyorsa yeni bir uid'e — devrederiz.
             if (missingUid && missingUid !== user.uid) {
                 const newScores = { ...data.scores }; newScores[user.uid] = newScores[missingUid] || 0; delete newScores[missingUid]; updatePayload.scores = newScores;
                 // Madde 12: terk edilen koltuğu dolduran yeni misafire de,
@@ -636,70 +714,17 @@ export default function App() {
             } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
           }
 
-          // ============================================================
-          // OYUNCU KİMLİĞİNE DAYALI SKOR SÜREKLİLİĞİ
-          // ============================================================
-          // Yukarıdaki "resume" dalı boşalan KOLTUĞU (renk, sıra, başlangıç
-          // oyuncusu) yeni gelene devreder — bu doğru: masa düzeni korunmalı.
-          // Ama SKOR koltuğun değil KİŞİNİN'dir. Buraya kadar skor da koltukla
-          // birlikte devrediliyordu; yani 3-1 biten bir maçtan sonra rakip
-          // çıkıp yerine BAŞKA biri girdiğinde tabela 3-1'den devam ediyordu.
-          //
-          // Çözüm: masadaki kişilerden bir "dizilim anahtarı" (lineupKey)
-          // üretilir. Dizilim değiştiyse:
-          //   * eski dizilimin skoru `matchHistory`e ARŞİVLENİR,
-          //   * yeni dizilimin arşivde kaydı varsa skor ORADAN geri yüklenir
-          //     (+ herkese "kaldığınız yerden devam" bildirimi yazılır),
-          //   * kaydı yoksa maç 0-0'dan başlar.
-          // Böylece oda yaşadığı sürece, kim gelip giderse gitsin, her ikili/
-          // dörtlü kendi maçını kaldığı yerden sürdürür.
-          const newPlayerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
-          updatePayload.playerIds = newPlayerIds;
-
-          const prevScoresByToken = byToken(data.scores, data.playerIds);
-          // Eski (bu özellikten önce kurulmuş) odalarda `matchKey` yoktur;
-          // o durumda dizilim, skor tablosundaki kayıtlardan çıkarılır —
-          // masadan AYRILMIŞ ama skoru duran oyuncular da dahil.
-          const prevKey = data.matchKey || Object.keys(prevScoresByToken).sort().join('|');
-          const newKey = lineupKey(updatedPlayers, newPlayerIds);
-          updatePayload.matchKey = newKey;
-
-          if (newKey !== prevKey) {
-            const history = { ...(data.matchHistory || {}) };
-            // Sadece GERÇEKTEN oynanmış (en az iki kişilik, skoru işlemiş) bir
-            // dizilim arşivlenir — 0-0 duran lobi dizilimleri kaydı şişirir.
-            if (prevKey && Object.keys(prevScoresByToken).length >= 2 && Object.values(prevScoresByToken).some((v) => Number(v) > 0)) {
-              history[prevKey] = {
-                scores: prevScoresByToken,
-                names: byToken(data.playerNames, data.playerIds),
-                at: new Date().toISOString(),
-              };
-            }
-
-            const restored = history[newKey];
-            if (restored?.scores) {
-              updatePayload.scores = byUid(restored.scores, updatedPlayers, newPlayerIds, 0);
-              updatePayload.resumeNotice = { at: new Date().toISOString(), key: newKey };
-            } else {
-              updatePayload.scores = Object.fromEntries(updatedPlayers.map((uid) => [uid, 0]));
-              updatePayload.resumeNotice = null;
-            }
-            updatePayload.matchHistory = history;
-
-            // Masadan ayrılmış oyuncuların isimleri tabelada asılı kalmasın.
-            const namesSource = updatePayload.playerNames || data.playerNames || {};
-            updatePayload.playerNames = Object.fromEntries(
-              updatedPlayers.map((uid) => [uid, namesSource[uid] || (uid === user.uid ? (nickname || `Oyuncu ${updatedPlayers.length}`) : 'Oyuncu')]),
-            );
-          } else if (data.resumeNotice) {
-            // Dizilim DEĞİŞMEDİ (aynı kişi kopan bağlantısından geri döndü).
-            // Bu bir "eski rakiple devam" durumu değildir; önceki devam
-            // bildirimi odada asılı kalıp yeniden tetiklenmesin.
-            updatePayload.resumeNotice = null;
-          }
+          // Dizilim DEĞİŞMEDİYSE (aynı kişi kopan bağlantısından geri döndü)
+          // bu bir "eski rakiple devam" durumu değildir; önceki devam
+          // bildirimi odada asılı kalıp yeniden tetiklenmesin.
+          if (!lineupChanged && data.resumeNotice) updatePayload.resumeNotice = null;
 
           transaction.update(roomRef, updatePayload);
+          // Yerel (iyimser) kopyaya `deleteField()` işaretçileri sızmamalı:
+          // onlar Firestore'a özel nesnelerdir, oyunlar onları veri sanıp
+          // çökerdi. Silinen alanlar burada gerçekten kaldırılır.
           optimisticData = { ...data, ...updatePayload };
+          Object.keys(deletions).forEach((k) => { delete optimisticData[k]; });
         } else {
           // Zaten masadayız (ör. sayfa yenilendi). Bu özellikten ÖNCE kurulmuş
           // odalarda kimlik haritası boş olabilir; kendi kaydımızı bir kez
