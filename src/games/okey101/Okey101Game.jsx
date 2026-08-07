@@ -409,7 +409,13 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     if (remaining <= 0) return;
     const timer = setTimeout(() => bumpTackHintTick((n) => n + 1), remaining + 50);
     return () => clearTimeout(timer);
-  }, [roomData.tackHint]);
+    // Bağımlılık BİLEREK ilkel (`expiresAt`), `roomData.tackHint` NESNESİ değil:
+    // Firestore `onSnapshot` her pakette (ilgisiz bir alan değişse bile) iç içe
+    // nesneleri YENİDEN üretir, yani `tackHint` referansı sürekli değişir. Nesneye
+    // bağlanmak bu zamanlayıcıyı saniyede birkaç kez söküp yeniden kuruyordu.
+    // Hedef zaman `expiresAt` olduğu için sonuç birebir aynı, sadece boşa
+    // çalışma ortadan kalkıyor.
+  }, [roomData.tackHint?.expiresAt]);
 
   // Çekilen taş, Firestore turu tamamlanmadan ÖNCE bırakıldığı slotta gösterilir.
   // Hangi taşın geleceğini istemci zaten bilir (deste ve atılan taşlar herkese
@@ -920,7 +926,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // kullanıcının şikâyet ettiği "ekrana bir şey gelip gidiyor" komasının
   // ana kaynağıydı (bkz. App.tsx#handleVisibility'deki 101 Okey istisnası).
   if (roomData.status !== 'playing' && !roomData.racks) {
-    return <Okey101Lobby roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />;
+    return <Okey101Lobby roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} />;
   }
 
   if (!roomData.racks) {

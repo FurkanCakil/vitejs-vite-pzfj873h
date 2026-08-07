@@ -79,7 +79,7 @@ export default function App() {
   // Aktif Kullanıcı Sayacı: oturum boyunca (auth tamamlanınca) küresel sayacı
   // +1/-1 yazar — SADECE yazar, hiç okuma yapmaz (bkz. usePresence.js).
   usePresence(user?.uid);
-  const { isCompact, isPhone } = useViewport();
+  const { isCompact } = useViewport();
   const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -94,6 +94,14 @@ export default function App() {
   const [disconnectCountdown, setDisconnectCountdown] = useState(null);
   const [spectatePrompt, setSpectatePrompt] = useState(null);
   const [leftOverlayTimer, setLeftOverlayTimer] = useState(null);
+  // "Kaldığınız yerden devam ediyorsunuz" bildirimi (kullanan efekt çok daha
+  // aşağıda). BURADA, diğer state'lerle birlikte tanımlanır çünkü
+  // `leaveRoomLocal` (hemen aşağıda) `setResumeNoticeAt`'i çağırır: tanım
+  // aşağıda kalırsa fonksiyon, henüz başlatılmamış bir `const`'a atıfta bulunmuş
+  // olur (TDZ). Şu an yalnızca render sonrası çağrıldığı için patlamıyor, ama
+  // ileride render sırasında çağrılan tek bir yol bile eklenirse uygulama
+  // "Cannot access before initialization" ile komple boş ekrana düşerdi.
+  const [resumeNoticeAt, setResumeNoticeAt] = useState(null);
 
   const [isBotGame, setIsBotGame] = useState(false);
   const [botDifficulty, setBotDifficulty] = useState('medium');
@@ -278,7 +286,7 @@ export default function App() {
   // "Kaldığınız yerden devam ediyorsunuz" bildirimi. `resumeNotice` odaya,
   // ESKİ bir dizilim geri geldiği anda yazılır (bkz. attemptJoinRoom) — yani
   // masadaki herkes bunu aynı anda görür. Bildirim kısa ömürlüdür.
-  const [resumeNoticeAt, setResumeNoticeAt] = useState(null);
+  // (State'in kendisi yukarıda, diğer state'lerle birlikte tanımlıdır.)
   const shownResumeRef = useRef(null);
   const resumeNoticeStamp = roomData?.resumeNotice?.at || null;
   useEffect(() => {

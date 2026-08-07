@@ -388,10 +388,20 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setDragOverInventory(false);
   };
 
+  // "Buraya konamaz" titremesi. Zamanlayıcı BİR REF'te tutulur; iki sebeple:
+  //   1) Art arda birkaç geçersiz deneme yapıldığında (yerleştirme sırasında
+  //      çok olur) her çağrı KENDİ 350ms'lik zamanlayıcısını kuruyordu — ÖNCEKİ
+  //      zamanlayıcı, SONRAKİ titremenin ortasında `null` yazıp animasyonu
+  //      yarıda kesiyordu.
+  //   2) Kullanıcı bu 350ms içinde odadan çıkarsa (ya da rövanşla yeni el
+  //      başlarsa) zamanlayıcı sökülmeden kalıyordu.
+  const shakeTimerRef = useRef(null);
+  useEffect(() => () => { if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current); }, []);
   const flashInvalid = (shipId) => {
     playSound('error');
     setShakeShipId(shipId || 'preview');
-    setTimeout(() => setShakeShipId(null), 350);
+    if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current);
+    shakeTimerRef.current = setTimeout(() => { shakeTimerRef.current = null; setShakeShipId(null); }, 350);
   };
 
   // `anchorCell`: kullanıcının tıkladığı/bıraktığı hücre. KULLANICI İSTEĞİ:

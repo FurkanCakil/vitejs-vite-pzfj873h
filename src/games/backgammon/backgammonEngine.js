@@ -28,6 +28,12 @@ export function useBackgammonBot(enabled) {
       worker.removeEventListener('message', handleMessage);
       worker.terminate();
       workerRef.current = null;
+      // Worker kapatılırken bekleyen istekler ÖNCE sonlandırılır. Eskiden Map
+      // doğrudan boşaltılıyordu; yani o promise'ler ASLA settle olmuyor ve
+      // çağıran taraftaki `await getBotTurn(...)` (bkz. TavlaGame'in bot
+      // efekti) sonsuza dek asılı kalıyordu. `null`, çağıranın zaten ele aldığı
+      // "oynanabilir hamle yok" durumudur (`if (!path || path.length === 0)`).
+      pendingRef.current.forEach((pending) => pending.resolve(null));
       pendingRef.current.clear();
     };
   }, [enabled]);

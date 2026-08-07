@@ -55,7 +55,9 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
       let up = { board: newBoard, turn: winInfo ? null : nextTurn, winner: winInfo ? winInfo.winner : (newBoard.every(c => c) ? 'Draw' : null), winningLine: winInfo?.line || null };
       if (winInfo) { playSound('win'); const wUid = winInfo.winner === 'X' ? p1Uid : p2Uid; up.scores = { ...roomData.scores, [wUid]: (roomData.scores?.[wUid] || 0) + 1 }; }
       await updateRoom(up);
-    } catch(err) {} finally { setIsSubmitting(false); }
+      // Sessizce yutulan hata, telefonda "hamle çalışmıyor" şikâyetinin
+      // kaynağını görünmez kılıyordu — diğer oyunlarla aynı şekilde loglanır.
+    } catch (err) { console.error('XOX hamle hatası:', err); } finally { setIsSubmitting(false); }
   };
 
   // Bot rakip: sıra bota geldiğinde küçük bir gecikmeyle hamlesini oynar.

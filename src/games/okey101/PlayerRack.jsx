@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Check, X, Layers, Rows3, RefreshCw, Wand2 } from 'lucide-react';
 import Tile, { TILE_ASPECT } from './Tile.jsx';
 import { RACK_ROW_LENGTH, RACK_SLOTS, normalizeRack, moveTileToSlot, moveGroupBlockToSlot, isContiguousSelection, isOkeyTile } from './tiles.js';
-import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, formatFoldBarrier, tekLabel, OPEN_THRESHOLD } from './gameLogic.js';
+import { validateGroup, isValidPairTiles, isSequentiallyOrderedGroup, tekLabel, OPEN_THRESHOLD } from './gameLogic.js';
 import { buildSeriesArrangement, buildPairsArrangement, confirmedMeldTotal } from './assist.js';
 import { findNearestSlotIndex } from './nearestSlot.js';
 import useViewport from '../../hooks/useViewport.js';

@@ -35,5 +35,5 @@ export const playSound = (type) => {
       gain.gain.setValueAtTime(0.001, now); gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
       osc.start(now); osc.stop(now + 0.15);
     }
-  } catch (e) {}
+  } catch { /* ses hiçbir zaman oyun akışını engellemesin */ }
 };

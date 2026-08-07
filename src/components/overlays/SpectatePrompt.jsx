@@ -4,7 +4,7 @@ import { Eye, Loader2 } from 'lucide-react';
 // `isJoining`: izleyici olarak bağlanma isteği sürüyor. Düğme bu sırada
 // KİLİTLENİR — iki hızlı dokunuş, aynı kişiyi izleyici listesine iki kez
 // yazıp sayacı şişiriyordu (bkz. App.tsx#acceptSpectate).
-export default function SpectatePrompt({ spectatePrompt, acceptSpectate, setSpectatePrompt, isJoining = false }) {
+export default function SpectatePrompt({ acceptSpectate, setSpectatePrompt, isJoining = false }) {
   return (
     <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
       <Eye className="w-16 h-16 text-indigo-500 mb-4" />

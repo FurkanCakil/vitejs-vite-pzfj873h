@@ -9,6 +9,17 @@ export function useStockfish(enabled, skillLevel) {
   const pendingRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
 
+  // Bekleyen bir isteği KESİN OLARAK sonlandırır. `getBestMove`'un döndürdüğü
+  // promise'in ASLA settle olmaması, çağıran taraftaki `await`'i (ve onun
+  // `finally` bloğunu — bkz. ChessGame#botThinking) sonsuza dek asılı bırakır:
+  // "Bot düşünüyor..." göstergesi hiç kapanmaz. `null` çözümü, çağıranın zaten
+  // ele aldığı "hamle bulunamadı" durumudur (bkz. `if (cancelled || !uciMove)`).
+  const settlePending = (value = null) => {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (pending) pending.resolve(value);
+  };
+
   useEffect(() => {
     if (!enabled) return;
     setIsReady(false);
@@ -32,11 +43,7 @@ export function useStockfish(enabled, skillLevel) {
         }
       } else if (line.startsWith('bestmove')) {
         const move = line.split(' ')[1];
-        if (pendingRef.current) {
-          const { resolve } = pendingRef.current;
-          pendingRef.current = null;
-          resolve(move && move !== '(none)' ? move : null);
-        }
+        settlePending(move && move !== '(none)' ? move : null);
       }
     };
 
@@ -48,7 +55,9 @@ export function useStockfish(enabled, skillLevel) {
       worker.postMessage('quit');
       worker.terminate();
       workerRef.current = null;
-      pendingRef.current = null;
+      // Motor kapatılırken bekleyen istek varsa ÖNCE çözülür (eskiden ref
+      // doğrudan null'lanıyor, promise sonsuza dek asılı kalıyordu).
+      settlePending(null);
       setIsReady(false);
     };
   }, [enabled, skillLevel]);
@@ -56,6 +65,10 @@ export function useStockfish(enabled, skillLevel) {
   const getBestMove = useCallback((fen, depth) => {
     const worker = workerRef.current;
     if (!worker) return Promise.resolve(null);
+    // Bir önceki istek hâlâ cevap beklerken yenisi gelirse (bot efekti art arda
+    // tetiklenebilir) eskisinin `resolve`'u ESKİDEN sessizce ÜZERİNE YAZILIYOR
+    // ve o promise hiç settle olmuyordu. Artık önce kapatılır.
+    settlePending(null);
     return new Promise((resolve) => {
       pendingRef.current = { resolve };
       worker.postMessage(`position fen ${fen}`);

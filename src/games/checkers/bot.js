@@ -71,13 +71,15 @@ function getMediumTurn(board, botColor, humanColor) {
   for (const t of candidates) {
     const oppTurns = getAllTurns(t.board, humanColor);
     const oppMaxCaptures = oppTurns.length ? Math.max(...oppTurns.map(captureCount)) : 0;
-    const score = evaluateBoard(t.board, botColor, humanColor) - oppMaxCaptures * 1.5;
+    const score = evaluateBoard(t.board, botColor) - oppMaxCaptures * 1.5;
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;
 }
 
-function evaluateBoard(board, botColor, humanColor) {
+// Skor BOTUN bakış açısından tek yönlüdür (kendi taşları +, diğer her şey -),
+// bu yüzden `humanColor`'a ihtiyaç duymaz.
+function evaluateBoard(board, botColor) {
   let score = 0;
   for (let i = 0; i < 64; i++) {
     const p = board[i];
@@ -96,7 +98,7 @@ function minimax(board, depth, isMaximizing, botColor, humanColor, alpha, beta) 
   const color = isMaximizing ? botColor : humanColor;
   const turns = getAllTurns(board, color);
   if (turns.length === 0) return (isMaximizing ? -1 : 1) * (1000 + depth);
-  if (depth === 0) return evaluateBoard(board, botColor, humanColor);
+  if (depth === 0) return evaluateBoard(board, botColor);
 
   if (isMaximizing) {
     let best = -Infinity;

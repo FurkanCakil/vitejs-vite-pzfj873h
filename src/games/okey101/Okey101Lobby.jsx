@@ -13,7 +13,7 @@ const COUNTDOWN_MS = 3000;
 // KULLANICI İSTEĞİ: `botDifficulty` kaldırıldı (bkz. RulesPanel/botPlayers).
 const DEFAULT_RULES = { gameType: 'ffa', assistedEnabled: false, foldingEnabled: false, foldToPartnerEnabled: false };
 
-export default function Okey101Lobby({ roomData, roomCode, user, db, appId, leaveRoom }) {
+export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
   const isHost = roomData.host === user.uid;
   const rules = roomData.rules || DEFAULT_RULES;
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);

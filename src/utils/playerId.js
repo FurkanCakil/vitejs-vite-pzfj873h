@@ -62,21 +62,8 @@ export function lineupKey(players, playerIds) {
   return (players || []).map((uid) => tokenFor(uid, playerIds)).sort().join('|');
 }
 
-// `{uid: değer}` -> `{token: değer}`. Arşive yazarken kullanılır: uid'ler
-// oturumdan oturuma değişebilir, token'lar değişmez.
-export function byToken(mapByUid, playerIds) {
-  const out = {};
-  Object.entries(mapByUid || {}).forEach(([uid, value]) => { out[tokenFor(uid, playerIds)] = value; });
-  return out;
-}
-
-// `{token: değer}` -> `{uid: değer}` (yalnızca ŞU AN masada olan oyuncular
-// için; arşivde karşılığı olmayana `fallback` verilir).
-export function byUid(mapByToken, players, playerIds, fallback = 0) {
-  const out = {};
-  (players || []).forEach((uid) => {
-    const v = mapByToken?.[tokenFor(uid, playerIds)];
-    out[uid] = v === undefined || v === null ? fallback : v;
-  });
-  return out;
-}
+// NOT: uid <-> token dönüşümünün ASIL uygulaması `utils/matchState.js`
+// içindedir (encodeUids/decodeUids) — orası maç durumunun TAMAMINDA
+// (hem anahtarlarda hem değerlerde, özyinelemeli) çalışır. Burada bir zamanlar
+// aynı işi tek seviyede yapan `byToken`/`byUid` yardımcıları da vardı; hiçbir
+// yerden çağrılmadıkları için kaldırıldı.

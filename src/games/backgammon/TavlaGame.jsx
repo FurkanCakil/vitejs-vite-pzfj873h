@@ -499,7 +499,6 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const hasMyBar = myColor && (myColor === 'white' ? barW : barB) > 0;
-  const canOfferCube = !isSpectator && myPhase === 'rolling' && (roomData.cubeOwner === user.uid || roomData.cubeOwner === null);
 
   const whiteUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === 'white') || p1Uid;
   const blackUid = Object.keys(roomData.playerColors || {}).find(uid => roomData.playerColors[uid] === 'black') || p2Uid;

@@ -15,6 +15,13 @@ export default class ErrorBoundary extends React.Component {
   // verisi yüzünden oyun açılmıyorsa (gizli sekmede sorun çıkmayıp normal
   // sekmede çıkmasının tipik sebebi) her şeyi sıfırlayıp yeniden başlatır.
   hardReset = () => {
+    // DÜZELTME: "aktif oda" kaydı `localStorage`'dan `sessionStorage`'a taşındı
+    // (bkz. App.tsx#sessionRoomStorage) ama bu buton yalnızca localStorage'ı
+    // siliyordu — yani asıl temizlemesi gereken bayat oda kaydına HİÇ
+    // dokunmuyor, sayfa yenilendiğinde kullanıcıyı yine aynı bozuk odaya
+    // düşürüyordu. Artık ikisi de silinir (localStorage yalnızca ESKİ
+    // sürümlerden kalmış olabilecek kayıt için).
+    try { sessionStorage.removeItem('activeRoom'); } catch { /* yok say */ }
     try { localStorage.removeItem('activeRoom'); } catch { /* yok say */ }
     try {
       if (window.indexedDB?.databases) {

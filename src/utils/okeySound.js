@@ -18,17 +18,15 @@
 // kendi master gain'i ve kendi "kapalı/açık" tercihi vardı — o tercih sadece
 // 101 Okey'in seslerini etkiliyordu. Artık lobideki/oyunlardaki tek ses
 // çubuğu bütün oyunların sesini birlikte yönetir.
-import { getAudioContext, getMaster, isMuted, setVolume, subscribeVolume } from './audioBus.js';
+import { getAudioContext, getMaster, isMuted } from './audioBus.js';
 
 let noiseBuffer = null;
 
-// --- Geriye dönük uyumluluk ------------------------------------------------
-// 101 Okey ekranındaki eski aç/kapa düğmesi bu üç fonksiyonu kullanıyordu;
-// artık hepsi merkezi ses seviyesine yönlendirilir (kapatmak = seviye 0,
-// açmak = seviye 1).
-export function isOkeySoundMuted() { return isMuted(); }
-export function setOkeySoundMuted(next) { setVolume(next ? 0 : 1); }
-export function subscribeOkeySoundMuted(fn) { return subscribeVolume((v) => fn(v <= 0)); }
+// NOT: Bu dosyada bir zamanlar 101 Okey'in ESKİ aç/kapa düğmesi için
+// `isOkeySoundMuted`/`setOkeySoundMuted`/`subscribeOkeySoundMuted` sarmalayıcıları
+// vardı. O düğme kaldırılıp yerini uygulama geneli ses çubuğuna bıraktığından
+// (bkz. components/VolumeControl.jsx + utils/audioBus.js) hiçbir yerden
+// çağrılmıyorlardı; kaldırıldılar.
 
 function audio() {
   return getAudioContext();

@@ -60,7 +60,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     for (let i = 0; i < 64; i++) {
       if (board[i]?.color === myColor) {
          const moves = getValidCheckersMoves(board, i, null);
-         if (moves.length > 0 && moves.some(m => m.isJump)) {
+         if (moves.some(m => m.isJump)) {
              mandatories.push(i);
              globalJumpExists = true;
          }
