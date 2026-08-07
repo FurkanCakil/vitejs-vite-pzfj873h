@@ -713,7 +713,13 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     const timer = setTimeout(() => {
       const botShots = roomData.shots?.[BOT_UID] || [];
       const humanShips = roomData.ships?.[user.uid] || [];
-      const shot = chooseBotShot(botShots, humanShips);
+      // `humanShips` BİLEREK verilmez: bot hedefini SADECE kendi atış
+      // sonuçlarına bakarak seçer (bkz. bot.js#chooseBotShot'taki tasarım
+      // kuralı). `humanShips` aşağıda yalnızca atışın SONUCUNU (isabet/ıska)
+      // ve oyunun bitip bitmediğini hesaplamak için kullanılır — bunlar
+      // gerçek bir sunucunun da yapacağı hakemlik işleridir, hedef seçimine
+      // karışmazlar.
+      const shot = chooseBotShot(botShots);
       if (!shot) return; // güvenlik: teorik olarak tahta tamamen dolamaz
       const { row, col } = shot;
       const hitShip = humanShips.find((ship) => ship.cells.some((c) => c.row === row && c.col === col));

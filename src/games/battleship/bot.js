@@ -37,13 +37,26 @@ export function generateBotFleet() {
 // ============================================================
 // FAZ 2: Hunt & Target atış algoritması
 // ============================================================
+// TASARIM KURALI (kullanıcı isteği — EN ÖNEMLİ MADDE):
+// Bota "gemi battı" bildirimi YAPILMAZ. Bu fonksiyon rakibin gemi
+// YERLEŞİMİNİ HİÇ GÖRMEZ; karar verirken kullandığı TEK veri, botun kendi
+// atışlarının sonuçlarıdır (`{row, col, hit}`) — yani insan oyuncunun
+// ekranında gördüğünün BİREBİR AYNISI.
+//
+// NEDEN: Oyunda batma bildirimi bilerek kaldırılmıştır (saldıran taraf,
+// vurduğu geminin kaç hücrelik olduğunu bilemesin; 3 isabetten sonra "belki
+// 4'lüktü" deyip fazladan atış yapmak zorunda kalsın). Bot rakibin filosunu
+// okuyabilseydi bu kural SADECE insan için geçerli olur, bot 3'lük bir gemiyi
+// batırdığı an denemeyi kesip haksız bir avantaj kazanırdı.
+//
+// Bu yüzden `chooseBotShot` ARTIK `humanShips` PARAMETRESİ ALMAZ — sızıntı
+// yapısal olarak imkânsızdır. "Bu gemi bitti mi?" sorusunu bot da insan gibi
+// ÇIKARIM YAPARAK yanıtlar: bir isabet dizisi, iki ucu da (tahta kenarı ya da
+// ıska ile) kapandığında artık uzayamaz; ancak o zaman bırakılır.
+//
 // NOT: Botun "hafızası" ayrı bir state/ref olarak TAŞINMAZ — her çağrıda
-// `botShots` (botun şimdiye kadarki TÜM atışları/sonuçları) ve `humanShips`
-// (rakibin gemileri — SADECE hangi hücrenin hangi gemiye ait olduğunu, yani
-// batma kontrolünü yapmak için kullanılır, henüz vurulmamış hücreleri
-// "bilerek" seçmek için DEĞİL) üzerinden DURUM A/B yeniden türetilir. Bu,
-// hafızanın oyunun gerçek durumuyla (shots) HER ZAMAN senkron kalmasını
-// garanti eder.
+// `botShots` üzerinden yeniden türetilir. Bu, hafızanın oyunun gerçek
+// durumuyla HER ZAMAN senkron kalmasını garanti eder.
 const DIRECTIONS = [
   { dr: -1, dc: 0 }, // Kuzey
   { dr: 1, dc: 0 },  // Güney
@@ -51,81 +64,94 @@ const DIRECTIONS = [
   { dr: 0, dc: 1 },  // Doğu
 ];
 
-function findShipIdAt(humanShips, row, col) {
-  const ship = humanShips.find((s) => s.cells.some((c) => c.row === row && c.col === col));
-  return ship?.id ?? null;
+// İsabetleri BİTİŞİKLİĞE göre kümeler (4 yönlü flood fill). Gemi kimliği
+// KULLANILMAZ — kullanılamaz da, çünkü bot rakibin filosunu görmez.
+//
+// `canPlaceShip` yalnızca ÇAKIŞMAYI yasaklar, gemiler yan yana durabilir; bu
+// yüzden bir küme bazen iki farklı gemiye ait olabilir. Bu bir kusur değil:
+// insan oyuncu da tam olarak bu belirsizliği yaşar ve aşağıdaki "eksen belli
+// değilse dört komşuyu da dene" dalı bu durumu doğru şekilde ele alır.
+function clusterHits(botShots, shotMap) {
+  const seen = new Set();
+  const clusters = [];
+  for (const shot of botShots) {
+    if (!shot.hit) continue;
+    const startKey = cellKey(shot.row, shot.col);
+    if (seen.has(startKey)) continue;
+    seen.add(startKey);
+    const stack = [{ row: shot.row, col: shot.col }];
+    const cluster = [];
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      cluster.push(cur);
+      for (const { dr, dc } of DIRECTIONS) {
+        const nr = cur.row + dr; const nc = cur.col + dc;
+        const nKey = cellKey(nr, nc);
+        if (seen.has(nKey)) continue;
+        if (shotMap[nKey]?.hit) { seen.add(nKey); stack.push({ row: nr, col: nc }); }
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
 }
 
-function isShipSunkAt(humanShips, shotMap, shipId) {
-  const ship = humanShips.find((s) => s.id === shipId);
-  if (!ship) return false;
-  return ship.cells.every((c) => shotMap[cellKey(c.row, c.col)]?.hit);
+// Bir isabet kümesinin DEVAM EDİLEBİLECEK (henüz atış yapılmamış) komşuları.
+// Boş dizi dönmesi "bu küme kapandı, buradan çıkarılacak bilgi kalmadı"
+// demektir — botun elindeki veriyle yapabileceği tek "battı" çıkarımı budur.
+function clusterCandidates(cluster, isEmpty) {
+  if (cluster.length >= 2) {
+    const sameRow = cluster.every((h) => h.row === cluster[0].row);
+    const sameCol = cluster.every((h) => h.col === cluster[0].col);
+    // Eksen belli: gemi ancak bu doğrultuda uzayabilir, o yüzden SADECE iki uç
+    // denenir. İki uç da kapalıysa (kenar ya da ıska) dizi tamamlanmıştır ve
+    // dizi boş döner — bot dikine/yanına gereksiz atış yapmaz.
+    if (sameRow) {
+      const cols = cluster.map((h) => h.col);
+      const row = cluster[0].row;
+      return [{ row, col: Math.min(...cols) - 1 }, { row, col: Math.max(...cols) + 1 }]
+        .filter((p) => isEmpty(p.row, p.col));
+    }
+    if (sameCol) {
+      const rows = cluster.map((h) => h.row);
+      const col = cluster[0].col;
+      return [{ row: Math.min(...rows) - 1, col }, { row: Math.max(...rows) + 1, col }]
+        .filter((p) => isEmpty(p.row, p.col));
+    }
+  }
+  // Tek isabet (eksen henüz bilinmiyor) ya da L şeklinde küme (yan yana duran
+  // iki gemi): dört komşu da denenir.
+  const out = [];
+  for (const h of cluster) {
+    for (const { dr, dc } of DIRECTIONS) {
+      const nr = h.row + dr; const nc = h.col + dc;
+      if (isEmpty(nr, nc)) out.push({ row: nr, col: nc });
+    }
+  }
+  return out;
 }
 
-// Şimdiye kadarki isabetleri, ait oldukları (ve HENÜZ BATMAMIŞ) gemiye göre
-// gruplar — "yarım kalmış gemi" tespiti tam olarak budur.
-function groupWoundedByShip(botShots, humanShips, shotMap) {
-  const groups = {};
-  botShots.forEach((s) => {
-    if (!s.hit) return;
-    const shipId = findShipIdAt(humanShips, s.row, s.col);
-    if (!shipId || isShipSunkAt(humanShips, shotMap, shipId)) return;
-    (groups[shipId] ??= []).push(s);
-  });
-  return groups;
-}
-
-// Botun bir sonraki atış koordinatını seçer. `botShots`: botun kendi
-// atışları (`{row, col, hit}`); `humanShips`: rakibin (insanın) yerleştirdiği
-// gemileri (batma kontrolü için).
-export function chooseBotShot(botShots, humanShips) {
+// Botun bir sonraki atış koordinatını seçer.
+// `botShots`: botun kendi atışları (`{row, col, hit}`) — TEK bilgi kaynağı.
+export function chooseBotShot(botShots) {
+  const shots = botShots || [];
   const shotMap = {};
-  botShots.forEach((s) => { shotMap[cellKey(s.row, s.col)] = s; });
+  shots.forEach((s) => { shotMap[cellKey(s.row, s.col)] = s; });
   const inBounds = (r, c) => r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
   const isEmpty = (r, c) => inBounds(r, c) && !shotMap[cellKey(r, c)];
 
-  // DURUM B (Hedefleme): en az bir "yarım kalmış" (vurulmuş ama batmamış)
-  // gemi varsa, rastgele atmak YERİNE bu geminin etrafında devam edilir.
-  const groups = groupWoundedByShip(botShots, humanShips, shotMap);
-  const activeShipIds = Object.keys(groups);
-  if (activeShipIds.length > 0) {
-    // Birden fazla yarım kalmış gemi varsa (nadir), en çok isabet alan
-    // (en "sıcak" ipucu) önceliklidir.
-    const targetShipId = activeShipIds.sort((a, b) => groups[b].length - groups[a].length)[0];
-    const hits = groups[targetShipId];
+  // DURUM B (Hedefleme): hâlâ uzayabilecek bir isabet kümesi varsa, rastgele
+  // atmak YERİNE o kümenin etrafında devam edilir.
+  const open = clusterHits(shots, shotMap)
+    .map((cluster) => ({ cluster, candidates: clusterCandidates(cluster, isEmpty) }))
+    .filter((c) => c.candidates.length > 0);
 
-    const candidates = [];
-    if (hits.length >= 2) {
-      // İki+ isabet aynı satır/sütundaysa geminin EKSENİ bellidir — rastgele
-      // dört yöne bakmak yerine doğrudan bu eksenin İKİ UCUNU dener (gemi
-      // batana kadar bu doğrultuda ilerler).
-      const sameRow = hits.every((h) => h.row === hits[0].row);
-      const sameCol = hits.every((h) => h.col === hits[0].col);
-      if (sameRow) {
-        const cols = hits.map((h) => h.col);
-        const minC = Math.min(...cols); const maxC = Math.max(...cols);
-        [{ row: hits[0].row, col: minC - 1 }, { row: hits[0].row, col: maxC + 1 }]
-          .forEach((p) => { if (isEmpty(p.row, p.col)) candidates.push(p); });
-      } else if (sameCol) {
-        const rows = hits.map((h) => h.row);
-        const minR = Math.min(...rows); const maxR = Math.max(...rows);
-        [{ row: minR - 1, col: hits[0].col }, { row: maxR + 1, col: hits[0].col }]
-          .forEach((p) => { if (isEmpty(p.row, p.col)) candidates.push(p); });
-      }
-    }
-    if (candidates.length === 0) {
-      // Tek isabet (ya da eksen henüz belirsiz): TÜM yaralı hücrelerin
-      // Kuzey/Güney/Doğu/Batı komşularını dene.
-      hits.forEach((h) => {
-        DIRECTIONS.forEach(({ dr, dc }) => {
-          const nr = h.row + dr; const nc = h.col + dc;
-          if (isEmpty(nr, nc)) candidates.push({ row: nr, col: nc });
-        });
-      });
-    }
-    if (candidates.length > 0) return candidates[Math.floor(Math.random() * candidates.length)];
-    // Bu geminin etrafında hiç boş hücre kalmadıysa (köşeye sıkıştıysa)
-    // DURUM A'ya (rastgele avlanma) düşülür.
+  if (open.length > 0) {
+    // Birden fazla açık küme varsa en çok isabet almış olan (en "sıcak" ipucu)
+    // önceliklidir.
+    open.sort((a, b) => b.cluster.length - a.cluster.length);
+    const { candidates } = open[0];
+    return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
   // DURUM A (Avlanma): tahtadaki TÜM boş (atış yapılmamış) hücreler arasından
