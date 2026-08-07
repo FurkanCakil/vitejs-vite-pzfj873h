@@ -537,7 +537,16 @@ export default function App() {
           const missingUid = data.scores ? Object.keys(data.scores).find(uid => !data.players.includes(uid)) : null;
           const isResume = !!missingUid;
           const updatedPlayers = [...(data.players || []), user.uid];
-          let updatePayload = { players: updatedPlayers, status: data.gameId === 'okey101' ? 'waiting' : 'playing', abandonedBy: null, abandonReason: null };
+          // Okey101'de el zaten dağıtılmışken (racks var) VE masa hâlâ 'playing'
+          // durumundaysa (bkz. DisconnectOverlay#Bekle — artık ayrılmayan diğer
+          // oyuncular için oyunu 'playing'de tutuyor), buraya 'waiting' yazmak
+          // masayı gereksiz yere yeniden dondururdu: racks dolu olduğu için
+          // Okey101Lobby hiç mount olmaz, dolayısıyla onun 4-oyunculu geri sayımı da
+          // hiç çalışıp masayı tekrar 'playing'e döndüremezdi. Bu yüzden orta-maç
+          // dönüşlerinde mevcut 'playing' durumu KORUNUR; sadece henüz hiç el
+          // dağıtılmamış (lobi aşaması) katılımlarda eskisi gibi 'waiting' yazılır.
+          const okeyMidMatchResume = data.gameId === 'okey101' && !!data.racks && data.status === 'playing';
+          let updatePayload = { players: updatedPlayers, status: okeyMidMatchResume ? 'playing' : (data.gameId === 'okey101' ? 'waiting' : 'playing'), abandonedBy: null, abandonReason: null };
 
           if (!isResume) {
             // Madde 12 (kullanıcı isteği): isim girmeyen misafirlere HEP sabit

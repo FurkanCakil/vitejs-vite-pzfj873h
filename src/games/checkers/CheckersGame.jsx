@@ -16,7 +16,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   // Telefonda tam ekranken tahta, üstteki başlık/skor tablosunun ALTINDA
   // kalan boş alanı doldursun diye büyütülür (bkz. useBoardScale) — skor
   // tablosu kendi doğal boyutunda kalır, gerekirse kaydırılarak görülür.
-  const { isPhone, isCompact } = useViewport();
+  const { width: viewportW, height: viewportH, isPhone, isCompact } = useViewport();
   const [isFullscreenView, setIsFullscreenView] = useState(false);
   useEffect(() => {
     const sync = () => setIsFullscreenView(!!document.fullscreenElement);
@@ -28,6 +28,14 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
   const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
+
+  // Masaüstünde tam ekrana geçilince tahta (satrançtaki gibi) EKSTRA büyür —
+  // önceden `boardFit` sadece telefon/kompakt içindi, masaüstünde tam ekran
+  // tahtayı büyütmüyordu (bkz. kullanıcı raporu). Piksel cinsinden doğrudan
+  // boyutlandırma kullanılır (useBoardScale'in transform:scale'i, kartın
+  // `max-w-xl` sınırına takılıp tahtayı kırpardı).
+  const desktopFullscreenBoost = isFullscreenView && !isPhone && !isCompact;
+  const boostedBoardPx = Math.round(Math.max(420, Math.min(viewportW * 0.5, viewportH - 240, viewportH * 0.68, 760)));
 
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -235,7 +243,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     : `bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl ${boardFit ? 'p-2' : 'p-4 md:p-6'}`;
 
   return (
-    <div className={`relative flex flex-col items-center w-full max-w-xl ${cardClass}`}>
+    <div className={`relative flex flex-col items-center w-full ${desktopFullscreenBoost ? '' : 'max-w-xl'} ${cardClass}`}>
       {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       {/* Telefon YATAY tam ekranda skor tablosu + durum yazısı TEK SATIRDA
           birleşir; artan alanın tamamı tahtaya gider (bkz. useBoardScale). */}
@@ -277,8 +285,8 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
       </>
       )}
 
-      <div ref={wrapRef} style={wrapStyle} className="w-full">
-        <div ref={boardRef} style={boardStyle} className="grid grid-cols-8 grid-rows-8 w-full max-w-[400px] aspect-square mx-auto bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation">
+      <div ref={wrapRef} style={desktopFullscreenBoost ? { width: boostedBoardPx, margin: '0 auto' } : wrapStyle} className="w-full">
+        <div ref={boardRef} style={desktopFullscreenBoost ? { width: boostedBoardPx, height: boostedBoardPx } : boardStyle} className={`grid grid-cols-8 grid-rows-8 ${desktopFullscreenBoost ? '' : 'w-full max-w-[400px]'} aspect-square mx-auto bg-[#c2a176] rounded-sm overflow-hidden shadow-inner border-4 border-slate-800 touch-action-manipulation`}>
           {visualIndices.map((i) => {
             const cell = board[i]; const r = Math.floor(i / 8); const c = i % 8;
             const isDark = (r + c) % 2 !== 0;
