@@ -11,7 +11,7 @@ import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
-import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
+import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, TURN_TIMEOUT_GRACE_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
 import {
@@ -767,7 +767,10 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     const turnUid = roomData.turn;
     if (!turnUid || !roomData.turnDeadline) return;
 
-    const remaining = roomData.turnDeadline - Date.now();
+    // bkz. TURN_TIMEOUT_GRACE_MS: sayaç 0'ı gösterdikten sonra da kısa bir süre
+    // beklenir, böylece son anda davranan oyuncunun taşı hâlâ kendi elinden
+    // çıkar (otomatik atış onun yerine geçmez).
+    const remaining = roomData.turnDeadline + TURN_TIMEOUT_GRACE_MS - Date.now();
     if (remaining > 0) {
       const timer = setTimeout(() => setBotWatchdogTick((n) => n + 1), remaining + 300);
       return () => clearTimeout(timer);
@@ -781,7 +784,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         if (!snap.exists()) return;
         let data = snap.data();
         if (data.turn !== turnUid || data.setupPhase || data.roundEnded) return;
-        if (!data.turnDeadline || Date.now() < data.turnDeadline) return;
+        if (!data.turnDeadline || Date.now() < data.turnDeadline + TURN_TIMEOUT_GRACE_MS) return;
 
         const apply = (result) => {
           if (!result?.success || !result.next) return false;
@@ -1326,7 +1329,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       if (!snap.exists()) return;
       const data = snap.data();
       if (data.setupPhase || data.roundEnded || data.turn !== actingUid) return;
-      if (!data.turnDeadline || Date.now() < data.turnDeadline) return;
+      if (!data.turnDeadline || Date.now() < data.turnDeadline + TURN_TIMEOUT_GRACE_MS) return;
 
       const rack = (data.racks?.[actingUid] || []).filter(Boolean);
       // Istaka boşsa oyuncu aslında elini bitirmiştir (kazanan odur);
@@ -2507,7 +2510,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
     <div className={`flex items-center justify-center gap-2 text-center font-bold rounded-lg ${isCompact ? 'text-[11px] px-2 py-0.5' : 'text-xs sm:text-base px-3 py-1.5'} ${isMyTurn ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400'}`}>
       <span>{isMyTurn ? (mustDraw ? 'Sıra Sende! Önce bir taş çek.' : 'Şimdi ıstakandan bir taş at.') : `${turnPlayerName} oynuyor...`}</span>
       {/* bkz. TurnCountdown: sayaç kendi bileşeninde tıklar, masayı yeniden çizmez. */}
-      <TurnCountdown deadline={roomData.turnDeadline} active={!setupPhase} />
+      <TurnCountdown deadline={roomData.turnDeadline} active={!setupPhase} warn={isMyTurn} />
     </div>
   );
 

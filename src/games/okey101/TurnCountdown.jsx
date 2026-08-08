@@ -1,4 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { playOkeySound } from '../../utils/okeySound.js';
+
+// Uyarı sesinin çalacağı saniyeler: 10'da bir kez "yaklaşıyor", son 5 saniyede
+// her saniye "bitiyor". (bkz. okeySound#timeWarn/timeTick)
+const WARN_AT = 10;
+const URGENT_FROM = 5;
 
 // PERFORMANS (KRİTİK): Tur geri sayımı eskiden Okey101Game'in KENDİ state'iydi
 // ve her 250ms'de bir güncelleniyordu. Okey101Game ise masanın TAMAMINI
@@ -10,16 +16,36 @@ import React, { useEffect, useState } from 'react';
 //
 // Sayaç artık kendi küçük bileşeninde yaşıyor: 250ms'lik tik SADECE bu
 // rozeti yeniden çizer, masanın geri kalanına hiç dokunmaz.
-export default function TurnCountdown({ deadline, active }) {
+//
+// `warn` yalnızca SIRA BENDEYKEN true'dur: geri sayım rozeti rakip oynarken de
+// görünür ama uyarı sesi sadece kendi hamlemde çalar.
+export default function TurnCountdown({ deadline, active, warn = false }) {
   const [remaining, setRemaining] = useState(null);
+  // Sayaç 250ms'de bir tıkladığı için aynı saniye 4 kez görülür; en son ses
+  // çalınan saniyeyi tutup her saniye TEK bip garantiler.
+  const lastBeepSecRef = useRef(null);
 
   useEffect(() => {
     if (!active || !deadline) { setRemaining(null); return; }
-    const tick = () => setRemaining(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    // İlk tik sesSİZdir: normal akışta tur 45sn'den başlar, yani uyarı
+    // bölgesinde değildir. Bileşen tur ortasında yeniden kurulursa (yeniden
+    // bağlanma, sıra rozetinin yeniden takılması) geçmiş saniyelerin sesi
+    // toplu halde patlamaz.
+    let first = true;
+    lastBeepSecRef.current = null;
+    const tick = () => {
+      const sec = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setRemaining(sec);
+      const wasFirst = first;
+      first = false;
+      if (!warn || wasFirst || sec === lastBeepSecRef.current) return;
+      if (sec === WARN_AT) { lastBeepSecRef.current = sec; playOkeySound('timeWarn'); }
+      else if (sec >= 1 && sec <= URGENT_FROM) { lastBeepSecRef.current = sec; playOkeySound('timeTick'); }
+    };
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [deadline, active]);
+  }, [deadline, active, warn]);
 
   if (remaining === null) return null;
 

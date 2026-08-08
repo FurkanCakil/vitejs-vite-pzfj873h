@@ -107,6 +107,27 @@ function clatter(ac, { count, spread, freq, vol, dur }) {
   }
 }
 
+// Süre uyarısı ("dıt"). Buradaki TEK istisna: bu ses tahta taş ailesinden
+// DEĞİL, bilerek sentetik bir uyarı bip'idir — masadaki tıkırtılara benzeseydi
+// oyuncu onu kendi hamlesinin sesiyle karıştırırdı. Kısa, tek perdeli, hızlı
+// sönen bir üçgen dalga; alçak geçiren süzgeç sertliğini alır.
+function beep(ac, { freq = 880, vol = 0.16, dur = 0.09 } = {}) {
+  const t0 = ac.currentTime;
+  const osc = ac.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, t0);
+  const lp = ac.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = freq * 3;
+  const g = ac.createGain();
+  // Anlık başlayıp anlık bitmek "tık" (click) üretir; çok kısa iniş/çıkış payı.
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(lp); lp.connect(g); g.connect(getMaster());
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+}
+
 export const OKEY_SOUNDS = {
   // Istakadaki taşa dokunma / sürükleyip bırakma — en kalın, en tok tık.
   tile: (ac) => woodClick(ac, { freq: 340, vol: 0.42, dur: 0.06 }),
@@ -130,6 +151,11 @@ export const OKEY_SOUNDS = {
   // koyma tıkırtısı. `tile`/`draw`/`discard` ile aynı aileden ama en düşük
   // sesli varyant (flip'ten bile daha kısık).
   tack: (ac) => woodClick(ac, { freq: 520, vol: 0.11, dur: 0.045 }),
+  // Sıra sendeyken süren azalıyor: 10sn kala BİR kez çalar (bkz. TurnCountdown).
+  timeWarn: (ac) => beep(ac, { freq: 840, vol: 0.15, dur: 0.09 }),
+  // Son 5 saniyede her saniye çalar — biraz daha tiz ve daha kısa, böylece
+  // "yaklaşıyor" ile "bitiyor" kulakla ayırt edilir.
+  timeTick: (ac) => beep(ac, { freq: 1040, vol: 0.17, dur: 0.07 }),
 };
 
 // 101 Okey ses efektlerini çalar. Bilinmeyen bir tür ya da desteklenmeyen /

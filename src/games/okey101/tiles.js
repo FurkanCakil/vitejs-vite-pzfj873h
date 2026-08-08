@@ -51,6 +51,13 @@ export const SETUP_DURATION_MS = 25000;
 // değer değiştiğinde sessizce tutarsız kalıyordu.
 export const TURN_DURATION_MS = 45000;
 
+// Sayaç 0'a düştükten SONRA, host otomatik taş atmadan önce beklenen ek pay.
+// KULLANICI İSTEĞİ: "0sn kalmışsa da oyuncu hızlı davranıp taş atabilsin."
+// Sayaç 0'ı gösterirken oyuncunun hamlesi hâlâ kabul edilir (hamle
+// transaction'ları zaten süreye değil, sıraya bakar); host yalnızca bu pay da
+// dolduktan sonra devreye girer. Pratikte hamle süresi ~2sn uzamış olur.
+export const TURN_TIMEOUT_GRACE_MS = 2000;
+
 // 4 renk x (1-13) x 2 kopya = 104 + 2 Sahte Okey = 106 taş.
 export function createTileSet() {
   const tiles = [];
