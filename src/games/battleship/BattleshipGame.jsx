@@ -26,19 +26,8 @@ import { BOT_UID, generateBotFleet, chooseBotShot } from './bot.js';
 // Hücre kenarlarını (inset -1px) örterek yan parçayla dikişsiz birleşir.
 //   state: 'intact' | 'hit' | 'sunk'
 //
-// PERFORMANS/GÖRSEL HATA DÜZELTMESİ: Bu bileşen eskiden BattleshipGame'in
-// İÇİNDE tanımlıydı — yani BattleshipGame her yeniden render olduğunda
-// (ör. yeni bir gemi yerleştirildiğinde) `ShipHull` YENİDEN OLUŞTURULAN bir
-// fonksiyondu. React, bir bileşenin "tipini" (function referansını) önceki
-// render'la KARŞILAŞTIRIR; tip değiştiyse eski DOM düğümünü SÖKÜP YENİDEN
-// TAKAR (unmount+mount). Sonuç: yeni bir gemi yerleştirildiğinde DAHA ÖNCE
-// yerleştirilmiş TÜM gemiler de yeniden mount ediliyor, bu da her birinin
-// "yerleşme" (bs-place) animasyonunu BAŞTAN oynatıyordu — kullanıcının tarif
-// ettiği "kareler açılıp kapanıyor" (flicker) tam olarak buydu. Modül
-// seviyesine taşınınca fonksiyon referansı HER RENDER'DA SABİT kalır, React
-// aynı DOM düğümünü korur, animasyon sadece GERÇEKTEN yeni yerleştirilen
-// gemide bir kez oynar.
-const ShipHull = ({ seg, state = 'intact', placing = false }) => {
+// length > 1 draws a whole setup ship; battle cells retain per-hit segments.
+const ShipHull = ({ seg, state = 'intact', length = 1 }) => {
   const horiz = seg.orientation === 'H';
   // Gövde gradyanı gemi EKSENİNE DİK uygulanır: üstte güverte ışığı, altta
   // gölge -> yuvarlak/hacimli bir gövde izlenimi.
@@ -56,14 +45,16 @@ const ShipHull = ({ seg, state = 'intact', placing = false }) => {
 
   return (
     <div
-      className={`absolute pointer-events-none transition-[background,filter] duration-500 ${placing ? 'bs-place' : ''}`}
+      className="absolute pointer-events-none transition-[background,filter] duration-500"
       style={{
-        inset: '-1px',
+        inset: length > 1 ? '1px' : '-1px',
         background: state === 'sunk' ? burnt : steel,
-        ...radius,
+        ...(length > 1 ? { borderRadius: '9999px' } : radius),
         boxShadow: state === 'sunk'
           ? 'inset 0 0 6px rgba(0,0,0,0.85)'
-          : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -2px 3px rgba(0,0,0,0.45)',
+          : horiz
+            ? 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -2px 3px rgba(0,0,0,0.45)'
+            : 'inset 1px 0 0 rgba(255,255,255,0.55), inset -2px 0 3px rgba(0,0,0,0.45)',
         filter: state === 'hit' ? 'saturate(0.5) brightness(0.72)' : undefined,
       }}
     >
@@ -75,10 +66,15 @@ const ShipHull = ({ seg, state = 'intact', placing = false }) => {
           : { top: 0, bottom: 0, left: '50%', width: 1, transform: 'translateX(-0.5px)' }}
       />
       {/* Taret/baca detayı: her parçanın ortasında küçük bir kule. */}
-      <div
-        className={`absolute rounded-[1px] ${state === 'sunk' ? 'bg-black/50' : 'bg-slate-700/70'}`}
-        style={{ left: '34%', top: '34%', width: '32%', height: '32%' }}
-      />
+      {Array.from({ length }, (_, i) => (
+        <div
+          key={i}
+          className={`absolute rounded-[1px] ${state === 'sunk' ? 'bg-black/50' : 'bg-slate-700/70'}`}
+          style={horiz
+            ? { left: `${(i + 0.34) * 100 / length}%`, top: '34%', width: `${32 / length}%`, height: '32%' }
+            : { left: '34%', top: `${(i + 0.34) * 100 / length}%`, width: '32%', height: `${32 / length}%` }}
+        />
+      ))}
       {/* Batan gemide sürekli duman/alev nabzı. */}
       {state === 'sunk' && (
         <div
@@ -95,8 +91,7 @@ const ShipHull = ({ seg, state = 'intact', placing = false }) => {
 //   sunk: gemi TAMAMEN battıysa patlama topu küçülüp saydamlaşır — böylece
 //   altındaki KÖMÜRLEŞMİŞ gövde (ve onun duman/alev nabzı) görünür kalır.
 //   Aksi halde opak ateş topu gövdeyi tamamen örtüyordu.
-// (Bu bileşen de ShipHull ile AYNI sebepten modül seviyesine taşındı —
-// bkz. yukarıdaki yorum.)
+// Modül seviyesinde tutularak yeniden render sırasında remount önlenir.
 const ShotMarker = ({ hit, sunk = false }) => (hit ? (
   <>
     <div
@@ -310,6 +305,8 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const ship = placedShips.find((s) => s.id === occupantId);
       if (!ship) return;
+      setSelectedShipId(null);
+      setHoverOrigin(null);
       const grabIndex = ship.cells.findIndex((cell) => cell.row === row && cell.col === col);
       shipDragRef.current = {
         kind: 'move', shipId: ship.id, orientation: ship.orientation, length: ship.length, grabIndex,
@@ -818,7 +815,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // fonksiyonuna göre 10x10 gövde. Yerleştirme (Faz 1) ve savaş (Faz 2)
   // tahtaları aynı iskeleti, farklı hücre görünümleriyle kullanır.
   //   radar: hedef tahtasına dönen tarama ışığı ekler.
-  const renderGrid = (renderCell, onMouseLeaveBoard, { radar = false } = {}) => (
+  const renderGrid = (renderCell, onMouseLeaveBoard, { radar = false, fleet = null } = {}) => (
     <div className="inline-flex flex-col select-none" onMouseLeave={onMouseLeaveBoard}>
       <div className="flex">
         <div className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 shrink-0" />
@@ -840,6 +837,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
                 {Array.from({ length: BOARD_SIZE }, (_, c) => renderCell(r, c))}
               </div>
             ))}
+            {fleet}
           </div>
         </div>
       </div>
@@ -848,16 +846,40 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
 
   const CELL = 'w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 shrink-0 relative';
 
-  const setupSegments = buildSegmentMap(placedShips);
+  // Keep one stable hull per ship, independent of the cells it occupies.
+  // Cell-by-cell mounting/scaling tears the silhouette during rotation/drag.
+  const renderSetupHull = (ship, preview = false) => (
+    <div
+      key={ship.id}
+      data-setup-ship={ship.id}
+      className={`absolute pointer-events-none z-10 ${shakeShipId === ship.id ? 'animate-[shake_0.35s_ease-in-out]' : ''}`}
+      style={{
+        left: `${ship.origin.col * 100 / BOARD_SIZE}%`,
+        top: `${ship.origin.row * 100 / BOARD_SIZE}%`,
+        width: `${(ship.orientation === 'H' ? ship.length : 1) * 100 / BOARD_SIZE}%`,
+        height: `${(ship.orientation === 'V' ? ship.length : 1) * 100 / BOARD_SIZE}%`,
+        opacity: preview ? 0.65 : 1,
+      }}
+    >
+      <ShipHull seg={{ orientation: ship.orientation }} length={ship.length} />
+    </div>
+  );
+  const setupFleet = (
+    <div className="absolute inset-0 pointer-events-none">
+      {placedShips.map((ship) => renderSetupHull(
+        dragMove?.shipId === ship.id ? { ...ship, origin: dragMove.origin } : ship,
+        dragMove?.shipId === ship.id,
+      ))}
+      {previewInfo && renderSetupHull({
+        ...SHIP_DEFS.find((ship) => ship.id === selectedShipId),
+        origin: previewInfo.cells[0], orientation: pendingOrientation,
+      }, true)}
+    </div>
+  );
 
   const renderSetupMyCell = (r, c) => {
     const key = cellKey(r, c);
     const occupantId = occupancy[key];
-    const seg = setupSegments[key];
-    // Bu hücredeki gemi ŞU AN basılı-tutup-sürüklenerek taşınıyorsa, ESKİ
-    // konumundaki gövde gizlenir — aksi halde hem eski hem yeni (önizleme)
-    // konumda aynı anda görünüp kafa karıştırırdı.
-    const hiddenForDrag = !!(dragMove && seg && seg.shipId === dragMove.shipId);
     // İki AYRI önizleme kaynağı olabilir (aynı anda sadece biri aktiftir):
     // envanterden yeni gemi yerleştirme (previewSet) ya da yerleştirilmiş bir
     // gemiyi sürükleyerek taşıma (dragPreviewSet).
@@ -891,9 +913,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
         onPointerCancel={handleCellPointerCancel}
         className={`${CELL} bs-cell ${!setupLocked && !occupantId ? 'bs-cell-live' : ''} ${occupantId ? 'touch-none' : ''} transition-colors ${previewCls} ${setupLocked ? 'cursor-default' : (occupantId ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer')} ${shaking ? 'animate-[shake_0.35s_ease-in-out] z-20' : ''}`}
         title={occupantId ? 'Tıkla: döndür/kaldır seçenekleri — taşımak için basılı tutup sürükle' : undefined}
-      >
-        {seg && !hiddenForDrag && <ShipHull seg={seg} state="intact" placing />}
-      </div>
+      />
     );
   };
 
@@ -1004,14 +1024,6 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
           50%      { opacity: 0.8;  transform: scale(1.12); }
         }
         .bs-sunk-glow { animation: bsSunkGlow 2.1s ease-in-out infinite; }
-
-        /* Gemi yerleştirilirken "oturma" (bounce) hissi. */
-        @keyframes bsPlace {
-          0%   { transform: scale(1.3); }
-          55%  { transform: scale(0.93); }
-          100% { transform: scale(1); }
-        }
-        .bs-place { animation: bsPlace 320ms cubic-bezier(0.2, 1.5, 0.4, 1) 1 both; }
 
         /* Radar taraması: hedef tahtasının üstünde dönen ışık süpürgesi. */
         @keyframes bsSweep { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -1139,7 +1151,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
           <h3 className="text-sm font-bold uppercase tracking-widest text-indigo-300">Kendi Filom</h3>
           <div className="bg-slate-900/70 p-2 sm:p-3 rounded-xl border border-slate-700 shadow-inner overflow-x-auto">
             {roomData.setupPhase
-              ? renderGrid(renderSetupMyCell, () => setHoverOrigin(null))
+              ? renderGrid(renderSetupMyCell, () => setHoverOrigin(null), { fleet: setupFleet })
               : renderGrid(renderBattleMyCell)}
           </div>
 
