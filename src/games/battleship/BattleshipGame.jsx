@@ -429,16 +429,14 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setHoverOrigin(null);
   };
 
-  // "Kaldır" (bkz. şipMenu): gemiyi tahtadan söker ve elde tutulan (seçili)
-  // gemi olarak geri verir — kullanıcı hemen başka bir hücreye tıklayıp
-  // yeniden yerleştirebilir.
+  // "Kaldır": gemiyi envantere döndürür; tekrar yerleştirmek için seçilmelidir.
   const pickUpShip = (shipId) => {
     if (setupLocked) return;
     const ship = placedShips.find((s) => s.id === shipId);
     if (!ship) return;
     setPlacedShips((prev) => prev.filter((s) => s.id !== shipId));
-    setSelectedShipId(shipId);
-    setPendingOrientation(ship.orientation);
+    setSelectedShipId(null);
+    setHoverOrigin(null);
   };
 
   // "Döndür" (bkz. shipMenu / çift-tık / sağ-tık): KULLANICI İSTEĞİ — gemi
