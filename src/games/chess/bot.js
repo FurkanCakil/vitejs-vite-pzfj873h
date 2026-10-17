@@ -6,7 +6,7 @@ export const DIFFICULTY_LABELS = { easy: 'Kolay', medium: 'Orta', hard: 'Zor' };
 
 // Stockfish'in "Skill Level" (0-20) ve arama derinliği (depth) ayarları.
 export const DIFFICULTY_CONFIG = {
-  easy: { skillLevel: 0, depth: 2, randomMoveChance: 0.25 },
+  easy: { skillLevel: 0, depth: 2, randomMoveChance: 0.10 },
   medium: { skillLevel: 10, depth: 8 },
   hard: { skillLevel: 20, depth: 16 },
 };

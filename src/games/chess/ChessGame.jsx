@@ -8,6 +8,8 @@ import { boardToFEN, uciMoveToIndices } from './fen.js';
 import { useStockfish } from './stockfishEngine.js';
 import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG, chooseEasyMove } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
+import MoveNotation from './MoveNotation.jsx';
+import { moveToSAN } from './notation.js';
 
 const EMPTY_SET = new Set();
 
@@ -186,6 +188,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const p1Score = effective.scores?.[p1Uid] || 0; const p2Score = effective.scores?.[p2Uid] || 0;
 
   const executeMove = async (from, to, movingPiece, targetPiece, currentBoard, moverUid = user.uid, moverColor = myColor) => {
+    const originalPiece = board[from];
+    const notationStartFen = effective.notationStartFen || boardToFEN(board, moverColor, effective.enPassantTarget, effective.halfmoveClock || 0, 1);
     if (movingPiece.type === 'k' && Math.abs(from - to) === 2) {
       if (to === 62) { currentBoard[61] = currentBoard[63]; currentBoard[61].hasMoved = true; currentBoard[63] = null; }
       if (to === 58) { currentBoard[59] = currentBoard[56]; currentBoard[59].hasMoved = true; currentBoard[56] = null; }
@@ -214,7 +218,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     let newHalfmoveClock = (effective.halfmoveClock || 0) + 1;
     let newPositionHistory = [...(effective.positionHistory || [])];
 
-    if (movingPiece.type === 'p' || targetPiece) {
+    if (originalPiece.type === 'p' || targetPiece) {
        newHalfmoveClock = 0;
        newPositionHistory = [];
     }
@@ -223,6 +227,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (newPositionHistory.length > 100) newPositionHistory = newPositionHistory.slice(-100);
 
     const gameState = getGameState(currentBoard, oppColor, newHalfmoveClock, newPositionHistory, newEnPassantTarget);
+    const san = moveToSAN(board, currentBoard, from, to, effective.enPassantTarget, newEnPassantTarget, gameState === 'mate');
     let newWinner = null, newDrawReason = null;
 
     if (gameState === 'mate') { newWinner = moverUid; playSound('win'); }
@@ -234,10 +239,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     let updatePayload = {
       board: currentBoard, turn: newWinner ? null : oppUid, captured: newCaptured, winner: newWinner,
       halfmoveClock: newHalfmoveClock, positionHistory: newPositionHistory, enPassantTarget: newEnPassantTarget,
+      chessMoves: [...(effective.chessMoves || []), san], notationStartFen,
       lastMove: { from, to }, drawOffer: null, takebackOffer: null,
       previousState: {
          board: effective.board, turn: effective.turn, captured: effective.captured || {w:[], b:[]},
          halfmoveClock: effective.halfmoveClock || 0, positionHistory: effective.positionHistory || [],
+         chessMoves: effective.chessMoves || [], notationStartFen: effective.notationStartFen || null,
          enPassantTarget: effective.enPassantTarget || null, lastMove: effective.lastMove || null
       }
     };
@@ -594,7 +601,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     if (isBot) {
       const initBoard = createInitialChessBoard();
-      await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
+      await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], chessMoves: [], notationStartFen: null, winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
       return;
     }
     await updateRoom({ rematchRequestedBy: user.uid });
@@ -603,7 +610,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (isSpectator) return; const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     const initBoard = createInitialChessBoard();
-    await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
+    await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], chessMoves: [], notationStartFen: null, winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
@@ -646,7 +653,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
 
   return (
     <div
-      className={`relative flex flex-col items-center w-full overflow-hidden ${hasSizedBoard ? '' : 'max-w-xl md:max-w-2xl lg:max-w-3xl'} ${phoneLandscapeFullscreen ? 'p-1 gap-0.5' : 'bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl'}`}
+      className={`relative flex flex-col items-center w-full overflow-hidden ${hasSizedBoard ? '' : `max-w-xl md:max-w-2xl lg:max-w-3xl ${!isFullscreenView ? 'min-[1100px]:max-w-5xl' : ''}`} ${phoneLandscapeFullscreen ? 'p-1 gap-0.5' : 'bg-gradient-to-br from-slate-800 to-slate-900 p-4 md:p-6 rounded-[2rem] border border-slate-700 shadow-2xl'}`}
       style={desktopFullscreenBoost
         ? { maxWidth: boostedCardPx, maxHeight: '94vh', overflowY: 'auto' }
         : (phoneLandscapeFullscreen ? { maxWidth: phoneLandscapeBoardPx + 32 } : undefined)}
@@ -746,6 +753,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
+      <div className={isFullscreenView ? 'w-full' : 'w-full grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,680px)_200px] gap-4 justify-center items-start'}>
       <div
         className={`relative w-full ${hasSizedBoard ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 ${phoneLandscapeFullscreen ? 'p-1' : 'p-2 md:p-3'} rounded-lg shadow-2xl mx-auto border border-slate-700`}
         style={hasSizedBoard ? { maxWidth: sizedBoardPx } : undefined}
@@ -858,6 +866,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
               </div>
            </div>
         )}
+      </div>
+
+      {!isFullscreenView && <MoveNotation
+        moves={effective.chessMoves || []} startFen={effective.notationStartFen}
+        white={p1Color === 'w' ? p1Name : p2Name} black={p1Color === 'b' ? p1Name : p2Name}
+        result={!effective.winner ? '*' : effective.winner === 'Draw' ? '1/2-1/2' : roomData.playerColors?.[effective.winner] === 'w' ? '1-0' : '0-1'}
+      />}
       </div>
 
       {effective.winner && roomData.status !== 'abandoned' && (

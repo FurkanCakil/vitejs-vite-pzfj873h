@@ -135,6 +135,7 @@ export function freshMatchState(gameId, players) {
       captured: { w: [], b: [] }, halfmoveClock: 0,
       positionHistory: [getBoardStateString(initBoard, null, 'w')],
       enPassantTarget: null, previousState: null,
+      chessMoves: [], notationStartFen: null,
       drawReason: null, winReason: null,
       turn: whiteUid ?? null, startingPlayer: whiteUid ?? null,
     };

@@ -442,6 +442,7 @@ export default function App() {
         scores: { [user.uid]: 0, [CHESS_BOT_UID]: 0 }, status: 'playing',
         board: initBoard, playerColors, captured: { w: [], b: [] }, halfmoveClock: 0,
         positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null,
+        chessMoves: [], notationStartFen: null,
         drawOffer: null, takebackOffer: null, winner: null, drawReason: null, winReason: null,
         turn: whiteUid, startingPlayer: whiteUid, rematchRequestedBy: null,
         abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
@@ -526,7 +527,7 @@ export default function App() {
        };
        
        if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); }
-       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null }); }
+       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null, chessMoves: [], notationStartFen: null }); }
        else if (gameId === 'dama') {
         const isWhite = Math.random() > 0.5;
         Object.assign(initialState, {
@@ -720,6 +721,7 @@ export default function App() {
               const initBoard = createInitialChessBoard();
               updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
               updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
+              updatePayload.chessMoves = []; updatePayload.notationStartFen = null;
             } else if (data.gameId === 'dama') {
               const hostColor = data.playerColors[data.players[0]];
               const myColor = hostColor === 'w' ? 'b' : 'w';
