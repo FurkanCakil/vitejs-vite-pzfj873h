@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { doc, runTransaction, setDoc, deleteField, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, setDoc, deleteField, serverTimestamp } from 'firebase/firestore';
 import { db, auth, appId } from '../firebase/config.js';
 import { HEARTBEAT_MS, sessionTime } from '../utils/presence.js';
 export { countActiveSessions } from '../utils/presence.js';
@@ -12,6 +12,20 @@ export default function usePresence(uid, playerId, roomCode) {
     if (!uid) return undefined;
     let current = null;
     let disposed = false;
+    let nextPruneAt = 0;
+    const expired = (value) => !Number.isFinite(sessionTime(value)) || Date.now() - sessionTime(value) > PRUNE_MS;
+    const prune = async () => {
+      if (Date.now() < nextPruneAt) return;
+      nextPruneAt = Date.now() + 5 * 60_000;
+      const snapshot = await getDoc(presenceCounterRef);
+      if (!Object.values(snapshot.data()?.sessions || {}).some(expired)) return;
+      await runTransaction(db, async (t) => {
+        const latest = await t.get(presenceCounterRef);
+        const stale = Object.fromEntries(Object.entries(latest.data()?.sessions || {})
+          .filter(([, value]) => expired(value)).map(([id]) => [id, deleteField()]));
+        if (Object.keys(stale).length) t.set(presenceCounterRef, { sessions: stale }, { merge: true });
+      });
+    };
 
     const remove = (session) => {
       if (session.token) {
@@ -32,18 +46,12 @@ export default function usePresence(uid, playerId, roomCode) {
       try {
         session.token = await auth.currentUser?.getIdToken();
         if (session.stopped) return;
-        await runTransaction(db, async (transaction) => {
-          const snap = await transaction.get(presenceCounterRef);
-          if (session.stopped) return;
-          const patch = {};
-          for (const [id, value] of Object.entries(snap.data()?.sessions || {})) {
-            const time = sessionTime(value);
-            if (!Number.isFinite(time) || Date.now() - time > PRUNE_MS) patch[id] = deleteField();
-          }
-          patch[session.id] = { uid, playerId, roomCode: roomCode || null, lastSeen: serverTimestamp() };
-          // merge:true retains omitted keys, so stale entries need explicit deletes.
-          transaction.set(presenceCounterRef, { sessions: patch, activeUsers: deleteField() }, { merge: true });
-        });
+        // Each heartbeat touches only its own entry: no read/compare retry
+        // when another player updates the shared document at the same time.
+        await setDoc(presenceCounterRef, { sessions: {
+          [session.id]: { uid, playerId, roomCode: roomCode || null, lastSeen: serverTimestamp() },
+        }, activeUsers: deleteField() }, { merge: true });
+        if (!disposed && !session.stopped) void prune().catch(() => {});
       } catch (error) {
         if (!session.stopped) console.warn('Oyuncu bağlantısı güncellenemedi:', error.code || error.message);
       } finally {
@@ -61,7 +69,8 @@ export default function usePresence(uid, playerId, roomCode) {
     const resume = () => {
       if (disposed) return;
       if (!current || current.stopped) {
-        current = { id: `${uid}_${crypto.randomUUID()}`, stopped: false, writing: false, token: null };
+        const suffix = crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+        current = { id: `${uid}_${suffix}`, stopped: false, writing: false, token: null };
       }
       void beat();
     };

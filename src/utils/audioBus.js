@@ -95,7 +95,7 @@ export function getAudioContext() {
       master.gain.setValueAtTime(sliderToGain(volume), ctx.currentTime);
       master.connect(ctx.destination);
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     return ctx;
   } catch { return null; }
 }

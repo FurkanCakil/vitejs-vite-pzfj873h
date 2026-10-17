@@ -1,3 +1,5 @@
+import { getCastlingRights } from './fen.js';
+
 export function createInitialChessBoard() {
   const board = Array(64).fill(null);
   const order = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -52,13 +54,13 @@ export function getPseudoLegalMoves(board, index, checkCastling = true, enPassan
   } else if (piece.type === 'n') { [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]].forEach(([dr, dc]) => add(r + dr, c + dc));
   } else if (piece.type === 'k') {
     [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]].forEach(([dr, dc]) => add(r + dr, c + dc));
-    if (checkCastling && !piece.hasMoved && !attacksOnly) {
+    if (checkCastling && !piece.hasMoved && !attacksOnly && index === (piece.color === 'w' ? 60 : 4)) {
       const enemyColor = piece.color === 'w' ? 'b' : 'w';
       if (!isSquareAttacked(board, index, enemyColor, enPassantTarget)) {
         const rookRight = board[index + 3];
-        if (rookRight && rookRight.type === 'r' && !rookRight.hasMoved) { if (!board[index + 1] && !board[index + 2] && !isSquareAttacked(board, index + 1, enemyColor, enPassantTarget) && !isSquareAttacked(board, index + 2, enemyColor, enPassantTarget)) moves.push(index + 2); }
+        if (rookRight && rookRight.type === 'r' && rookRight.color === piece.color && !rookRight.hasMoved) { if (!board[index + 1] && !board[index + 2] && !isSquareAttacked(board, index + 1, enemyColor, enPassantTarget) && !isSquareAttacked(board, index + 2, enemyColor, enPassantTarget)) moves.push(index + 2); }
         const rookLeft = board[index - 4];
-        if (rookLeft && rookLeft.type === 'r' && !rookLeft.hasMoved) { if (!board[index - 1] && !board[index - 2] && !board[index - 3] && !isSquareAttacked(board, index - 1, enemyColor, enPassantTarget) && !isSquareAttacked(board, index - 2, enemyColor, enPassantTarget)) moves.push(index - 2); }
+        if (rookLeft && rookLeft.type === 'r' && rookLeft.color === piece.color && !rookLeft.hasMoved) { if (!board[index - 1] && !board[index - 2] && !board[index - 3] && !isSquareAttacked(board, index - 1, enemyColor, enPassantTarget) && !isSquareAttacked(board, index - 2, enemyColor, enPassantTarget)) moves.push(index - 2); }
       }
     }
   } else {
@@ -107,21 +109,25 @@ export function isInsufficientMaterial(board) {
 }
 
 export function getBoardStateString(board, enPassantTarget, turn) {
-  return board.map(p => {
-     if (!p) return '.';
-     let s = p.color + p.type;
-     if (p.type === 'k' || p.type === 'r') s += (p.hasMoved ? '1' : '0');
-     return s;
-  }).join('') + `_ep:${enPassantTarget || '-'}_t:${turn || '-'}`;
+  // Only a legally available en passant capture distinguishes a repetition.
+  const epAvailable = enPassantTarget != null && board.some((p, index) =>
+    p?.type === 'p' && p.color === turn && getStrictLegalMoves(board, index, enPassantTarget).includes(enPassantTarget));
+  return board.map(p => p ? p.color + p.type : '.').join('') +
+    `_castle:${getCastlingRights(board)}_ep:${epAvailable ? enPassantTarget : '-'}_t:${turn || '-'}`;
+}
+
+// Keep histories from already-open rooms usable after this key correction.
+function normalizePositionKey(key) {
+  if (typeof key !== 'string' || key.includes('_castle:')) return key;
+  const match = key.match(/^(.*)_ep:(-|\d+)_t:([wb])$/);
+  if (!match) return key;
+  const cells = match[1].match(/\.|[wb][pnbrqk][01]?/g) || [];
+  if (cells.length !== 64 || cells.join('') !== match[1]) return key;
+  const board = cells.map(cell => cell === '.' ? null : { color: cell[0], type: cell[1], hasMoved: cell[2] === '1' });
+  return getBoardStateString(board, match[2] === '-' ? null : Number(match[2]), match[3]);
 }
 
 export function getGameState(board, nextTurnColor, halfmoveClock = 0, history = [], enPassantTarget = null) {
-  if (isInsufficientMaterial(board)) return 'draw_material';
-  if (halfmoveClock >= 100) return 'draw_50move'; 
-  
-  const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
-  if (history.filter(h => h === currentStateStr).length >= 3) return 'draw_repetition';
-
   let hasMoves = false, kingIdx = -1;
   for (let i = 0; i < 64; i++) {
     const p = board[i];
@@ -135,5 +141,10 @@ export function getGameState(board, nextTurnColor, halfmoveClock = 0, history = 
     if (kingIdx !== -1 && isSquareAttacked(board, kingIdx, enemyColor, enPassantTarget)) return 'mate';
     return 'draw_stalemate';
   }
+  // A mating move ends the game before a draw counter can take precedence.
+  if (isInsufficientMaterial(board)) return 'draw_material';
+  if (halfmoveClock >= 100) return 'draw_50move';
+  const currentStateStr = getBoardStateString(board, enPassantTarget, nextTurnColor);
+  if (history.filter(h => normalizePositionKey(h) === currentStateStr).length >= 3) return 'draw_repetition';
   return 'active';
 }

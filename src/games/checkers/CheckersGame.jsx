@@ -106,7 +106,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
         let winnerUid = null;
 
         // GÜNCELLEME (Bug 7): Rakibin hamlesi kalmadıysa (Blokaj) kazanmış say
-        if (!winnerColor && nextTurn) {
+        if (!winnerColor && nextTurn && nextTurn !== user.uid) {
           let oppHasMoves = false;
           const oppColor = myColor === 'w' ? 'b' : 'w';
           for (let i = 0; i < 64; i++) {

@@ -2,14 +2,15 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, where, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
-import { generateRoomCode } from './utils/roomCode.js';
+import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
+import { roomRecoveryUpdate } from './utils/roomRecovery.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
-import { waitingPlayers } from './utils/presence.js';
+import { waitingPlayers, livePlayersByRoom } from './utils/presence.js';
 
 import useViewport from './hooks/useViewport.js';
 
@@ -119,6 +120,7 @@ export default function App() {
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
+  const creatingRoomRef = useRef(false);
   // sessionStorage'dan geri yüklenen (yani kullanıcının bu oturumda bilerek
   // girmediği) oda kodu. Bkz. aşağıdaki onSnapshot içindeki "bayat oda" koruması.
   const restoredRoomRef = useRef(null);
@@ -212,6 +214,7 @@ export default function App() {
       setLoadingAuth(false);
       let savedCode = null;
       savedCode = sessionRoomStorage.get();
+      savedCode = normalizeRoomCode(savedCode);
       if (savedCode && currentUser) { restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
 
       // Firestore BAĞLANTISINI ERKENDEN ISITIR: SDK'nın gerçek ağ kanalını
@@ -232,10 +235,33 @@ export default function App() {
 
 
   const leaveRoomLocal = () => {
+    if (visibilityAbandonTimerRef.current) {
+      clearTimeout(visibilityAbandonTimerRef.current);
+      visibilityAbandonTimerRef.current = null;
+    }
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); sessionRoomStorage.remove();
     setIsBotGame(false); setResumeNoticeAt(null);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+  };
+
+  const waitForOpponent = async () => {
+    const code = roomCode;
+    const expectedPlayer = roomData?.abandonedBy;
+    const expectedReason = roomData?.abandonReason;
+    setDisconnectCountdown('paused');
+    try {
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+      await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(roomRef);
+        const update = roomRecoveryUpdate(snapshot.data(), expectedPlayer, expectedReason);
+        if (update) transaction.update(roomRef, update);
+      });
+    } catch {
+      if (roomStateRef.current.roomCode !== code) return;
+      setErrorMsg('Bekleme isteği kaydedilemedi. Bağlantını kontrol edip tekrar dene.');
+      setDisconnectCountdown(15);
+    }
   };
 
   useEffect(() => {
@@ -291,6 +317,10 @@ export default function App() {
           setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); sessionRoomStorage.set(roomCode);
         }
       } else { leaveRoomLocal(); }
+    }, (error) => {
+      console.error('Oda bağlantısı kurulamadı:', error);
+      leaveRoomLocal();
+      setErrorMsg('Oda bilgileri okunamadı. Bağlantını kontrol edip tekrar katıl.');
     });
     return () => unsubscribe();
   }, [user, roomCode, isBotGame]);
@@ -319,8 +349,24 @@ export default function App() {
   useEffect(() => {
     if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
     if (disconnectCountdown === 0) {
-      updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), { status: 'closed' }).catch(()=>{});
-      setLeftOverlayTimer(5); leaveRoomLocal(); return;
+      const expected = roomStateRef.current.roomData?.abandonedBy;
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+      runTransaction(db, async (t) => {
+        const snap = await t.get(roomRef);
+        const data = snap.data();
+        if (!data || data.status !== 'abandoned' || data.abandonedBy !== expected) return false;
+        t.update(roomRef, { status: 'closed' });
+        return true;
+      }).then((closed) => {
+        if (roomStateRef.current.roomCode !== roomCode) return;
+        if (closed) { setLeftOverlayTimer(5); leaveRoomLocal(); }
+        else setDisconnectCountdown(null);
+      }).catch(() => {
+        if (roomStateRef.current.roomCode !== roomCode) return;
+        setDisconnectCountdown('paused');
+        setErrorMsg('Oda kapatılamadı. Bağlantını kontrol edip tekrar dene.');
+      });
+      return;
     }
     const timer = setTimeout(() => { setDisconnectCountdown(prev => typeof prev === 'number' ? prev - 1 : prev); }, 1000);
     return () => clearTimeout(timer);
@@ -382,7 +428,13 @@ export default function App() {
             if (visibilityAbandonTimerRef.current) clearTimeout(visibilityAbandonTimerRef.current);
             visibilityAbandonTimerRef.current = setTimeout(() => {
                visibilityAbandonTimerRef.current = null;
-               updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {});
+               runTransaction(db, async (t) => {
+                 const snap = await t.get(roomRef);
+                 const latest = snap.data();
+                 if (document.visibilityState !== 'hidden' || roomStateRef.current.roomCode !== code ||
+                     latest?.status !== 'playing' || !latest.players?.includes(u.uid)) return;
+                 t.update(roomRef, { status: 'abandoned', abandonedBy: u.uid, abandonReason: null });
+               }).catch(() => {});
             }, VISIBILITY_ABANDON_GRACE_MS);
          }
       }
@@ -501,15 +553,9 @@ export default function App() {
   // parametreyi HİÇ vermez (varsayılan false), yani mevcut davranışları
   // birebir aynı kalır.
   const createRoom = async (gameId, isPublic = false) => {
-    if (!user) return;
+    if (!user || creatingRoomRef.current) return;
+    creatingRoomRef.current = true;
     setIsCreatingRoom(true);
-    // Oda kodu 33^6 (~1.29 milyar) olası kombinasyondan seçiliyor; çakışma
-    // ihtimali ihmal edilebilir düzeyde olduğundan, önceden var mı diye kontrol
-    // eden bir transaction yerine doğrudan tek bir yazma isteği yapılıyor.
-    // Bu, oda kurma süresinden bir tam round-trip'i (transaction'ın begin+get
-    // adımını) kaldırıyor.
-    const newCode = generateRoomCode();
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', newCode);
     {
       const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' },
@@ -566,16 +612,23 @@ export default function App() {
       }
 
        try {
-         await setDoc(roomRef, initialState);
+         const newCode = await reserveRoomCode((code) => runTransaction(db, async (transaction) => {
+           const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+           if ((await transaction.get(roomRef)).exists()) return false;
+           transaction.set(roomRef, initialState);
+           return true;
+         }));
          // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
          // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
          setRoomData(initialState); setCurrentView('room');
          setRoomCode(newCode); sessionRoomStorage.set(newCode); setDisconnectCountdown(null);
        } catch (err) {
          setErrorMsg("Oda kurulamadı.");
+       } finally {
+         creatingRoomRef.current = false;
+         setIsCreatingRoom(false);
        }
     }
-    setIsCreatingRoom(false);
   };
 
   // Bir oda koduna katılmanın SAF (UI'dan bağımsız) çekirdek mantığı: mevcut
@@ -797,7 +850,8 @@ export default function App() {
 
   const joinRoom = async (code) => {
     if (!user || !code) return;
-    const cleanCode = code.trim().toUpperCase();
+    const cleanCode = normalizeRoomCode(code);
+    if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
     try {
       await attemptJoinRoom(cleanCode);
     } catch (err) {
@@ -833,7 +887,10 @@ export default function App() {
       // Kendi kurduğum (hâlâ tek başıma beklediğim) bir oda adaylar arasında
       // çıkabilir — ona "2. oyuncu" olarak katılmaya çalışmak anlamsızdır,
       // baştan elenir.
-      const candidates = snap.docs.filter((d) => waitingPlayers(d.data(), d.id, presence.data()?.sessions, user.uid).length);
+      const now = Date.now();
+      const sessions = presence.data()?.sessions;
+      const liveRooms = livePlayersByRoom(sessions, now);
+      const candidates = snap.docs.filter((d) => waitingPlayers(d.data(), d.id, sessions, user.uid, now, liveRooms).length);
 
       for (const candidate of candidates) {
         try {
@@ -1047,7 +1104,7 @@ export default function App() {
       )}
 
       {typeof disconnectCountdown === 'number' && roomData?.status === 'abandoned' && (
-        <DisconnectOverlay disconnectCountdown={disconnectCountdown} roomData={roomData} user={user} roomCode={roomCode} db={db} appId={appId} leaveRoom={leaveRoom} setDisconnectCountdown={setDisconnectCountdown} />
+        <DisconnectOverlay disconnectCountdown={disconnectCountdown} roomData={roomData} leaveRoom={leaveRoom} waitForOpponent={waitForOpponent} />
       )}
 
       {spectatePrompt && (

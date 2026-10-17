@@ -191,7 +191,7 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   // ============================================================
   // BOT OTOMASYONU (yalnızca isBot=true iken çalışır)
   // ============================================================
-  const { getBotTurn } = useBackgammonBot(isBot);
+  const { getBotTurn, error: botError, restart: restartBot, generation: botGeneration } = useBackgammonBot(isBot);
 
   // 1) Açılış zarı: bot henüz atmadıysa kısa bir gecikmeyle kendi zarını atar.
   useEffect(() => {
@@ -324,12 +324,12 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
           }
         }
       } catch (err) {
-        if (!cancelled) await finishWithSkip();
+        if (!cancelled) showToast('Bot hamlesi hesaplanamadı. Yeniden deneyebilirsin.');
       }
     }, 500 + Math.random() * 500);
 
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [isBot, roomData.turn, roomData.phase, roomData.winner, roomData.status, remainingDiceStr]);
+  }, [isBot, roomData.turn, roomData.phase, roomData.winner, roomData.status, remainingDiceStr, botGeneration]);
 
   // 4) İnsan bir küp teklif ettiğinde bot, basit eşik tabanlı sezgiyle kabul/ret kararı verir.
   useEffect(() => {
@@ -527,6 +527,9 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
 
   return (
     <div className={`relative w-full max-w-4xl flex flex-col items-center overflow-hidden ${cardClass}`}>
+      {isBot && botError && <div role="alert" className="w-full mb-3 text-sm text-amber-200 text-center">
+        {botError} <button onClick={restartBot} className="underline font-semibold">Yeniden Dene</button>
+      </div>}
       {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-amber-300 font-bold tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       {gameToast && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-red-500/90 text-white px-6 py-3 rounded-xl shadow-2xl font-bold border border-red-400 transition-all duration-300 transform scale-100 opacity-100 pointer-events-none text-center">{gameToast}</div>}
       

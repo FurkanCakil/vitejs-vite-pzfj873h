@@ -69,6 +69,8 @@ export function getMaxDiceUsage(board, color, dice, barObj, borneOffObj) {
     const remDice = [...dice]; remDice.splice(remDice.indexOf(move.die), 1);
     const usedHere = 1 + getMaxDiceUsage(nb, color, remDice, nbar, nboff);
     if (usedHere > maxUsed) maxUsed = usedHere;
+    // No branch can consume more than all remaining dice.
+    if (maxUsed === dice.length) break;
   }
   return maxUsed;
 }

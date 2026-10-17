@@ -3,7 +3,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
 import { presenceCounterRef, countActiveSessions } from '../hooks/usePresence.js';
-import { waitingPlayers } from '../utils/presence.js';
+import { waitingPlayers, livePlayersByRoom } from '../utils/presence.js';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', available: true, icon: '❌⭕' },
@@ -71,8 +71,9 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   const [waitingRooms, setWaitingRooms] = useState([]);
   const waitingCounts = useMemo(() => {
     const counts = {};
+    const liveRooms = livePlayersByRoom(sessions, nowTick);
     for (const { code, data } of waitingRooms) {
-      const count = waitingPlayers(data, code, sessions, userId, nowTick).length;
+      const count = waitingPlayers(data, code, sessions, userId, nowTick, liveRooms).length;
       if (count) counts[data.gameId] = (counts[data.gameId] || 0) + count;
     }
     return counts;

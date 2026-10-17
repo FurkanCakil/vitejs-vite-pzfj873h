@@ -17,7 +17,12 @@ const DISC_CLASS = { red: 'connect4-disc-red', blue: 'connect4-disc-blue' };
 const TEXT_CLASS = { red: 'text-red-400', blue: 'text-blue-400' };
 
 // FAZ 2: Minimax + Alpha-Beta budamalı bot yapay zekası (bkz. bot.js).
-export default function Connect4Game({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+export default function Connect4Game(props) {
+  if (!props.roomData?.players) return null;
+  return <Connect4Board {...props} />;
+}
+
+function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
   // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
   // koşulsuz çağrılmalı.
   const { isPhone, isCompact } = useViewport();
@@ -35,8 +40,6 @@ export default function Connect4Game({ roomData, roomCode, user, db, appId, leav
   // Telefon YATAY: dikey alan çok kısıtlı, skor tablosu tek satıra indirilir.
   const tightHeader = isFullscreenView && isCompact;
   const { wrapRef, boardRef: scaleBoardRef, wrapStyle, boardStyle, scale: boardScale } = useBoardScale(boardFit);
-
-  if (!roomData || !roomData.players) return null; // GÜVENLİK: Veri henüz gelmediyse bekle
 
   const isPlayer1 = roomData.players[0] === user.uid;
   const isPlayer2 = roomData.players?.[1] === user.uid;

@@ -15,6 +15,11 @@ export function useStockfish(enabled, skillLevel) {
   const searchingRef = useRef(false);
   const discardRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
+  const [error, setError] = useState(null);
+  const [generation, setGeneration] = useState(0);
+  const timeoutRef = useRef(null);
+  const failRef = useRef(null);
+  const restart = useCallback(() => setGeneration((value) => value + 1), []);
 
   // Bekleyen bir isteği KESİN OLARAK sonlandırır. `getBestMove`'un döndürdüğü
   // promise'in ASLA settle olmaması, çağıran taraftaki `await`'i (ve onun
@@ -24,17 +29,32 @@ export function useStockfish(enabled, skillLevel) {
   const settlePending = (value = null) => {
     const pending = pendingRef.current;
     pendingRef.current = null;
+    clearTimeout(timeoutRef.current);
     if (pending) pending.resolve(value);
   };
 
   useEffect(() => {
     if (!enabled) return;
     setIsReady(false);
-    const worker = new Worker(WORKER_URL);
+    setError(null);
+    let worker;
+    try { worker = new Worker(WORKER_URL); }
+    catch { setError('Satranç motoru başlatılamadı.'); return; }
     workerRef.current = worker;
     searchingRef.current = false;
     discardRef.current = 0;
     let handshakeStep = 0; // 0: uciok bekleniyor, 1: ilk readyok, 2: ucinewgame sonrası readyok
+    const fail = () => {
+      clearTimeout(startupTimer);
+      settlePending(null);
+      searchingRef.current = false;
+      worker.terminate();
+      workerRef.current = null;
+      setIsReady(false);
+      setError('Satranç motoruna ulaşılamadı. Tekrar deneyebilirsin.');
+    };
+    const startupTimer = setTimeout(fail, 120_000);
+    failRef.current = fail;
 
     const handleMessage = (e) => {
       const line = typeof e.data === 'string' ? e.data : '';
@@ -48,6 +68,7 @@ export function useStockfish(enabled, skillLevel) {
           worker.postMessage('isready');
         } else {
           handshakeStep = 2;
+          clearTimeout(startupTimer);
           setIsReady(true);
         }
       } else if (line.startsWith('bestmove')) {
@@ -62,11 +83,16 @@ export function useStockfish(enabled, skillLevel) {
     };
 
     worker.addEventListener('message', handleMessage);
+    worker.addEventListener('error', fail);
+    worker.addEventListener('messageerror', fail);
     worker.postMessage('uci');
 
     return () => {
       worker.removeEventListener('message', handleMessage);
-      worker.postMessage('quit');
+      worker.removeEventListener('error', fail);
+      worker.removeEventListener('messageerror', fail);
+      clearTimeout(startupTimer);
+      failRef.current = null;
       worker.terminate();
       workerRef.current = null;
       searchingRef.current = false;
@@ -76,7 +102,7 @@ export function useStockfish(enabled, skillLevel) {
       settlePending(null);
       setIsReady(false);
     };
-  }, [enabled, skillLevel]);
+  }, [enabled, skillLevel, generation]);
 
   const getBestMove = useCallback((fen, depth) => {
     const worker = workerRef.current;
@@ -101,11 +127,12 @@ export function useStockfish(enabled, skillLevel) {
 
     return new Promise((resolve) => {
       pendingRef.current = { resolve };
+      timeoutRef.current = setTimeout(() => failRef.current?.(), 90_000);
       searchingRef.current = true;
       worker.postMessage(`position fen ${fen}`);
       worker.postMessage(`go depth ${depth}`);
     });
   }, []);
 
-  return { isReady, getBestMove };
+  return { isReady, getBestMove, error, restart };
 }

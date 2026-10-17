@@ -54,6 +54,28 @@ export function allShipsPlaced(placedShips) {
   return SHIP_DEFS.every((def) => placedShips.some((s) => s.id === def.id));
 }
 
+// Builds an atomic shot from the latest room snapshot, never a stale render.
+export function buildShotUpdate(data, uid, row, col) {
+  if (!Number.isInteger(row) || !Number.isInteger(col) ||
+      !isWithinBounds([{ row, col }]) || data.status !== 'playing' ||
+      data.setupPhase || data.winner || data.turn !== uid || !data.players?.includes(uid)) return null;
+  const opponent = data.players.find((id) => id !== uid);
+  const fleet = data.ships?.[opponent] || [];
+  const shots = data.shots?.[uid] || [];
+  if (!allShipsPlaced(fleet) || shots.some((s) => s.row === row && s.col === col)) return null;
+  const hit = fleet.some((ship) => ship.cells.some((c) => c.row === row && c.col === col));
+  const nextShots = [...shots, { row, col, hit }];
+  const hitCells = new Set(nextShots.filter((s) => s.hit).map((s) => cellKey(s.row, s.col)));
+  const won = fleet.every((ship) => ship.cells.every((c) => hitCells.has(cellKey(c.row, c.col))));
+  const patch = { [`shots.${uid}`]: nextShots };
+  if (won) {
+    patch.winner = uid;
+    patch.turn = null;
+    patch.scores = { ...data.scores, [uid]: (data.scores?.[uid] || 0) + 1 };
+  } else if (!hit) patch.turn = opponent;
+  return { patch, hit };
+}
+
 // Bir geminin hücre dizisindeki "merkez" indeksi. TEK sayılı uzunluklarda
 // (5, 3, 3) tam ortadaki hücredir. ÇİFT sayılı uzunluklarda (4, 2) tam
 // ortaya denk gelen TEK bir hücre olmadığından, KULLANICI İSTEĞİYLE ortadaki

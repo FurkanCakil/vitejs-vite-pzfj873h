@@ -508,7 +508,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // Bot rakip: sıra bota geldiğinde Stockfish'e mevcut pozisyonu FEN olarak gönderip
   // dönen bestmove'u (Worker içinde, ana thread'i bloklamadan) tahtada oynatır.
   const botColor = isBot ? roomData.playerColors?.[BOT_UID] : null;
-  const { isReady: isEngineReady, getBestMove } = useStockfish(isBot, DIFFICULTY_CONFIG[botDifficulty]?.skillLevel ?? 10);
+  const { isReady: isEngineReady, getBestMove, error: engineError, restart: restartEngine } = useStockfish(isBot, DIFFICULTY_CONFIG[botDifficulty]?.skillLevel ?? 10);
   const [botThinking, setBotThinking] = useState(false);
 
   useEffect(() => {
@@ -534,11 +534,16 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         const parsed = easyMove || (uciMove ? uciMoveToIndices(uciMove) : null);
         if (!parsed) return;
         const { from, to, promotion } = parsed;
+        if (board[from]?.color !== botColor || !getStrictLegalMoves(board, from, effective.enPassantTarget).includes(to)) {
+          throw new Error('Bot geçersiz bir hamle döndürdü.');
+        }
         const freshBoard = board.map(p => p ? { ...p } : null);
         const movingPiece = { ...freshBoard[from] };
         if (promotion) movingPiece.type = promotion;
         const targetPiece = freshBoard[to] ? { ...freshBoard[to] } : null;
         await executeMove(from, to, movingPiece, targetPiece, freshBoard, BOT_UID, botColor);
+      } catch (error) {
+        if (!cancelled) { setOptimistic(null); showToast(error.message || 'Bot hamlesi uygulanamadı.'); }
       } finally { if (!cancelled) setBotThinking(false); }
     })();
 
@@ -753,6 +758,9 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
          </div>
       </div>
 
+      {isBot && engineError && <div role="alert" className="w-full mb-3 text-sm text-amber-200 text-center">
+        {engineError} <button onClick={restartEngine} className="underline font-semibold">Yeniden Dene</button>
+      </div>}
       <div className={isFullscreenView ? 'w-full' : 'w-full grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,680px)_200px] gap-4 justify-center items-start'}>
       <div
         className={`relative w-full ${hasSizedBoard ? '' : 'max-w-[440px] sm:max-w-[520px] md:max-w-[600px] lg:max-w-[680px]'} bg-slate-800 ${phoneLandscapeFullscreen ? 'p-1' : 'p-2 md:p-3'} rounded-lg shadow-2xl mx-auto border border-slate-700`}

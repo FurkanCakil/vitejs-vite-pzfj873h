@@ -129,12 +129,18 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
     if (!isHost || !roomData.countdownStartedAt || roomData.status !== 'waiting') return;
     const remaining = COUNTDOWN_MS - (Date.now() - roomData.countdownStartedAt);
     const timer = setTimeout(() => {
-      if ((roomData.players?.length || 0) >= MAX_PLAYERS) {
-        updateDoc(roomRef, { status: 'playing' }).catch((err) => console.error("Okey101 yazma hatası:", err));
-      }
+      runTransaction(db, async (t) => {
+        const snap = await t.get(roomRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data.host !== user.uid || data.status !== 'waiting' ||
+            data.players?.length !== MAX_PLAYERS ||
+            data.countdownStartedAt !== roomData.countdownStartedAt) return;
+        t.update(roomRef, { status: 'playing' });
+      }).catch((err) => console.error("Okey101 yazma hatası:", err));
     }, Math.max(0, remaining));
     return () => clearTimeout(timer);
-  }, [isHost, roomData.countdownStartedAt, roomData.status]);
+  }, [isHost, roomData.countdownStartedAt, roomData.status, roomData.players?.length, roomCode, user.uid, db, appId]);
 
   // ---- Ekranda gösterilecek geri sayım (tüm istemcilerde ortak countdownStartedAt'tan türetilir) ----
   const [countdownDisplay, setCountdownDisplay] = useState(null);

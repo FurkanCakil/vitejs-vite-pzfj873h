@@ -3,7 +3,7 @@ import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X,
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { playBattleshipSound } from './battleshipSound.js';
-import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey, anchorOrigin, centerCellIndex } from './logic.js';
+import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey, anchorOrigin, centerCellIndex, buildShotUpdate } from './logic.js';
 import { BOT_UID, generateBotFleet, chooseBotShot } from './bot.js';
 
 // ============================================================
@@ -660,37 +660,25 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     if (!roomData?.winner) prevWinnerRef.current = null;
   }, [roomData?.winner, user.uid]);
 
+  const shotPendingRef = useRef(false);
   const handleShoot = async (row, col) => {
-    if (!isMyTurn) return;
-    const key = cellKey(row, col);
-    if (myShotMap[key]) return; // zaten bu hücreye atış yapılmış
-
-    const hitShip = opponentShips.find((ship) => ship.cells.some((c) => c.row === row && c.col === col));
-    const isHit = !!hitShip;
-    const updatedShots = [...myShots, { row, col, hit: isHit }];
-    const update = { [`shots.${user.uid}`]: updatedShots };
-
-    const updatedShotMap = { ...myShotMap, [key]: { row, col, hit: isHit } };
-    const sunkCount = opponentShips.filter((s) => isShipSunk(s, updatedShotMap)).length;
-    const isWin = sunkCount >= SHIP_DEFS.length;
-
-    if (isWin) {
-      update.winner = user.uid;
-      update.turn = null;
-      update.scores = { ...roomData.scores, [user.uid]: (roomData.scores?.[user.uid] || 0) + 1 };
-    } else if (!isHit) {
-      // Madde 3 (kullanıcı isteği): İSABET (hit) olduğunda sıra DEĞİŞMEZ —
-      // aynı oyuncu karavana vurana kadar atmaya devam eder. `turn` alanına
-      // hiç dokunulmayarak (ıskada olduğu gibi rakibe yazmak yerine) mevcut
-      // değeri korunur, yani sıra zaten atan oyuncuda kalır.
-      update.turn = opponentUid;
-    }
-
-    // Gerçekçi ses: doğrudan İSABET (patlama) ya da IŞKA (su sıçraması) sesi —
-    // eskiden önce bir "dı" (top/tüfek) sesi çalınıyordu, kullanıcı isteğiyle
-    // kaldırıldı. Sunucu yazımı beklenmeden ANINDA çalınır (iyimser ses).
-    playBattleshipSound(isHit ? 'hit' : 'miss');
-    try { await updateRoom(update); } catch (err) { console.error('Amiral Battı atış hatası:', err); }
+    if (!isMyTurn || shotPendingRef.current) return;
+    const preview = buildShotUpdate(roomData, user.uid, row, col);
+    if (!preview) return;
+    shotPendingRef.current = true;
+    playBattleshipSound(preview.hit ? 'hit' : 'miss');
+    try {
+      if (isBot) await updateRoom(preview.patch);
+      else await runTransaction(db, async (t) => {
+        const snap = await t.get(roomRef);
+        if (!snap.exists()) return;
+        const result = buildShotUpdate(snap.data(), user.uid, row, col);
+        if (result) t.update(roomRef, result.patch);
+      });
+    } catch (err) {
+      console.error('Amiral Battı atış hatası:', err);
+      showToast('Atış gönderilemedi. Tekrar dene.');
+    } finally { shotPendingRef.current = false; }
   };
 
   // FAZ 3 (Bot Yapay Zekası): sıra bota (`BOT_UID`) geçtiğinde ANINDA ateş

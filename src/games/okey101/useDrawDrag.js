@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { findNearestSlotIndex } from './nearestSlot.js';
 
 // Hem ortadaki KAPALI DESTEDEN hem de solumdaki oyuncunun BANA ATTIĞI taştan
@@ -24,6 +24,7 @@ export default function useDrawDrag({ enabled, onDraw }) {
   const ghostElRef = useRef(null);
   const [active, setActive] = useState(false);
   const [grown, setGrown] = useState(false);
+  useEffect(() => () => clearTimeout(growTimerRef.current), []);
 
   const applyPos = (el, x, y) => {
     if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
