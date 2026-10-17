@@ -1,118 +1,89 @@
 import { useEffect } from 'react';
-import { doc, runTransaction, setDoc, deleteField } from 'firebase/firestore';
+import { doc, runTransaction, setDoc, deleteField, serverTimestamp } from 'firebase/firestore';
 import { db, auth, appId } from '../firebase/config.js';
+import { HEARTBEAT_MS, sessionTime } from '../utils/presence.js';
+export { countActiveSessions } from '../utils/presence.js';
 
-// Küresel "aktif kullanıcı" dokümanı — diğer tüm oda verileriyle AYNI yol
-// düzenini (artifacts/{appId}/public/data/...) kullanır.
 export const presenceCounterRef = doc(db, 'artifacts', appId, 'public', 'data', 'serverStatus', 'info');
-
-// ============================================================
-// NEDEN SAYAÇ (increment) DEĞİL, "HEARTBEAT" (kalp atışı)?
-// ============================================================
-// İlk sürüm tek bir `activeUsers` sayısını `increment(+1)` / `increment(-1)`
-// ile güncelliyordu. KULLANICI RAPORU: "sadece ben kullanırken 18 aktif oyuncu
-// göründü". Kök neden yapısaldı: +1 GARANTİLİ yazılır ama -1 yalnızca sekme
-// DÜZGÜNCE kapanırsa yazılabilir. Tarayıcı çökmesi, sekmenin bellek yüzünden
-// atılması, internetin aniden kesilmesi, telefonda uygulamanın öldürülmesi ya
-// da bir test/otomasyon oturumu -1'i kaçırır. Kaçırılan her -1 sayacı KALICI
-// olarak şişirir; sayacın kendini toparlaması İMKÂNSIZDIR (geçmişi bilmez).
-// Firestore'da RTDB'deki `onDisconnect` gibi sunucu taraflı bir kopma tespiti
-// de yoktur, yani -1'i güvenilir kılmanın bir yolu yoktu.
-//
-// ÇÖZÜM: Sayı TUTMAK yerine, her sekme kendi "son görüldüm" zamanını yazar:
-//   sessions: { <oturumId>: <epoch ms> }
-// Aktif kullanıcı = son FRESH_MS içinde haber vermiş oturum sayısı. Böylece
-// kaybolan bir sekme kendiliğinden (en geç FRESH_MS sonra) sayımdan düşer —
-// sistem KENDİ KENDİNİ ONARIR, kalıcı şişme mümkün değildir.
-//
-// MALİYET: Tek doküman, tek dinleyici (bkz. Lobby.jsx — dinleyici yalnızca
-// lobi ekranı açıkken kuruludur, oyun içinde hiç okuma olmaz). Yazma:
-// kullanıcı başına 60 saniyede 1.
-const HEARTBEAT_MS = 60_000;
-// Bu süre içinde haber vermiş oturumlar "çevrimiçi" sayılır. Heartbeat
-// aralığının yeterince üzerinde tutulur ki geçici bir ağ hıçkırığı ya da
-// arka plana alınmış bir sekme (tarayıcılar arka planda zamanlayıcıları
-// kısar) yanlışlıkla düşmesin.
-const FRESH_MS = 150_000;
-// Bu kadar eskimiş kayıtlar dokümandan TAMAMEN silinir (doküman sonsuza dek
-// büyümesin diye). Sayımı zaten etkilemiyorlardı.
 const PRUNE_MS = 10 * 60_000;
 
-// Dokümandaki oturum haritasından o anki aktif kullanıcı sayısını üretir.
-// Saf fonksiyon — Lobby hem ilk snapshot'ta hem de periyodik tazelemede
-// (oturumlar zamanla bayatlar) bunu yeniden çağırır.
-export function countActiveSessions(sessions, now = Date.now()) {
-  if (!sessions || typeof sessions !== 'object') return 0;
-  return Object.values(sessions).filter((t) => typeof t === 'number' && now - t < FRESH_MS).length;
-}
-
-export default function usePresence(uid) {
+export default function usePresence(uid, playerId, roomCode) {
   useEffect(() => {
     if (!uid) return undefined;
+    let current = null;
+    let disposed = false;
 
-    // Oturum kimliği SEKME BAŞINADIR (uid başına değil): aynı kullanıcı iki
-    // sekme açtıysa bu gerçekten iki aktif oturumdur ve biri kapanınca
-    // diğeri etkilenmemelidir.
-    const sessionId = `${uid}_${Math.random().toString(36).slice(2, 10)}`;
-    let stopped = false;
-    // `leave()` sayfa kapanırken/yenilenirken çalışır; o anda Firestore SDK'sının
-    // arka planda açtığı ağ isteği tarayıcı tarafından iptal edilebilir (SDK bunun
-    // için `keepalive` kullanmaz). Bu yüzden REST API'ye `fetch(..., {keepalive:true})`
-    // ile DOĞRUDAN, kimlik doğrulama jetonunu önbelleğe alarak yazıyoruz — bu istek
-    // sekme kapansa bile tarayıcı tarafından tamamlanana kadar gönderilir. Jeton her
-    // atışta tazelenir ki `leave()` anında beklemeden senkron kullanılabilsin.
-    let cachedIdToken = null;
-    const restDeleteUrl = `https://firestore.googleapis.com/v1/projects/${appId}/databases/(default)/documents/artifacts/${appId}/public/data/serverStatus/info?updateMask.fieldPaths=${encodeURIComponent('sessions.`' + sessionId + '`')}`;
-
-    const beat = async () => {
-      try {
-        if (auth.currentUser) {
-          cachedIdToken = await auth.currentUser.getIdToken().catch(() => cachedIdToken);
-        }
-        await runTransaction(db, async (t) => {
-          const snap = await t.get(presenceCounterRef);
-          const now = Date.now();
-          const sessions = { ...(snap.data()?.sessions || {}) };
-          Object.keys(sessions).forEach((key) => {
-            if (typeof sessions[key] !== 'number' || now - sessions[key] > PRUNE_MS) delete sessions[key];
-          });
-          sessions[sessionId] = now;
-          // `activeUsers`: ESKİ (hatalı) sayaç alanı. İlk yazımda temizlenir ki
-          // eski sürümden kalan şişmiş değer ortalıkta kalmasın.
-          t.set(presenceCounterRef, { sessions, activeUsers: deleteField() }, { merge: true });
-        });
-      } catch { /* ağ/izin hatası sayacı bozmasın — bir sonraki atışta düzelir */ }
+    const remove = (session) => {
+      if (session.token) {
+        const field = encodeURIComponent('sessions.`' + session.id + '`');
+        const url = `https://firestore.googleapis.com/v1/projects/${appId}/databases/(default)/documents/artifacts/${appId}/public/data/serverStatus/info?updateMask.fieldPaths=${field}`;
+        return fetch(url, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
+          body: '{}', keepalive: true,
+        }).catch(() => {});
+      }
+      return setDoc(presenceCounterRef, { sessions: { [session.id]: deleteField() } }, { merge: true }).catch(() => {});
     };
 
-    // Temiz kapanışta kendi kaydımızı hemen sileriz (sayı ANINDA düşsün).
-    // Kaçırılırsa da sorun değildir: kayıt FRESH_MS sonra kendiliğinden
-    // sayımdan düşer — bu tasarımın tüm amacı buydu.
-    const leave = () => {
-      if (stopped) return;
-      stopped = true;
-      if (cachedIdToken) {
-        fetch(restDeleteUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cachedIdToken}` },
-          body: '{}',
-          keepalive: true
-        }).catch(() => {});
-      } else {
-        // Jeton hiç alınamadıysa (ör. çok erken kapanış) SDK ile en iyi çabayla dene.
-        setDoc(presenceCounterRef, { sessions: { [sessionId]: deleteField() } }, { merge: true }).catch(() => {});
+    const beat = async () => {
+      const session = current;
+      if (!session || session.stopped || session.writing) return;
+      session.writing = true;
+      try {
+        session.token = await auth.currentUser?.getIdToken();
+        if (session.stopped) return;
+        await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(presenceCounterRef);
+          if (session.stopped) return;
+          const patch = {};
+          for (const [id, value] of Object.entries(snap.data()?.sessions || {})) {
+            const time = sessionTime(value);
+            if (!Number.isFinite(time) || Date.now() - time > PRUNE_MS) patch[id] = deleteField();
+          }
+          patch[session.id] = { uid, playerId, roomCode: roomCode || null, lastSeen: serverTimestamp() };
+          // merge:true retains omitted keys, so stale entries need explicit deletes.
+          transaction.set(presenceCounterRef, { sessions: patch, activeUsers: deleteField() }, { merge: true });
+        });
+      } catch (error) {
+        if (!session.stopped) console.warn('Oyuncu bağlantısı güncellenemedi:', error.code || error.message);
+      } finally {
+        session.writing = false;
+        // An in-flight write can finish after cleanup; remove that session again.
+        if (session.stopped) void remove(session);
       }
     };
 
-    beat();
-    const interval = setInterval(() => { if (!stopped) beat(); }, HEARTBEAT_MS);
+    const leave = () => {
+      if (!current || current.stopped) return;
+      current.stopped = true;
+      void remove(current);
+    };
+    const resume = () => {
+      if (disposed) return;
+      if (!current || current.stopped) {
+        current = { id: `${uid}_${crypto.randomUUID()}`, stopped: false, writing: false, token: null };
+      }
+      void beat();
+    };
+    const visible = () => { if (document.visibilityState === 'visible') resume(); };
+    resume();
+    const interval = setInterval(beat, HEARTBEAT_MS);
     window.addEventListener('beforeunload', leave);
     window.addEventListener('pagehide', leave);
-
+    window.addEventListener('pageshow', resume);
+    window.addEventListener('offline', leave);
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', visible);
     return () => {
+      disposed = true;
       clearInterval(interval);
       window.removeEventListener('beforeunload', leave);
       window.removeEventListener('pagehide', leave);
+      window.removeEventListener('pageshow', resume);
+      window.removeEventListener('offline', leave);
+      window.removeEventListener('online', resume);
+      document.removeEventListener('visibilitychange', visible);
       leave();
     };
-  }, [uid]);
+  }, [uid, playerId, roomCode]);
 }

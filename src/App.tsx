@@ -2,13 +2,14 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, limit, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, updateDoc, runTransaction, collection, query, where, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
 import { generateRoomCode } from './utils/roomCode.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
-import usePresence from './hooks/usePresence.js';
+import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
+import { waitingPlayers } from './utils/presence.js';
 
 import useViewport from './hooks/useViewport.js';
 
@@ -89,9 +90,6 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const isOnline = useOnlineStatus(); // Custom Hook'umuzu kullanıyoruz
-  // Aktif Kullanıcı Sayacı: oturum boyunca (auth tamamlanınca) küresel sayacı
-  // +1/-1 yazar — SADECE yazar, hiç okuma yapmaz (bkz. usePresence.js).
-  usePresence(user?.uid);
   const { isCompact } = useViewport();
   const [nickname, setNickname] = useState(safeStorage.get('nickname') || '');
   const [copySuccess, setCopySuccess] = useState(false);
@@ -117,6 +115,7 @@ export default function App() {
   const [resumeNoticeAt, setResumeNoticeAt] = useState(null);
 
   const [isBotGame, setIsBotGame] = useState(false);
+  usePresence(user?.uid, myPlayerId, isBotGame ? null : roomCode);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
@@ -586,7 +585,7 @@ export default function App() {
   // dolu/zaten seyirci) `Error(mesaj-kodu)` FIRLATIR — çağıran taraf bunu
   // kendi UI'ına uygun şekilde (joinRoom: kullanıcıya göster; findMatch:
   // sessizce bir sonraki adayı dene) yorumlar.
-  const attemptJoinRoom = async (cleanCode) => {
+  const attemptJoinRoom = async (cleanCode, matchmaking = false) => {
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     let optimisticData = null;
 
@@ -596,6 +595,12 @@ export default function App() {
         
         const data = roomSnap.data();
         if (data.status === 'closed') throw new Error("closed");
+        if (matchmaking) {
+          const presence = await transaction.get(presenceCounterRef);
+          if (!waitingPlayers(data, cleanCode, presence.data()?.sessions, user.uid).length) {
+            throw new Error('no-live-opponent');
+          }
+        }
 
         const maxPlayers = data.maxPlayers || 2;
         if (data.players?.length >= maxPlayers && !data.players.includes(user.uid)) {
@@ -821,17 +826,16 @@ export default function App() {
         where('gameId', '==', gameId),
         where('status', '==', 'waiting'),
         where('isPublic', '==', true),
-        limit(5),
       );
-      const snap = await getDocs(q);
+      const [snap, presence] = await Promise.all([getDocs(q), getDoc(presenceCounterRef)]);
       // Kendi kurduğum (hâlâ tek başıma beklediğim) bir oda adaylar arasında
       // çıkabilir — ona "2. oyuncu" olarak katılmaya çalışmak anlamsızdır,
       // baştan elenir.
-      const candidates = snap.docs.filter((d) => !(d.data().players || []).includes(user.uid));
+      const candidates = snap.docs.filter((d) => waitingPlayers(d.data(), d.id, presence.data()?.sessions, user.uid).length);
 
       for (const candidate of candidates) {
         try {
-          await attemptJoinRoom(candidate.id);
+          await attemptJoinRoom(candidate.id, true);
           return; // başarıyla katılındı — attemptJoinRoom zaten currentView'i 'room'a çevirdi
         } catch {
           // Bu aday artık uygun değil (araya biri girip doldurmuş, kapanmış

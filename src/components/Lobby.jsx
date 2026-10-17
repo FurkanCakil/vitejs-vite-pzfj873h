@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
 import { presenceCounterRef, countActiveSessions } from '../hooks/usePresence.js';
+import { waitingPlayers } from '../utils/presence.js';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', available: true, icon: '❌⭕' },
@@ -45,17 +46,19 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
     if (!userId) return undefined;
     const unsub = onSnapshot(presenceCounterRef, (snap) => {
       setPresenceError(false);
-      setSessions(snap.data()?.sessions || {});
+      setSessions(snap.data({ serverTimestamps: 'estimate' })?.sessions || {});
+      setNowTick(Date.now());
     }, (err) => {
       console.error('Aktif kullanıcı sayacı okunamadı:', err);
       setPresenceError(true);
+      setSessions(null);
     });
     return unsub;
   }, [userId]);
   // Oturumlar ZAMANLA bayatlar (bkz. usePresence#FRESH_MS): yeni bir snapshot
   // gelmese bile sayının düşebilmesi için periyodik olarak yeniden hesaplanır.
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 30_000);
+    const t = setInterval(() => setNowTick(Date.now()), 5_000);
     return () => clearInterval(t);
   }, []);
   const activeUsers = useMemo(
@@ -65,28 +68,31 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
 
   // ---- Hızlı Eşleşme: oyun seçim ekranı ----------------------------------
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [waitingCounts, setWaitingCounts] = useState({});
+  const [waitingRooms, setWaitingRooms] = useState([]);
+  const waitingCounts = useMemo(() => {
+    const counts = {};
+    for (const { code, data } of waitingRooms) {
+      const count = waitingPlayers(data, code, sessions, userId, nowTick).length;
+      if (count) counts[data.gameId] = (counts[data.gameId] || 0) + count;
+    }
+    return counts;
+  }, [waitingRooms, sessions, userId, nowTick]);
   // Bekleyen oyuncu sayıları SADECE seçim ekranı açıkken dinlenir — kapalıyken
   // hiçbir okuma yapılmaz. Tek bir sorgu tüm oyunları kapsar (oyun başına ayrı
   // sorgu YOK); sayım istemcide `gameId`'ye göre gruplanır.
   useEffect(() => {
-    if (!pickerOpen) return undefined;
+    if (!pickerOpen || !userId) return undefined;
+    setWaitingRooms([]);
     const q = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'rooms'),
       where('status', '==', 'waiting'),
       where('isPublic', '==', true),
     );
     const unsub = onSnapshot(q, (snap) => {
-      const counts = {};
-      snap.forEach((d) => {
-        const data = d.data();
-        if (!data?.gameId) return;
-        counts[data.gameId] = (counts[data.gameId] || 0) + ((data.players || []).length);
-      });
-      setWaitingCounts(counts);
-    }, (err) => { console.error('Bekleyen oyuncu sayısı okunamadı:', err); setWaitingCounts({}); });
+      setWaitingRooms(snap.docs.map(d => ({ code: d.id, data: d.data() })));
+    }, (err) => { console.error('Bekleyen oyuncu sayısı okunamadı:', err); setWaitingRooms([]); });
     return unsub;
-  }, [pickerOpen]);
+  }, [pickerOpen, userId]);
 
   const isMatching = !!matchmakingGameId;
   const chooseMatchGame = (gameId) => { setPickerOpen(false); findMatch(gameId); };
