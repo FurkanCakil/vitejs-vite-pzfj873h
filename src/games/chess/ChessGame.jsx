@@ -6,7 +6,7 @@ import { CHESS_ICONS, PIECE_VALUES, chessPieceStyle } from './constants.js';
 import { createInitialChessBoard, getStrictLegalMoves, getPseudoLegalMoves, isSquareAttacked, getBoardStateString, getGameState } from './logic.js';
 import { boardToFEN, uciMoveToIndices } from './fen.js';
 import { useStockfish } from './stockfishEngine.js';
-import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG } from './bot.js';
+import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG, chooseEasyMove } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
 
 const EMPTY_SET = new Set();
@@ -518,12 +518,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         // veriyordu. En az ~1-2sn "düşünme" süresi geçmeden hamle oynanmaz
         // (motor daha uzun sürerse zaten o süre zaten geçmiş olur).
         const minThinkMs = 1100 + Math.random() * 900;
+        const easyMove = botDifficulty === 'easy' ? chooseEasyMove(board, botColor, effective.enPassantTarget) : null;
         const [uciMove] = await Promise.all([
-          getBestMove(fen, depth),
+          easyMove ? Promise.resolve(null) : getBestMove(fen, depth),
           new Promise((resolve) => setTimeout(resolve, minThinkMs)),
         ]);
-        if (cancelled || !uciMove) return;
-        const parsed = uciMoveToIndices(uciMove);
+        if (cancelled) return;
+        const parsed = easyMove || (uciMove ? uciMoveToIndices(uciMove) : null);
         if (!parsed) return;
         const { from, to, promotion } = parsed;
         const freshBoard = board.map(p => p ? { ...p } : null);
