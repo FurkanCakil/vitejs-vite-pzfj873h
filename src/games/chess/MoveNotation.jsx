@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { gameToPGN, INITIAL_FEN, moveRows } from './notation.js';
+import { gameToPGN, moveRows } from './notation.js';
 
 export default function MoveNotation({ moves, startFen, white, black, result }) {
   const listRef = useRef(null);
   const followRef = useRef(true);
   const [copied, setCopied] = useState(false);
-  const [showPGN, setShowPGN] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const rows = useMemo(() => moveRows(moves, startFen), [moves, startFen]);
   const pgn = useMemo(() => gameToPGN({ moves, startFen, white, black, result }), [moves, startFen, white, black, result]);
   useEffect(() => {
@@ -18,8 +18,8 @@ export default function MoveNotation({ moves, startFen, white, black, result }) 
     return () => clearTimeout(timeout);
   }, [copied]);
   const copy = async () => {
-    try { await navigator.clipboard.writeText(pgn); setCopied(true); }
-    catch { setShowPGN(true); }
+    try { await navigator.clipboard.writeText(pgn); setCopied(true); setCopyFailed(false); }
+    catch { setCopyFailed(true); }
   };
 
   return (
@@ -46,13 +46,10 @@ export default function MoveNotation({ moves, startFen, white, black, result }) 
           </div>
         )) : <p className="p-4 text-sm text-slate-500">İlk hamleden sonra notasyon burada görünecek.</p>}
       </div>
-      <div className="p-3 border-t border-slate-700 text-xs text-slate-400 space-y-2">
+      {(result !== '*' || copyFailed) && <div className="p-3 border-t border-slate-700 text-xs text-slate-400 space-y-2">
         {result !== '*' && <p className="font-mono text-center text-slate-200">{result}</p>}
-        <p>Analiz için PGN’yi kopyalayıp Chess.com veya Lichess’e yapıştır.</p>
-        {startFen && startFen !== INITIAL_FEN && <p>Bu kayıt, kaydın başladığı konumdan itibaren aktarılır.</p>}
-        <button onClick={() => setShowPGN(v => !v)} className="underline hover:text-slate-200">{showPGN ? 'PGN’yi gizle' : 'PGN’yi göster'}</button>
-        {showPGN && <textarea aria-label="Kopyalanabilir PGN" readOnly value={pgn} onFocus={e => e.currentTarget.select()} className="w-full h-28 resize-none rounded-md bg-slate-900 p-2 text-xs font-mono text-slate-200 border border-slate-600" />}
-      </div>
+        {copyFailed && <textarea aria-label="Kopyalanabilir PGN" readOnly value={pgn} onFocus={e => e.currentTarget.select()} className="w-full h-28 resize-none rounded-md bg-slate-900 p-2 text-xs font-mono text-slate-200 border border-slate-600" />}
+      </div>}
     </aside>
   );
 }
