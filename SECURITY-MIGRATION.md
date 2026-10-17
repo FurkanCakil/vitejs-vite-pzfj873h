@@ -35,6 +35,8 @@ Bu denetimde yapılan atomik işlem ve giriş kontrolleri normal kullanım hatal
 
 ## Uygulamadan önce netleştirilecekler
 
-Firebase planı (Spark/Blaze), mevcut Vercel sunucu olanakları, güvenli sunucu kimliği ve dağıtım erişimi henüz doğrulanmadı. Bu bilgiler olmadan hizmet/maliyet veya yayın süresi taahhüt edilmez. Anahtarlar sohbete ya da Git'e konmaz. Bu geçiş oturumları ve oda modelini etkilediği için kullanıcıya bildirilmeden canlıya uygulanmaz.
+Kullanıcı 18 Ekim 2026'da Firebase projesinin ücretsiz **Spark** planında olduğunu doğruladı. Cloud Functions for Firebase yayını Blaze gerektirdiğinden, önce mevcut Vercel projesinde Node.js sunucu işlevleri kullanma seçeneği incelenecek. Bu bir ücretsiz kullanım garantisi değildir; mevcut Vercel planı, sınırlar, güvenli sunucu kimliği ve dağıtım erişimi henüz doğrulanmadı. Bu bilgiler olmadan hizmet/maliyet veya yayın süresi taahhüt edilmez. Anahtarlar sohbete ya da Git'e konmaz. Bu geçiş oturumları ve oda modelini etkilediği için kullanıcıya bildirilmeden canlıya uygulanmaz.
+
+Kaynaklar: https://firebase.google.com/docs/functions/quotas ve https://vercel.com/docs/functions/runtimes/node-js
 
 Firebase/Tailwind ana sürüm yükseltmeleri ayrıca ele alınmalıdır; denetimde kalan 18 paket uyarısını zorla kapatmak için otomatik ana sürüm değişikliği yapılmadı. Bu sayı 18 bağımsız canlı site açığı anlamına gelmez; bağımlılık zinciri ve kullanılan çalışma ortamı ayrı değerlendirilmelidir.
