@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { applyXoxMove } from './games/xox.js';
 import { validateAction } from './room-actions.js';
 import { createActionHandler } from './http.js';
@@ -12,6 +13,15 @@ const room = (patch = {}) => ({
 });
 const action = { roomId: 'ABC123', actionId: 'request_00000001', expectedVersion: 0, type: 'xox.move', cell: 0 };
 const fails = (code, callback) => assert.throws(callback, error => error.code === code);
+
+test('API imports in serverless loaders without CommonJS require(ESM) support', () => {
+  const entry = new URL('../api/room-action.js', import.meta.url).href;
+  const result = spawnSync(process.execPath, [
+    '--no-experimental-require-module', '--input-type=module',
+    '-e', `await import(${JSON.stringify(entry)});`,
+  ], { encoding: 'utf8', timeout: 15_000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+});
 
 test('XOX derives symbol and next turn without mutating saved state', () => {
   const before = room();
