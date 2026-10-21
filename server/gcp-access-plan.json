@@ -1,0 +1,17 @@
+{
+  "status": "applied-connection-verification-pending",
+  "verifiedAt": "2026-10-22",
+  "projectId": "oyun-odasi-8ecee",
+  "projectNumber": "687462141533",
+  "poolId": "oyun-portali-prod",
+  "providerId": "vercel",
+  "issuer": "https://oidc.vercel.com/yap-ai",
+  "audience": "https://iam.googleapis.com/projects/687462141533/locations/global/workloadIdentityPools/oyun-portali-prod/providers/vercel",
+  "attributeMapping": { "google.subject": "assertion.sub" },
+  "attributeCondition": "assertion.project_id == 'prj_kJxTPQxJkEQsyretAt1moHkeGumz' && assertion.environment == 'production' && assertion.sub == 'owner:yap-ai:project:vitejs-vite-pzfj873h-1hy2:environment:production'",
+  "serviceAccount": "oyun-portali-server@oyun-odasi-8ecee.iam.gserviceaccount.com",
+  "serviceAccountRole": "roles/datastore.user",
+  "databaseCondition": "resource.name == 'projects/oyun-odasi-8ecee/databases/(default)'",
+  "impersonationRole": "roles/iam.workloadIdentityUser",
+  "principal": "principal://iam.googleapis.com/projects/687462141533/locations/global/workloadIdentityPools/oyun-portali-prod/subject/owner:yap-ai:project:vitejs-vite-pzfj873h-1hy2:environment:production"
+}

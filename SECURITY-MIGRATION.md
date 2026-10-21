@@ -1,6 +1,6 @@
 # Oyun Portalı: güvenlik geçiş planı
 
-18 Ekim 2026. Bu dosya bir uygulama planıdır; aşağıdaki geçiş henüz uygulanmadı ve canlı Firebase kuralları değiştirilmedi.
+22 Ekim 2026. Canlı Firebase kuralları değiştirilmedi. İlk sunucu parçası hazırlandı ve yerel emülatörde test edildi; mevcut istemciye bağlanmadı. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
 
 ## Doğrulanan sorun ve sınır
 
@@ -8,7 +8,7 @@ Kullanıcının paylaştığı Firestore kuralları, kimlik doğrulaması olmada
 
 Firestore okuma yetkisi belge düzeyindedir: aynı belgenin içindeki rakip elini kurallarla gizlemek mümkün değildir. Kaynak: https://firebase.google.com/docs/firestore/security/rules-fields
 
-Bu denetimde yapılan atomik işlem ve giriş kontrolleri normal kullanım hatalarını azaltır; hile korumasının yerine geçmez. Paylaşılan kuralların hâlen canlıda aynı olup olmadığı yönetim panelinden ayrıca doğrulanmalıdır.
+Bu denetimde yapılan atomik işlem ve giriş kontrolleri normal kullanım hatalarını azaltır; hile korumasının yerine geçmez. Paylaşılan kuralların canlıda aynı olduğu 21 Ekim 2026'da Firebase Console'dan doğrulandı.
 
 ## Önerilen geçiş
 
@@ -35,7 +35,7 @@ Bu denetimde yapılan atomik işlem ve giriş kontrolleri normal kullanım hatal
 
 ## Uygulamadan önce netleştirilecekler
 
-Kullanıcı 18 Ekim 2026'da Firebase projesinin ücretsiz **Spark** planında olduğunu doğruladı. Cloud Functions for Firebase yayını Blaze gerektirdiğinden, önce mevcut Vercel projesinde Node.js sunucu işlevleri kullanma seçeneği incelenecek. Bu bir ücretsiz kullanım garantisi değildir; mevcut Vercel planı, sınırlar, güvenli sunucu kimliği ve dağıtım erişimi henüz doğrulanmadı. Bu bilgiler olmadan hizmet/maliyet veya yayın süresi taahhüt edilmez. Anahtarlar sohbete ya da Git'e konmaz. Bu geçiş oturumları ve oda modelini etkilediği için kullanıcıya bildirilmeden canlıya uygulanmaz.
+Kullanıcı 18 Ekim 2026'da Firebase projesinin ücretsiz **Spark** planında olduğunu doğruladı; 21 Ekim'de panelden de doğrulandı. Vercel projesi **YapAI / vitejs-vite-pzfj873h-1hy2**, planı **Hobby** ve OIDC issuer modu **Team**. Kullanıcının açık onayıyla Vercel OIDC → Google Workload Identity Federation erişimi kuruldu. Yalnız bu projenin production kimliği yeni hizmet hesabını kullanabilir; veritabanı yetkisi `(default)` ile sınırlandırıldı ve 22 Ekim'de panelden doğrulandı. Kalıcı anahtar, Cloud Functions/Blaze geçişi veya ücretli plan değişikliği yapılmadı. Bu bir sınırsız ücretsiz kullanım garantisi değildir. Sunucu bağlantısının gerçek dağıtımda testi, tüm oyunların geçişi ve eski yetkilerin kapatılması hâlâ gereklidir. Bu geçiş oturumları ve oda modelini etkilediği için kullanıcıya bildirilmeden canlıya uygulanmaz.
 
 Kaynaklar: https://firebase.google.com/docs/functions/quotas ve https://vercel.com/docs/functions/runtimes/node-js
 

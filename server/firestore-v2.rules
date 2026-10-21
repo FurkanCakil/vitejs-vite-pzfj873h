@@ -1,0 +1,14 @@
+// Emulator-only target model. DO NOT deploy this file to the existing site:
+// legacy rooms are intentionally not authorized by these rules.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /artifacts/{appId}/public/data/roomsV2/{roomId} {
+      allow get: if request.auth != null;
+      allow list, write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
