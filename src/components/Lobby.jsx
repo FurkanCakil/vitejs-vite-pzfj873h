@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { SERVER_XOX_ENABLED } from '../utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, serverGameEnabled } from '../utils/gameApi.js';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
 import { presenceCounterRef, countActiveSessions } from '../hooks/usePresence.js';
@@ -71,23 +71,32 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   const [pickerOpen, setPickerOpen] = useState(false);
   const [waitingRooms, setWaitingRooms] = useState([]);
   const [serverQueue, setServerQueue] = useState([]);
+  const [battleQueue, setBattleQueue] = useState([]);
   const waitingCounts = useMemo(() => {
     const counts = {};
     const liveRooms = livePlayersByRoom(sessions, nowTick);
     for (const { code, data } of waitingRooms) {
-      if (SERVER_XOX_ENABLED && data.gameId === 'xox') continue;
+      if (serverGameEnabled(data.gameId)) continue;
       const count = waitingPlayers(data, code, sessions, userId, nowTick, liveRooms).length;
       if (count) counts[data.gameId] = (counts[data.gameId] || 0) + count;
     }
     if (SERVER_XOX_ENABLED) counts.xox = serverQueue.filter(entry => entry.host !== userId &&
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
+    if (SERVER_BATTLESHIP_ENABLED) counts.amiralbatti = battleQueue.filter(entry => entry.host !== userId &&
+      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
     return counts;
-  }, [waitingRooms, sessions, userId, nowTick, serverQueue]);
+  }, [waitingRooms, sessions, userId, nowTick, serverQueue, battleQueue]);
   useEffect(() => {
     if (!SERVER_XOX_ENABLED || !pickerOpen || !userId) return undefined;
     return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'xoxLobby', 'queue'), snapshot => {
       setServerQueue(snapshot.data()?.entries ?? []);
     }, () => setServerQueue([]));
+  }, [pickerOpen, userId]);
+  useEffect(() => {
+    if (!SERVER_BATTLESHIP_ENABLED || !pickerOpen || !userId) return undefined;
+    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'battleshipLobby', 'queue'), snapshot => {
+      setBattleQueue(snapshot.data()?.entries ?? []);
+    }, () => setBattleQueue([]));
   }, [pickerOpen, userId]);
   // Bekleyen oyuncu sayıları SADECE seçim ekranı açıkken dinlenir — kapalıyken
   // hiçbir okuma yapılmaz. Tek bir sorgu tüm oyunları kapsar (oyun başına ayrı

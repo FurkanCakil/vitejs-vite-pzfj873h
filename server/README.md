@@ -52,6 +52,8 @@ Canlı doğrulama: [26a9f06 Production dağıtımı](https://vercel.com/yap-ai/v
 
 ## Kalan işler ve sınırlar
 
+Amiral Battı'nın özel filo/sunucu geçişi ayrı dalda hazırlandı; canlı açılış onay bekliyor. Kapsam, testler ve ayarlar `BATTLESHIP-ROLLOUT.md` içindedir. `firestore.rollout.rules` dosyasındaki yeni `playerData` ve `battleshipLobby` blokları henüz canlıya yayımlanmadı; yukarıdaki 22 Ekim XOX doğrulaması önceki kural sürümüne aittir.
+
 1. XOX'ta gerçek Safari/Firefox/iOS cihazlarında ve uzun süre arka plana alınan sayfalarda ek uyumluluk testi. Yerel iki oturum ve canlı tarayıcı/API kontrolleri geçti; bütün cihaz/süre kombinasyonları sınanmadı.
 2. XOX için operasyonel izleme ve test verilerinin saklama politikasının belirlenmesi; otomatik temizleme görevi kurulmadı.
 3. Diğer oyunların geçişi; Amiral Battı filoları ve Okey ellerinin oyuncuya özel belgelerle ayrılması. Legacy odalar güvenli sayılmaz.

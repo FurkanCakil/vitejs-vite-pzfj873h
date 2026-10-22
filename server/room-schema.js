@@ -1,4 +1,5 @@
 import { requireAction } from './errors.js';
+import { validateFleet } from './games/battleship.js';
 
 const common = ['type', 'actionId'];
 const room = ['roomId'];
@@ -18,6 +19,14 @@ const fields = {
   'xox.rematch.request': [...room, ...version],
   'xox.rematch.accept': [...room, ...version],
   'xox.rematch.reject': [...room, ...version],
+  'battleship.create': [...session, 'nickname', 'isPublic'],
+  'battleship.match': [...session, 'nickname'],
+  'battleship.ready': [...room, 'roundId', 'fleet'],
+  'battleship.cancel': [...room, 'roundId'],
+  'battleship.shot': [...room, ...version, 'row', 'col'],
+  'battleship.rematch.request': [...room, ...version],
+  'battleship.rematch.accept': [...room, ...version],
+  'battleship.rematch.reject': [...room, ...version],
 };
 
 export function validateAction(input) {
@@ -32,5 +41,8 @@ export function validateAction(input) {
   if (keys.includes('cell')) requireAction(Number.isInteger(input.cell) && input.cell >= 0 && input.cell < 9, 400, 'invalid_cell');
   if (keys.includes('nickname')) requireAction(typeof input.nickname === 'string' && input.nickname.trim().length >= 1 && input.nickname.length <= 15 && [...input.nickname].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 400, 'invalid_nickname');
   if (keys.includes('isPublic')) requireAction(typeof input.isPublic === 'boolean', 400, 'invalid_visibility');
+  if (keys.includes('roundId')) requireAction(typeof input.roundId === 'string' && /^[a-f0-9]{24}$/.test(input.roundId), 400, 'invalid_round');
+  for (const key of ['row', 'col']) if (keys.includes(key)) requireAction(Number.isInteger(input[key]) && input[key] >= 0 && input[key] < 10, 400, 'invalid_cell');
+  if (keys.includes('fleet')) validateFleet(input.fleet);
   return Object.fromEntries(keys.map(key => [key, key === 'nickname' ? input[key].trim() : input[key]]));
 }

@@ -8,7 +8,7 @@ import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, 
 import { auth, db, appId } from './firebase/config.js';
 import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
 import { roomRecoveryUpdate } from './utils/roomRecovery.js';
-import { SERVER_XOX_ENABLED, gameErrorMessage } from './utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, serverGameEnabled, gameErrorMessage } from './utils/gameApi.js';
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
@@ -222,7 +222,7 @@ export default function App() {
       savedCode = sessionRoomStorage.get();
       savedCode = normalizeRoomCode(savedCode);
       if (savedCode && currentUser) {
-        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED) sessionRoomStorage.remove();
+        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED) sessionRoomStorage.remove();
         else { setIsServerRoom(sessionRoomStorage.isServer()); restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
       }
 
@@ -299,6 +299,9 @@ export default function App() {
           if (data?.closedBy !== user.uid) setLeftOverlayTimer(5);
           leaveRoomLocal(); return;
         }
+        if (!serverGameEnabled(data.gameId)) {
+          leaveRoomLocal(); setErrorMsg('Bu oyun için yeni sistem henüz açık değil. Sayfayı yenileyip tekrar dene.'); return;
+        }
         restoredRoomRef.current = null;
         setRoomData(data); setCurrentView('room');
         if (data.status === 'abandoned' && data.abandonedBy !== user.uid && data.players.includes(user.uid)) {
@@ -314,9 +317,9 @@ export default function App() {
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (SERVER_XOX_ENABLED && data.gameId === 'xox') {
+        if (serverGameEnabled(data.gameId)) {
           leaveRoomLocal();
-          setErrorMsg('Bu XOX odası eski sürümde açılmış. Yeni bir XOX odası kurarak devam edebilirsin.');
+          setErrorMsg('Bu oda eski sürümde açılmış. Yeni bir oda kurarak devam edebilirsin.');
           return;
         }
         if (data.status === 'closed') {
@@ -605,12 +608,12 @@ export default function App() {
     if (!user || creatingRoomRef.current) return;
     creatingRoomRef.current = true;
     setIsCreatingRoom(true);
-    if (gameId === 'xox' && SERVER_XOX_ENABLED) {
+    if (serverGameEnabled(gameId)) {
       try {
         const api = xoxApi(user);
         let result;
         for (let attempt = 0; attempt < 4; attempt++) {
-          try { result = await api({ type: 'room.create', nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
+          try { result = await api({ type: gameId === 'amiralbatti' ? 'battleship.create' : 'room.create', nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
           catch (error) { if (error.code !== 'room_code_collision' || attempt === 3) throw error; }
         }
         enterServerRoom(result);
@@ -710,7 +713,7 @@ export default function App() {
         if (!roomSnap.exists()) throw new Error("not-found");
         
         const data = roomSnap.data();
-        if (SERVER_XOX_ENABLED && data.gameId === 'xox') throw new Error('legacy-xox');
+        if (serverGameEnabled(data.gameId)) throw new Error('legacy-server-game');
         if (data.status === 'closed') throw new Error("closed");
         if (matchmaking) {
           const presence = await transaction.get(presenceCounterRef);
@@ -917,7 +920,7 @@ export default function App() {
     if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
     try {
       serverSpectateRef.current = false;
-      if (SERVER_XOX_ENABLED) {
+      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED) {
         try {
           const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
           enterServerRoom(result); return;
@@ -928,7 +931,7 @@ export default function App() {
       }
       await attemptJoinRoom(cleanCode);
     } catch (err) {
-      if (err.message === 'legacy-xox') setErrorMsg('Bu XOX odası eski sürümde açılmış. Yeni bir XOX odası kurarak devam edebilirsin.');
+      if (err.message === 'legacy-server-game') setErrorMsg('Bu oda eski sürümde açılmış. Yeni bir oda kurarak devam edebilirsin.');
       else if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
       else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
       else if (err.message === "full") setSpectatePrompt(cleanCode);
@@ -950,8 +953,8 @@ export default function App() {
     if (!user || matchmakingGameId) return;
     setMatchmakingGameId(gameId);
     try {
-      if (gameId === 'xox' && SERVER_XOX_ENABLED) {
-        const result = await xoxApi(user)({ type: 'room.match', nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+      if (serverGameEnabled(gameId)) {
+        const result = await xoxApi(user)({ type: gameId === 'amiralbatti' ? 'battleship.match' : 'room.match', nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
         enterServerRoom(result); return;
       }
       const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
@@ -1338,7 +1341,7 @@ export default function App() {
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} />}
+                   {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    </Suspense>
                  </ErrorBoundary>
               </div>

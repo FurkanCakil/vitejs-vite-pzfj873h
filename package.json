@@ -12,7 +12,7 @@
     "lint": "oxlint src server api --config _oxlintrc.json",
     "test": "node --test",
     "dev:xox": "npx --yes --package firebase-tools@15.34.0 firebase emulators:exec --only firestore,auth --project demo-oyun-portali --config firebase.emulator.json \"node scripts/dev-xox.mjs\"",
-    "test:integration": "npx --yes --package firebase-tools@15.34.0 firebase emulators:exec --only firestore,auth --project demo-oyun-portali --config firebase.emulator.json \"node --test server/firestore.integration.test.js server/xox-lifecycle.integration.test.js\"",
+    "test:integration": "npx --yes --package firebase-tools@15.34.0 firebase emulators:exec --only firestore,auth --project demo-oyun-portali --config firebase.emulator.json \"node --test server/firestore.integration.test.js server/xox-lifecycle.integration.test.js server/battleship.integration.test.js\"",
     "preview": "vite preview"
   },
   "dependencies": {

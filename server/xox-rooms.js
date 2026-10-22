@@ -1,6 +1,7 @@
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, randomInt, randomBytes } from 'node:crypto';
 import { requireAction } from './errors.js';
 import { applyXoxMove } from './games/xox.js';
+import { freshBattle, validateFleet, applyBattleShot } from './games/battleship.js';
 import { validateAction } from './room-schema.js';
 
 export const CONNECTION_TTL = 60_000;
@@ -9,7 +10,8 @@ const newCode = () => Array.from({ length: 6 }, () => alphabet[randomInt(alphabe
 const live = (time, now) => Number.isFinite(time) && time <= now && now - time < CONNECTION_TTL;
 const pair = players => createHash('sha256').update(JSON.stringify([...players].sort())).digest('hex');
 const matchFields = ['players', 'board', 'turn', 'startingPlayer', 'winner', 'winningLine', 'scores', 'rematchRequestedBy'];
-const matchState = data => Object.fromEntries(matchFields.map(key => [key, data[key] ?? null]));
+const battleFields = ['players', 'setupPhase', 'roundId', 'readyPlayers', 'shots', 'revealedShips', 'turn', 'startingPlayer', 'winner', 'scores', 'rematchRequestedBy'];
+const matchState = data => Object.fromEntries((data.gameType === 'amiralbatti' ? battleFields : matchFields).map(key => [key, data[key] ?? null]));
 
 function pruneConnections(connections, now) {
   return Object.fromEntries(Object.entries(connections ?? {}).map(([uid, sessions]) => [uid,
@@ -17,14 +19,16 @@ function pruneConnections(connections, now) {
   ]).filter(([, sessions]) => Object.keys(sessions).length));
 }
 function connected(connections, uid) { return Object.keys(connections[uid] ?? {}).length > 0; }
-function freshGame(players, scores, starter = players[0]) {
+function freshGame(players, scores, starter = players[0], game = 'xox', roundId) {
+  if (game === 'amiralbatti') return freshBattle(players, scores, starter, roundId);
   return { board: Array(9).fill(null), turn: starter, startingPlayer: starter, winner: null, winningLine: null,
     scores: Object.fromEntries(players.map(uid => [uid, scores?.[uid] ?? 0])), rematchRequestedBy: null };
 }
 
 // All public game data and server-only connection/receipt records are committed
 // together. No client-supplied identity, board, result or score is accepted.
-export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode) {
+export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode,
+  { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true' } = {}) {
   const action = validateAction(input);
   requireAction(typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid), 401, 'invalid_identity');
   const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -33,8 +37,10 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const actorRef = db.doc(`${root}/serverRoomActors/${uid}`);
   const rateRef = db.doc(`${root}/serverRateLimits/${uid}`);
-  const queueRef = db.doc(`${root}/public/data/xoxLobby/queue`);
-  const candidateCode = ['room.create', 'room.match'].includes(action.type) ? codeSupplier() : null;
+  const createAction = ['room.create', 'battleship.create'].includes(action.type);
+  const matchAction = ['room.match', 'battleship.match'].includes(action.type);
+  const candidateCode = createAction || matchAction ? codeSupplier() : null;
+  const nextRoundId = randomBytes(12).toString('hex');
   if (candidateCode) requireAction(/^[A-Z0-9]{6}$/.test(candidateCode), 500, 'invalid_generated_code');
 
   return db.runTransaction(async tx => {
@@ -50,38 +56,50 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     const sameWindow = rate && now >= rate.windowStart && now - rate.windowStart < 10_000;
     const count = sameWindow ? rate.count : 0;
     requireAction(count < 30, 429, 'too_many_actions');
-    const touchesQueue = action.type.startsWith('room.');
-    const queue = touchesQueue ? ((await tx.get(queueRef)).data()?.entries ?? []) : [];
-    let entries = queue.filter(entry => live(entry.updatedAt, now));
     let id = action.roomId;
     let data;
     let connections;
     let creating = false;
-    if (action.type === 'room.match') {
+    let game = action.type.startsWith('battleship.') ? 'amiralbatti' : 'xox';
+    if (!createAction && !matchAction) {
+      const [saved, presence] = await tx.getAll(roomRef(id), presenceRef(id));
+      requireAction(saved.exists, 404, 'room_not_found');
+      data = saved.data(); game = data.gameType;
+      connections = pruneConnections(presence.data()?.connections, now);
+    }
+    requireAction(['xox', 'amiralbatti'].includes(game), 409, 'unsupported_room');
+    requireAction(game !== 'amiralbatti' || battleshipEnabled, 503, 'server_not_enabled');
+    if (action.type.startsWith('xox.')) requireAction(game === 'xox', 409, 'unsupported_room');
+    if (action.type.startsWith('battleship.')) requireAction(game === 'amiralbatti', 409, 'unsupported_room');
+    const queueRef = db.doc(`${root}/public/data/${game === 'xox' ? 'xoxLobby' : 'battleshipLobby'}/queue`);
+    const touchesQueue = action.type.startsWith('room.') || createAction || matchAction;
+    const queue = touchesQueue ? ((await tx.get(queueRef)).data()?.entries ?? []) : [];
+    let entries = queue.filter(entry => live(entry.updatedAt, now));
+    if (matchAction) {
       // A single bounded queue document serializes simultaneous match requests;
       // two users cannot both miss an empty query and create separate rooms.
       for (const entry of entries) {
         const [saved, presence] = await tx.getAll(roomRef(entry.roomId), presenceRef(entry.roomId));
         const room = saved.data();
         const sessions = pruneConnections(presence.data()?.connections, now);
-        if (room?.status === 'waiting' && room.isPublic && room.players?.length === 1 && connected(sessions, room.host)) {
+        if (room?.gameType === game && room.status === 'waiting' && room.isPublic && room.players?.length === 1 && connected(sessions, room.host)) {
           if (room.host === uid) { id = entry.roomId; data = room; connections = sessions; break; }
           id = entry.roomId; data = room; connections = sessions; break;
         }
         entries = entries.filter(item => item.roomId !== entry.roomId);
       }
     }
-    if (action.type === 'room.create' || (action.type === 'room.match' && !id)) {
+    if (createAction || (matchAction && !id)) {
       id = candidateCode;
       const [candidate, legacy] = await tx.getAll(roomRef(id), db.doc(`${root}/public/data/rooms/${id}`));
       requireAction(!candidate.exists && !legacy.exists, 409, 'room_code_collision');
       const recentCreates = (actor.createdAt ?? []).filter(at => now >= at && now - at < 60_000);
       requireAction(recentCreates.length < 3, 429, 'too_many_rooms');
       actor.createdAt = [...recentCreates, now];
-      data = { schemaVersion: 2, gameType: 'xox', gameId: 'xox', version: 0,
+      data = { schemaVersion: 2, gameType: game, gameId: game, version: 0,
         host: uid, players: [uid], spectators: [], playerNames: { [uid]: action.nickname },
-        status: 'waiting', isPublic: action.type === 'room.match' || action.isPublic,
-        ...freshGame([uid]), turn: null, startingPlayer: null,
+        status: 'waiting', isPublic: matchAction || action.isPublic,
+        ...freshGame([uid], undefined, undefined, game, nextRoundId), turn: null, startingPlayer: null,
         abandonedBy: null, abandonReason: null, createdAt: now, history: [] };
       connections = {};
       creating = true;
@@ -91,16 +109,23 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       data = saved.data();
       connections = pruneConnections(presence.data()?.connections, now);
     }
-    requireAction(data.schemaVersion === 2 && data.gameType === 'xox', 409, 'unsupported_room');
+    requireAction(data.schemaVersion === 2 && data.gameType === game, 409, 'unsupported_room');
     const originalPublic = JSON.stringify(data);
     data.spectators ??= [];
     data.history ??= [];
     const player = data.players.includes(uid);
     const spectator = data.spectators.includes(uid);
-    const joining = ['room.join', 'room.match', 'room.spectate'].includes(action.type);
+    const joining = ['room.join', 'room.spectate'].includes(action.type) || matchAction;
     requireAction(creating || joining || player || spectator, 403, 'not_a_player');
     requireAction(data.status !== 'closed' || ['room.leave', 'room.disconnect'].includes(action.type), 410, 'room_closed');
     if (Object.hasOwn(action, 'expectedVersion')) requireAction(data.version === action.expectedVersion, 409, 'stale_version');
+    if (Object.hasOwn(action, 'roundId')) requireAction(data.roundId === action.roundId, 409, 'stale_round');
+    const battle = game === 'amiralbatti';
+    const fleetRef = db.doc(`${root}/serverBattleFleets/${id}`);
+    const needsFleet = battle && (creating || joining || action.type === 'room.wait' || action.type.startsWith('battleship.'));
+    const secret = needsFleet && !creating ? ((await tx.get(fleetRef)).data() ?? { fleets: {}, history: [] }) : { fleets: {}, history: [] };
+    let fleetChanged = battle && creating;
+    let shotHit;
     let changed = creating;
 
     if (joining && !creating) {
@@ -115,7 +140,12 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
         data.playerNames = { ...data.playerNames, [uid]: action.nickname };
         const previous = data.history.find(item => item.key === pair(data.players));
         if (previous) Object.assign(data, previous.state);
-        else Object.assign(data, freshGame(data.players));
+        else Object.assign(data, freshGame(data.players, undefined, undefined, game, nextRoundId));
+        if (battle) {
+          const savedFleet = secret.history.find(item => item.key === pair(data.players));
+          requireAction(!previous || savedFleet?.roundId === data.roundId, 503, 'service_unavailable');
+          secret.fleets = previous ? savedFleet.fleets : {}; fleetChanged = true;
+        }
         data.status = 'playing'; data.abandonedBy = null; data.abandonReason = null;
       }
       changed = true;
@@ -146,6 +176,10 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
         if (data.players.length === 2) {
           const key = pair(data.players);
           data.history = [...data.history.filter(item => item.key !== key).slice(-7), { key, state: matchState(data) }];
+          if (battle) {
+            secret.history = [...secret.history.filter(item => item.key !== key).slice(-7), { key, roundId: data.roundId, fleets: secret.fleets }];
+            fleetChanged = true;
+          }
         }
         data.players = data.players.filter(id => id !== data.abandonedBy);
         data.host = data.players[0]; data.status = 'waiting'; data.turn = null;
@@ -157,7 +191,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       requireAction(data.abandonReason === 'left' || !connected(connections, data.abandonedBy), 409, 'player_reconnected');
       data.status = 'closed'; data.closedBy = uid; changed = true;
     }
-    if (action.type.startsWith('xox.')) {
+    if (action.type.startsWith('xox.') || (action.type.startsWith('battleship.') && !createAction && !matchAction)) {
       requireAction(player, 403, 'not_a_player');
       // Closed tabs or deliberately departed seats cannot continue sending
       // moves using a still-valid Firebase token.
@@ -166,17 +200,36 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     if (action.type === 'xox.move') {
       Object.assign(data, applyXoxMove(data, uid, action.cell)); changed = true;
     }
-    if (action.type.startsWith('xox.rematch.')) {
+    if (action.type === 'battleship.ready') {
+      requireAction(data.status === 'playing' && data.setupPhase && !data.readyPlayers[uid], 409, 'setup_locked');
+      secret.fleets = { ...secret.fleets, [uid]: validateFleet(action.fleet) }; fleetChanged = true;
+      data.readyPlayers = { ...data.readyPlayers, [uid]: true };
+      if (data.players.every(id => data.readyPlayers[id])) {
+        data.setupPhase = false; data.turn = data.startingPlayer ?? data.host; data.startingPlayer = data.turn;
+      }
+      changed = true;
+    }
+    if (action.type === 'battleship.cancel') {
+      requireAction(data.status === 'playing' && data.setupPhase && data.readyPlayers[uid]
+        && !data.players.some(id => id !== uid && data.readyPlayers[id]), 409, 'setup_locked');
+      data.readyPlayers = { ...data.readyPlayers, [uid]: false }; changed = true;
+    }
+    if (action.type === 'battleship.shot') {
+      const shot = applyBattleShot(data, secret.fleets, uid, action.row, action.col);
+      Object.assign(data, shot.state); shotHit = shot.hit; changed = true;
+    }
+    if (action.type.includes('.rematch.')) {
       requireAction(player, 403, 'not_a_player');
       requireAction(data.status === 'playing' && data.winner && data.players.length === 2, 409, 'game_not_finished');
-      if (action.type === 'xox.rematch.request') {
+      if (action.type.endsWith('.request')) {
         requireAction(!data.rematchRequestedBy || data.rematchRequestedBy === uid, 409, 'rematch_pending');
         data.rematchRequestedBy = uid;
       } else {
         requireAction(data.rematchRequestedBy && data.rematchRequestedBy !== uid, 409, 'invalid_rematch');
-        if (action.type === 'xox.rematch.accept') {
+        if (action.type.endsWith('.accept')) {
           const starter = data.players.find(id => id !== data.startingPlayer);
-          Object.assign(data, freshGame(data.players, data.scores, starter));
+          Object.assign(data, freshGame(data.players, data.scores, starter, game, nextRoundId));
+          if (battle) { secret.fleets = {}; fleetChanged = true; }
         } else { data.status = 'closed'; data.closedBy = uid; }
       }
       changed = true;
@@ -203,7 +256,14 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       }
     }
     const result = { roomId: id, version: data.version, winner: data.winner };
+    if (shotHit !== undefined) result.hit = shotHit;
     if (publicChanged) tx.set(roomRef(id), data);
+    if (fleetChanged) {
+      tx.set(fleetRef, secret);
+      for (const playerId of data.players) tx.set(roomRef(id).collection('playerData').doc(playerId), {
+        roundId: data.roundId, ships: secret.fleets[playerId] ?? [],
+      });
+    }
     tx.set(presenceRef(id), { connections });
     if (touchesQueue && JSON.stringify(entries) !== JSON.stringify(queue)) tx.set(queueRef, { entries });
     tx.set(actorRef, { ...actor, recent: [...recent.slice(-31), { actionId: action.actionId, fingerprint, result }] });

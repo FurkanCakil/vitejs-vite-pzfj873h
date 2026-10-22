@@ -1,4 +1,7 @@
 export const SERVER_XOX_ENABLED = import.meta.env?.VITE_SERVER_XOX_ENABLED === 'true';
+export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP_ENABLED === 'true';
+export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
+  || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED);
 
 export class GameApiError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -43,6 +46,9 @@ export function gameErrorMessage(error) {
     player_disconnected: 'Rakibin bağlantısı bekleniyor.',
     player_reconnected: 'Rakibin yeniden bağlandı; oyun devam ediyor.',
     not_your_turn: 'Henüz senin sıran değil.', occupied_cell: 'Bu kare dolu.',
+    already_shot: 'Bu hücreye zaten ateş ettin.', invalid_fleet: 'Gemilerin yerleşimi geçerli değil. Filonu kontrol et.',
+    setup_locked: 'Yerleştirme aşaması değişti. Son durumu kontrol et.',
+    stale_round: 'Yeni tur başladı. Gemilerini bu tur için yeniden yerleştir.',
     too_many_actions: 'Çok hızlı işlem yapıldı. Birkaç saniye sonra tekrar dene.',
     too_many_rooms: 'Kısa sürede çok oda açıldı. Bir dakika sonra tekrar dene.',
     server_not_enabled: 'Yeni oyun sistemi henüz açılmadı. Sayfayı yenileyip tekrar dene.',

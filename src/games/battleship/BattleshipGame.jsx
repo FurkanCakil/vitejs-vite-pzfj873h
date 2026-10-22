@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Ship, RotateCw, Check, Loader2, Lock, Eye, RotateCcw, Anchor, Flame, X, Trash2 } from 'lucide-react';
-import { doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, runTransaction } from 'firebase/firestore';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 import { playSound } from '../../utils/sound.js';
 import { playBattleshipSound } from './battleshipSound.js';
 import { BOARD_SIZE, ROW_LABELS, SHIP_DEFS, getShipCells, canPlaceShip, allShipsPlaced, cellKey, anchorOrigin, centerCellIndex, buildShotUpdate } from './logic.js';
@@ -10,18 +11,10 @@ import { BOT_UID, generateBotFleet, chooseBotShot } from './bot.js';
 // FAZ 1: 10x10 tahta + gemi yerleştirme aşaması.
 // FAZ 2: atış/batırma/kazanma döngüsü (setupPhase false olunca devreye girer).
 // ============================================================
-// NOT: Rakibin gemi konumları BİLEREK hiçbir zaman ayrı bir gizli kanaldan
-// taşınmaz — ama şunu açıkça belirtmek gerekir: bu projedeki oda mimarisi
-// TÜM oda dokümanını (roomData) tek bir onSnapshot ile HER İKİ oyuncuya da
-// senkronlar (bkz. diğer oyunlardaki `racks`, `openedHands` gibi alanlar).
-// Yani "gizlilik" burada da (okey101'deki elde kalan taşlar gibi) sadece
-// ARAYÜZ seviyesinde sağlanır — ships.{uid} verisi Firestore belgesinde her
-// iki taraf için de teknik olarak erişilebilir kalır; FAZ 2'nin batırma
-// tespiti de zaten bu ships.{opponentUid} verisini (yalnızca isabet eden
-// atışlarla kesişimini) okuyarak çalışır. Gerçek sunucu-taraflı gizlilik
-// için Cloud Functions / güvenlik kuralları ile ayrı bir alt-koleksiyon
-// gerekir; bu projede hiçbir oyun (şu ana kadar) böyle bir arka uca sahip
-// değil.
+// V2 rooms read only this player's fleet from playerData/{uid}; the server
+// decides hits and scores. Opposing fleets are revealed only after a win.
+// The legacy room path below remains for the staged rollout; its shared
+// ships field is not private. Bot games keep their separate local state.
 // Tek bir gemi parçası: yukarıdan bakılan METALİK savaş gemisi gövdesi.
 // Hücre kenarlarını (inset -1px) örterek yan parçayla dikişsiz birleşir.
 //   state: 'intact' | 'hit' | 'sunk'
@@ -162,7 +155,7 @@ function applyDotPathPatch(prev, patch) {
 // algoritmasıyla çalışır. `isBot` true iken TÜM Firestore yazımları
 // `setLocalRoomData` üzerinden tamamen YEREL state güncellemesine döner
 // (bkz. `updateRoom`) — gerçek çok oyunculu (Firestore) akışa HİÇ dokunulmaz.
-export default function BattleshipGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, setLocalRoomData }) {
+export default function BattleshipGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, setLocalRoomData, sendAction = null }) {
   // RULES OF HOOKS: "Veri henüz gelmediyse bekle" kontrolü ESKİDEN tam burada,
   // `return null` şeklinde ERKEN bir çıkıştı — oysa bu bileşende ondan SONRA
   // ~25 hook (useState/useRef/useEffect/useMemo) çağrılıyor. Koşul bir kez bile
@@ -173,8 +166,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // yine `null` render edilir. Bu satırla o kontrol arasındaki türetmeler bu
   // yüzden eksik veriye dayanıklı (`?.`) yazılmıştır.
   const players = roomData?.players;
+  const serverGame = !isBot && roomData?.schemaVersion === 2;
 
-  const roomRef = isBot ? null : doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+  const roomRef = isBot || serverGame ? null : doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
 
   // Diğer bot-destekli oyunlarla (connect4/Connect4Game.jsx) AYNI desen:
   // bot modunda hiçbir Firestore yazımı/transaction'ı GERÇEKLEŞMEZ, sadece
@@ -183,6 +177,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // dokunulmamış olur.
   const updateRoom = async (patch) => {
     if (isBot) { setLocalRoomData((prev) => applyDotPathPatch(prev, patch)); return; }
+    if (serverGame) throw new Error('Server rooms require validated actions');
     await updateDoc(roomRef, patch);
   };
 
@@ -204,6 +199,25 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   };
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  const serverPendingRef = useRef(false);
+  const [serverPending, setServerPending] = useState(false);
+  const [privateFleet, setPrivateFleet] = useState(null);
+  const hydratedRound = useRef(null);
+  useEffect(() => {
+    if (!serverGame || isSpectator) return undefined;
+    setPrivateFleet(null); hydratedRound.current = null;
+    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'roomsV2', roomCode, 'playerData', user.uid),
+      snapshot => setPrivateFleet(snapshot.exists() ? snapshot.data() : null),
+      error => showToast(gameErrorMessage(error)));
+  }, [serverGame, isSpectator, db, appId, roomCode, user.uid]);
+  const sendServer = async (type, fields = {}) => {
+    if (serverPendingRef.current || !sendAction) return null;
+    serverPendingRef.current = true;
+    setServerPending(true);
+    try { return await sendAction(type, fields); }
+    catch (error) { showToast(gameErrorMessage(error)); return null; }
+    finally { serverPendingRef.current = false; setServerPending(false); }
+  };
   const toastColors = { red: 'bg-red-500/95 border-red-400', amber: 'bg-amber-500/95 border-amber-400', emerald: 'bg-emerald-500/95 border-emerald-400' };
 
   const amIReady = !!roomData?.readyPlayers?.[user.uid];
@@ -225,6 +239,13 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   // Yerleştirilmiş bir gemi sürüklenip alt taraftaki gemi ENVANTERİ üzerine
   // getirildiğinde (bkz. handleCellPointerMove) görsel geri bildirim için.
   const [dragOverInventory, setDragOverInventory] = useState(false);
+  const privateLoaded = !serverGame || privateFleet?.roundId === roomData?.roundId;
+  useEffect(() => {
+    if (!serverGame || !privateLoaded || hydratedRound.current === roomData?.roundId) return;
+    hydratedRound.current = roomData.roundId;
+    setPlacedShips(privateFleet.ships ?? []);
+    setSelectedShipId(null); setHoverOrigin(null); setShipMenu(null);
+  }, [serverGame, privateLoaded, privateFleet, roomData?.roundId]);
 
   // Bir sonraki el (rematch — hem bot hem gerçek çok oyunculu modda) sunucuda
   // `ships`'i sıfırlar, ama `placedShips`'in `useState` başlangıç değeri
@@ -243,7 +264,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     prevSetupPhaseRef.current = roomData?.setupPhase;
   }, [roomData?.setupPhase, roomData?.ships, user.uid]);
 
-  const setupLocked = amIReady || isSaving;
+  const setupLocked = amIReady || isSaving || !privateLoaded;
 
   const occupancy = useMemo(() => {
     const map = {};
@@ -506,6 +527,12 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     setShipMenu(null);
     setIsSaving(true);
     try {
+      if (serverGame) {
+        const result = await sendServer('battleship.ready', { roundId: roomData.roundId,
+          fleet: placedShips.map(ship => ({ id: ship.id, orientation: ship.orientation, row: ship.origin.row, col: ship.origin.col })) });
+        if (result) playBattleshipSound('ready');
+        return;
+      }
       if (isBot) {
         // Bot MODU: bot filosu zaten oda kurulurken (App.tsx#startBotGame)
         // yerleştirilip "hazır" işaretlenmiş durumda — tek bir yerel oyuncu
@@ -578,6 +605,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
     if (!amIReady || isOpponentReady || isSaving) return;
     setIsSaving(true);
     try {
+      if (serverGame) { await sendServer('battleship.cancel', { roundId: roomData.roundId }); return; }
       await updateRoom({ [`readyPlayers.${user.uid}`]: false });
     } catch (err) { console.error('Amiral Battı hazır iptali hatası:', err); }
     finally { setIsSaving(false); }
@@ -592,8 +620,8 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   const isPlaying = !roomData?.setupPhase;
   const myShots = roomData?.shots?.[user.uid] || [];
   const opponentShots = roomData?.shots?.[opponentUid] || [];
-  const myShips = roomData?.ships?.[user.uid] || [];
-  const opponentShips = roomData?.ships?.[opponentUid] || [];
+  const myShips = serverGame ? (privateLoaded ? privateFleet?.ships ?? [] : []) : roomData?.ships?.[user.uid] || [];
+  const opponentShips = serverGame ? roomData?.revealedShips?.[opponentUid] || [] : roomData?.ships?.[opponentUid] || [];
   const isMyTurn = isPlaying && roomData?.turn === user.uid && !roomData?.winner;
 
   const myShotMap = {}; myShots.forEach((s) => { myShotMap[cellKey(s.row, s.col)] = s; });
@@ -663,6 +691,15 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   const shotPendingRef = useRef(false);
   const handleShoot = async (row, col) => {
     if (!isMyTurn || shotPendingRef.current) return;
+    if (serverGame) {
+      if (myShots.some(shot => shot.row === row && shot.col === col)) return;
+      shotPendingRef.current = true;
+      try {
+        const result = await sendServer('battleship.shot', { expectedVersion: roomData.version, row, col });
+        if (result) playBattleshipSound(result.hit ? 'hit' : 'miss');
+      } finally { shotPendingRef.current = false; }
+      return;
+    }
     const preview = buildShotUpdate(roomData, user.uid, row, col);
     if (!preview) return;
     shotPendingRef.current = true;
@@ -742,6 +779,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
 
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (serverGame) { await sendServer('battleship.rematch.request', { expectedVersion: roomData.version }); return; }
     if (isBot) {
       // Bot MODU: onay beklemeye gerek yok (karşıda gerçek bir ikinci oyuncu
       // yok) — yeni el DOĞRUDAN kurulur, bot filosu yeniden rastgele dizilip
@@ -756,6 +794,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   };
   const acceptRematch = async () => {
     if (isSpectator) return;
+    if (serverGame) { await sendServer('battleship.rematch.accept', { expectedVersion: roomData.version }); return; }
     await updateRoom({
       setupPhase: true, ships: {}, readyPlayers: {}, shots: {},
       turn: null, winner: null, rematchRequestedBy: null,
@@ -763,6 +802,7 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (serverGame) { await sendServer('battleship.rematch.reject', { expectedVersion: roomData.version }); return; }
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
@@ -776,6 +816,11 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
       </div>
     );
   }
+  if (serverGame && !privateLoaded) return (
+    <div className="flex items-center justify-center gap-2 py-16 text-slate-300" role="status">
+      <Loader2 className="w-5 h-5 animate-spin" /> Filon yükleniyor...
+    </div>
+  );
 
   // Her HÜCRE için "hangi geminin kaçıncı parçası" bilgisini çıkarır. Gemiyi
   // 3 ayrı kutu gibi değil TEK BİR GÖVDE gibi çizebilmek için gerekli: sadece
@@ -815,7 +860,9 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
             <div key={label} className="w-5 h-6 sm:w-6 sm:h-7 md:w-7 md:h-8 flex items-center justify-center text-[10px] sm:text-xs font-bold text-cyan-300/70 shrink-0">{label}</div>
           ))}
         </div>
-        <div className="bs-board relative rounded-md overflow-hidden">
+        {/* Clip the rotating sweep without creating a scroll container: focus
+            on a target button must never shift the grid under its labels. */}
+        <div className="bs-board relative rounded-md overflow-clip">
           {radar && <div className="bs-sweep absolute inset-[-25%] pointer-events-none z-0" />}
           <div className="relative z-[1]">
             {ROW_LABELS.map((label, r) => (
@@ -947,18 +994,21 @@ export default function BattleshipGame({ roomData, roomCode, user, db, appId, le
   const renderBattleTargetCell = (r, c) => {
     const key = cellKey(r, c);
     const shot = myShotMap[key];
-    const clickable = isMyTurn && !shot;
+    const clickable = isMyTurn && !shot && !serverPending;
     const revealSeg = revealedOpponentSegments?.[key];
     const revealState = revealSeg ? (revealedSunkIds.has(revealSeg.shipId) ? 'sunk' : (shot?.hit ? 'hit' : 'intact')) : null;
     return (
-      <div
+      <button
         key={c}
+        type="button"
+        disabled={!clickable}
+        aria-label={`${ROW_LABELS[r]}${c + 1}: ${shot ? (shot.hit ? 'isabet' : 'karavana') : 'ateş edilmedi'}`}
         onClick={() => handleShoot(r, c)}
         className={`${CELL} bs-cell flex items-center justify-center transition-colors ${clickable ? 'bs-cell-live bs-crosshair cursor-pointer' : 'cursor-default'}`}
       >
         {revealSeg && <ShipHull seg={revealSeg} state={revealState} />}
         {shot && <ShotMarker hit={!!shot.hit} />}
-      </div>
+      </button>
     );
   };
 
