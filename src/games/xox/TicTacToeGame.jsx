@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Eye, Crown, Users, Loader2, Check, X, Bot } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { BOT_UID, checkWinner, getBotMove, DIFFICULTY_LABELS } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
 import useBoardScale from '../../hooks/useBoardScale.js';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 
-export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
   // koşulsuz çağrılmalı.
   const { isPhone, isCompact } = useViewport();
@@ -26,6 +27,19 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   const { wrapRef, boardRef, wrapStyle, boardStyle } = useBoardScale(boardFit);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const previousWinner = useRef(roomData?.winner);
+  useEffect(() => {
+    if (sendAction && roomData?.winner && !previousWinner.current && roomData.winner !== 'Draw') playSound('win');
+    previousWinner.current = roomData?.winner;
+  }, [roomData?.winner, sendAction]);
+  const submitServer = async (type, fields = {}) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true); setActionError('');
+    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }); return true; }
+    catch (error) { setActionError(gameErrorMessage(error)); return false; }
+    finally { setIsSubmitting(false); }
+  };
 
   // RULES OF HOOKS: "Veri henüz gelmediyse bekle" kontrolü ESKİDEN tam burada,
   // `return null` şeklinde ERKEN bir çıkıştı — oysa `useState(isSubmitting)` ve
@@ -44,6 +58,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   const isMyTurn = roomData?.turn === user.uid;
 
   const updateRoom = async (patch) => {
+    if (roomData?.schemaVersion === 2) throw new Error('Server room requires a verified action');
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
@@ -56,6 +71,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
 
   const handleMove = async (index) => {
     if (!isMyTurn || isSpectator || board[index] || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
+    if (sendAction) { if (await submitServer('xox.move', { cell: index })) playSound('move'); return; }
     setIsSubmitting(true);
     try {
       playSound('move'); const newBoard = [...board]; newBoard[index] = mySymbol;
@@ -96,6 +112,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
 
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('xox.rematch.request');
     if (isBot) {
       const nextStarter = roomData.startingPlayer === user.uid ? BOT_UID : user.uid;
       await updateRoom({ board: Array(9).fill(null), turn: nextStarter, startingPlayer: nextStarter, winner: null, winningLine: null, rematchRequestedBy: null });
@@ -104,11 +121,13 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
     await updateRoom({ rematchRequestedBy: user.uid });
   };
   const acceptRematch = async () => {
+    if (sendAction) return submitServer('xox.rematch.accept');
     if (isSpectator) return; const nextStarter = roomData.players.find(id => id !== roomData.startingPlayer) || roomData.players[0];
     await updateRoom({ board: Array(9).fill(null), turn: nextStarter, startingPlayer: nextStarter, winner: null, winningLine: null, rematchRequestedBy: null });
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('xox.rematch.reject');
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
@@ -137,6 +156,7 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
      <div className={`relative flex flex-col items-center w-full max-w-md overflow-hidden ${cardClass}`}>
         {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Tic-Tac-Toe</h2>}
         <div className="w-full flex flex-col items-center z-10">
+          {actionError && <p role="alert" className="text-sm text-red-300 text-center mb-3">{actionError}</p>}
           {/* Telefon YATAY tam ekranda skor tablosu TEK SATIRA iner: dikeyde
               ~190px yer kaplayıp tahtayı ekranın dışına itiyordu. Artan alanın
               tamamı tahtaya gider (bkz. useBoardScale). */}
@@ -164,9 +184,9 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
           </div>
           )}
           <div ref={wrapRef} style={wrapStyle} className={`w-full ${boardFit ? '' : 'mb-8'}`}>
-            <div ref={boardRef} style={boardStyle} className="grid grid-cols-3 gap-2 sm:gap-3 w-fit p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
+            <div ref={boardRef} style={boardStyle} className="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-[282px] sm:max-w-[328px] p-3 sm:p-4 bg-slate-800/90 rounded-2xl mx-auto z-10 border border-slate-600">
               {board.map((cell, index) => (
-                 <button key={index} onClick={() => handleMove(index)} disabled={!isMyTurn || isSpectator || cell !== null || roomData.winner} className={`w-[80px] h-[80px] sm:w-[90px] sm:h-[90px] rounded-xl text-6xl font-black ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900 cursor-default'} ${roomData.winningLine?.includes(index) ? 'border-2 border-indigo-400 bg-indigo-500/40 shadow-lg' : 'border border-slate-700'} ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}`}>{cell}</button>
+                 <button key={index} aria-label={`${index + 1}. kare: ${cell || 'boş'}`} onClick={() => handleMove(index)} disabled={isSubmitting || roomData.status !== 'playing' || !isMyTurn || isSpectator || cell !== null || roomData.winner} className={`aspect-square w-full min-w-0 min-h-0 rounded-xl text-[clamp(1.75rem,16vw,3.75rem)] leading-none font-black ${cell === null && isMyTurn && !roomData.winner ? 'hover:bg-slate-700 bg-slate-900 cursor-pointer' : 'bg-slate-900 cursor-default'} ${roomData.winningLine?.includes(index) ? 'border-2 border-indigo-400 bg-indigo-500/40 shadow-lg' : 'border border-slate-700'} ${cell === 'X' ? 'text-indigo-400' : 'text-purple-400'}`}>{cell}</button>
               ))}
             </div>
           </div>

@@ -68,6 +68,30 @@ test('request schema rejects forged scores, identities, boards and path traversa
   }
 });
 
+test('room and rematch requests cannot choose identities, seats, scores or visibility implicitly', () => {
+  const base = { actionId: 'request_00000099', roomId: 'ABC123', sessionId: 'session_00000001' };
+  const examples = [
+    { type: 'room.create', actionId: base.actionId, sessionId: base.sessionId, nickname: 'Player', isPublic: false },
+    { type: 'room.match', actionId: base.actionId, sessionId: base.sessionId, nickname: 'Player' },
+    { type: 'room.join', ...base, nickname: 'Player' },
+    ...['room.spectate', 'room.heartbeat', 'room.disconnect', 'room.leave'].map(type => ({ type, ...base })),
+    ...['room.wait', 'room.close', 'xox.rematch.request', 'xox.rematch.accept', 'xox.rematch.reject'].map(type => ({
+      type, actionId: base.actionId, roomId: base.roomId, expectedVersion: 0,
+    })),
+  ];
+  for (const input of examples) {
+    assert.equal(validateAction(input).type, input.type);
+    for (const forged of ['uid', 'players', 'scores', 'board', 'host', 'createdAt']) {
+      fails('invalid_fields', () => validateAction({ ...input, [forged]: 'forged' }));
+    }
+  }
+  for (const nickname of ['', '   ', 'x'.repeat(16), 'a\nb']) {
+    fails('invalid_nickname', () => validateAction({ ...examples[0], nickname }));
+  }
+  fails('invalid_visibility', () => validateAction({ ...examples[0], isPublic: 'false' }));
+  fails('invalid_session_id', () => validateAction({ ...examples[2], sessionId: '../wrong' }));
+});
+
 function response() {
   return {
     headers: {}, statusCode: null, body: null,
@@ -109,6 +133,7 @@ test('HTTP rejects unauthenticated, cross-site, oversized and malformed requests
   const cases = [
     [request({ method: 'GET' }), 405],
     [request({ headers: { 'content-type': 'application/json', cookie: 'uid=alice' } }), 401],
+    [request({ headers: { ...request().headers, authorization: 'Bearer header.payload.' } }), 401],
     [request({ headers: { ...request().headers, origin: 'https://evil.example' } }), 403],
     [request({ headers: { ...request().headers, 'sec-fetch-site': 'cross-site' } }), 403],
     [request({ headers: { ...request().headers, 'content-type': 'text/plain' } }), 415],

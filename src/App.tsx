@@ -8,6 +8,8 @@ import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, 
 import { auth, db, appId } from './firebase/config.js';
 import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
 import { roomRecoveryUpdate } from './utils/roomRecovery.js';
+import { SERVER_XOX_ENABLED, gameErrorMessage } from './utils/gameApi.js';
+import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
 import { waitingPlayers, livePlayersByRoom } from './utils/presence.js';
@@ -81,7 +83,9 @@ const safeStorage = {
 const sessionRoomStorage = {
   get() { try { return sessionStorage.getItem('activeRoom'); } catch { return null; } },
   set(value) { try { sessionStorage.setItem('activeRoom', value); } catch { /* yok say */ } },
-  remove() { try { sessionStorage.removeItem('activeRoom'); } catch { /* yok say */ } },
+  protocol(value) { try { sessionStorage.setItem('activeRoomProtocol', value); } catch { /* yok say */ } },
+  isServer() { try { return sessionStorage.getItem('activeRoomProtocol') === 'v2'; } catch { return false; } },
+  remove() { try { sessionStorage.removeItem('activeRoom'); sessionStorage.removeItem('activeRoomProtocol'); } catch { /* yok say */ } },
 };
 
 export default function App() {
@@ -116,6 +120,8 @@ export default function App() {
   const [resumeNoticeAt, setResumeNoticeAt] = useState(null);
 
   const [isBotGame, setIsBotGame] = useState(false);
+  const [isServerRoom, setIsServerRoom] = useState(false);
+  const serverSpectateRef = useRef(false);
   usePresence(user?.uid, myPlayerId, isBotGame ? null : roomCode);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
@@ -215,7 +221,10 @@ export default function App() {
       let savedCode = null;
       savedCode = sessionRoomStorage.get();
       savedCode = normalizeRoomCode(savedCode);
-      if (savedCode && currentUser) { restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
+      if (savedCode && currentUser) {
+        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED) sessionRoomStorage.remove();
+        else { setIsServerRoom(sessionRoomStorage.isServer()); restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
+      }
 
       // Firestore BAĞLANTISINI ERKENDEN ISITIR: SDK'nın gerçek ağ kanalını
       // (WebChannel/gRPC el sıkışması) kurması, o oturumdaki İLK okuma/yazma
@@ -241,9 +250,16 @@ export default function App() {
     }
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); sessionRoomStorage.remove();
-    setIsBotGame(false); setResumeNoticeAt(null);
+    setIsBotGame(false); setIsServerRoom(false); setResumeNoticeAt(null);
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(()=>{});
   };
+
+  const enterServerRoom = (result) => {
+    setIsServerRoom(true); setIsBotGame(false); setRoomData(null);
+    setRoomCode(result.roomId); sessionRoomStorage.set(result.roomId); sessionRoomStorage.protocol('v2');
+    setCurrentView('room'); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
+  };
+  const sendXoxAction = (type, fields = {}) => xoxApi(user)({ type, roomId: roomCode, ...fields });
 
   const waitForOpponent = async () => {
     const code = roomCode;
@@ -251,6 +267,10 @@ export default function App() {
     const expectedReason = roomData?.abandonReason;
     setDisconnectCountdown('paused');
     try {
+      if (isServerRoom) {
+        await sendXoxAction('room.wait', { expectedVersion: roomData.version });
+        return;
+      }
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       await runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(roomRef);
@@ -273,10 +293,32 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !roomCode || isBotGame) return;
+    if (isServerRoom) return subscribeXoxRoom({ db, appId, user, roomId: roomCode,
+      onData: data => {
+        if (!data || data.status === 'closed') {
+          if (data?.closedBy !== user.uid) setLeftOverlayTimer(5);
+          leaveRoomLocal(); return;
+        }
+        restoredRoomRef.current = null;
+        setRoomData(data); setCurrentView('room');
+        if (data.status === 'abandoned' && data.abandonedBy !== user.uid && data.players.includes(user.uid)) {
+          setDisconnectCountdown(value => value === null ? (data.abandonReason === 'left' ? 5 : 15) : value);
+        } else setDisconnectCountdown(null);
+      },
+      onError: error => {
+        if (['permission-denied', 'not_a_player', 'room_closed', 'room_not_found'].includes(error.code)) leaveRoomLocal();
+        setErrorMsg(gameErrorMessage(error));
+      },
+    });
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
     const unsubscribe = onSnapshot(roomRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        if (SERVER_XOX_ENABLED && data.gameId === 'xox') {
+          leaveRoomLocal();
+          setErrorMsg('Bu XOX odası eski sürümde açılmış. Yeni bir XOX odası kurarak devam edebilirsin.');
+          return;
+        }
         if (data.status === 'closed') {
           if (roomStateRef.current.currentView === 'room' && data.players?.includes(user.uid)) { if (data.closedBy !== user.uid) setLeftOverlayTimer(5); } 
           else { setErrorMsg("Oda kapatıldı."); }
@@ -323,7 +365,7 @@ export default function App() {
       setErrorMsg('Oda bilgileri okunamadı. Bağlantını kontrol edip tekrar katıl.');
     });
     return () => unsubscribe();
-  }, [user, roomCode, isBotGame]);
+  }, [user, roomCode, isBotGame, isServerRoom]);
 
   // "Kaldığınız yerden devam ediyorsunuz" bildirimi. `resumeNotice` odaya,
   // ESKİ bir dizilim geri geldiği anda yazılır (bkz. attemptJoinRoom) — yani
@@ -349,6 +391,13 @@ export default function App() {
   useEffect(() => {
     if (disconnectCountdown === null || disconnectCountdown === 'paused') return;
     if (disconnectCountdown === 0) {
+      if (isServerRoom) {
+        xoxApi(roomStateRef.current.user)({ type: 'room.close', roomId: roomCode, expectedVersion: roomStateRef.current.roomData.version }).then(() => leaveRoomLocal()).catch(error => {
+          setDisconnectCountdown(null);
+          if (!['stale_version', 'player_reconnected', 'cannot_close'].includes(error.code)) setErrorMsg(gameErrorMessage(error));
+        });
+        return;
+      }
       const expected = roomStateRef.current.roomData?.abandonedBy;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
       runTransaction(db, async (t) => {
@@ -370,7 +419,7 @@ export default function App() {
     }
     const timer = setTimeout(() => { setDisconnectCountdown(prev => typeof prev === 'number' ? prev - 1 : prev); }, 1000);
     return () => clearTimeout(timer);
-  }, [disconnectCountdown, roomCode]);
+  }, [disconnectCountdown, roomCode, isServerRoom]);
 
   useEffect(() => {
     // 101 OKEY İSTİSNASI (ekran "koması"/anlık titreme düzeltmesi):
@@ -387,7 +436,7 @@ export default function App() {
     const isOkeyRoom = () => roomStateRef.current.roomData?.gameId === 'okey101';
     const handleDisconnect = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot) return;
+      if (isBot || data?.schemaVersion === 2) return;
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       // İZLEYİCİ sekmeyi kapatıyorsa kendini listeden düşürür. Eskiden bu hiç
@@ -420,7 +469,7 @@ export default function App() {
     const VISIBILITY_ABANDON_GRACE_MS = 5000;
     const handleVisibility = () => {
       const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot || isOkeyRoom()) return;
+      if (isBot || isOkeyRoom() || data?.schemaVersion === 2) return;
       if (!code || !u || !data) return;
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
       if (document.visibilityState === 'hidden') {
@@ -556,6 +605,19 @@ export default function App() {
     if (!user || creatingRoomRef.current) return;
     creatingRoomRef.current = true;
     setIsCreatingRoom(true);
+    if (gameId === 'xox' && SERVER_XOX_ENABLED) {
+      try {
+        const api = xoxApi(user);
+        let result;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          try { result = await api({ type: 'room.create', nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
+          catch (error) { if (error.code !== 'room_code_collision' || attempt === 3) throw error; }
+        }
+        enterServerRoom(result);
+      } catch (error) { setErrorMsg(gameErrorMessage(error)); }
+      finally { creatingRoomRef.current = false; setIsCreatingRoom(false); }
+      return;
+    }
     {
       const initialState = {
          gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' },
@@ -648,6 +710,7 @@ export default function App() {
         if (!roomSnap.exists()) throw new Error("not-found");
         
         const data = roomSnap.data();
+        if (SERVER_XOX_ENABLED && data.gameId === 'xox') throw new Error('legacy-xox');
         if (data.status === 'closed') throw new Error("closed");
         if (matchmaking) {
           const presence = await transaction.get(presenceCounterRef);
@@ -853,9 +916,20 @@ export default function App() {
     const cleanCode = normalizeRoomCode(code);
     if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
     try {
+      serverSpectateRef.current = false;
+      if (SERVER_XOX_ENABLED) {
+        try {
+          const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+          enterServerRoom(result); return;
+        } catch (error) {
+          if (error.code === 'room_full') { serverSpectateRef.current = true; setSpectatePrompt(cleanCode); return; }
+          if (error.code !== 'room_not_found') { setErrorMsg(gameErrorMessage(error)); return; }
+        }
+      }
       await attemptJoinRoom(cleanCode);
     } catch (err) {
-      if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
+      if (err.message === 'legacy-xox') setErrorMsg('Bu XOX odası eski sürümde açılmış. Yeni bir XOX odası kurarak devam edebilirsin.');
+      else if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
       else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
       else if (err.message === "full") setSpectatePrompt(cleanCode);
       else if (err.message === "already-spectator") { setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); }
@@ -876,6 +950,10 @@ export default function App() {
     if (!user || matchmakingGameId) return;
     setMatchmakingGameId(gameId);
     try {
+      if (gameId === 'xox' && SERVER_XOX_ENABLED) {
+        const result = await xoxApi(user)({ type: 'room.match', nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+        enterServerRoom(result); return;
+      }
       const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
       const q = query(
         roomsRef,
@@ -944,6 +1022,14 @@ export default function App() {
     if (!spectatePrompt || !user || isSpectateJoining) return;
     setIsSpectateJoining(true);
     const cleanCode = spectatePrompt;
+    if (serverSpectateRef.current) {
+      try {
+        const result = await xoxApi(user)({ type: 'room.spectate', roomId: cleanCode, sessionId: xoxSessionId() });
+        setSpectatePrompt(null); enterServerRoom(result);
+      } catch (error) { setErrorMsg(gameErrorMessage(error)); }
+      finally { setIsSpectateJoining(false); }
+      return;
+    }
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     try {
       await runTransaction(db, async (transaction) => {
@@ -966,6 +1052,11 @@ export default function App() {
 
   const leaveRoom = async () => {
     if (isBotGame) { leaveRoomLocal(); return; }
+    if (isServerRoom) {
+      try { await sendXoxAction('room.leave', { sessionId: xoxSessionId() }); leaveRoomLocal(); }
+      catch (error) { setErrorMsg(gameErrorMessage(error)); }
+      return;
+    }
     const currentCode = roomCode;
     const isPlayer = roomData?.players?.includes(user?.uid);
     const isSpec = roomData?.spectators?.includes(user?.uid);
@@ -1241,7 +1332,7 @@ export default function App() {
                        <span className="text-sm font-medium">Oyun yükleniyor...</span>
                      </div>
                    )}>
-                   {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                   {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}

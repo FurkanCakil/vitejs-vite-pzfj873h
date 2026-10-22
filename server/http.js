@@ -3,7 +3,7 @@ import { validateAction } from './room-actions.js';
 
 const MAX_BODY_BYTES = 2048;
 
-export function createActionHandler({ enabled, verifyToken, applyAction, allowedOrigins }) {
+export function createActionHandler({ enabled, verifyToken, applyAction, allowedOrigins, allowUnsignedEmulatorTokens = false }) {
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -19,8 +19,11 @@ export function createActionHandler({ enabled, verifyToken, applyAction, allowed
       const length = request.headers['content-length'];
       requireAction(length === undefined || (/^\d+$/.test(length) && Number(length) <= MAX_BODY_BYTES), 413, 'body_too_large');
       const authorization = request.headers.authorization;
+      const tokenPattern = allowUnsignedEmulatorTokens
+        ? /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/
+        : /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
       requireAction(typeof authorization === 'string' && authorization.length <= 8192
-        && /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(authorization), 401, 'authentication_required');
+        && tokenPattern.test(authorization), 401, 'authentication_required');
       let body = request.body;
       if (typeof body === 'string' || Buffer.isBuffer(body)) {
         requireAction(Buffer.byteLength(body) <= MAX_BODY_BYTES, 413, 'body_too_large');

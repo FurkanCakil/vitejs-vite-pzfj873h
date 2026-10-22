@@ -5,6 +5,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { applyRoomAction } from './room-actions.js';
 
 const projectId = 'demo-oyun-portali';
+let requestSequence = 0;
 const emulator = process.env.FIRESTORE_EMULATOR_HOST;
 const authEmulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
 const baseRoom = () => ({
@@ -13,7 +14,7 @@ const baseRoom = () => ({
   winner: null, scores: { alice: 0, bob: 0 },
 });
 const move = (roomId, patch = {}) => ({
-  roomId, actionId: 'request_00000001', expectedVersion: 0, type: 'xox.move', cell: 0, ...patch,
+  roomId, actionId: `request_${String(++requestSequence).padStart(8, '0')}`, expectedVersion: 0, type: 'xox.move', cell: 0, ...patch,
 });
 
 test('Firestore emulator: atomic actions and target security rules', { skip: !emulator || !authEmulator }, async t => {
@@ -26,10 +27,15 @@ test('Firestore emulator: atomic actions and target security rules', { skip: !em
   authClient.setCredentials({ access_token: 'owner', expiry_date: Date.now() + 3_600_000 });
   const db = new Firestore({ projectId, authClient, preferRest: true });
   const ref = id => db.doc(`artifacts/${projectId}/public/data/roomsV2/${id}`);
+  const presence = id => db.doc(`artifacts/${projectId}/serverRoomPresence/${id}`);
+  const seed = async (id, data, now = Date.now()) => {
+    await ref(id).set(data);
+    await presence(id).set({ connections: Object.fromEntries(data.players.map(uid => [uid, { session_for_test1: now }])) });
+  };
   const rejects = (promise, code) => assert.rejects(promise, error => error.code === code);
   try {
     await t.test('two simultaneous identical winning moves add exactly one point', async () => {
-      await ref('WIN123').set({ ...baseRoom(), board: ['X', 'X', null, 'O', 'O', null, null, null, null] });
+      await seed('WIN123', { ...baseRoom(), board: ['X', 'X', null, 'O', 'O', null, null, null, null] });
       const action = move('WIN123', { cell: 2 });
       const results = await Promise.all([
         applyRoomAction(db, projectId, 'alice', action),
@@ -42,26 +48,27 @@ test('Firestore emulator: atomic actions and target security rules', { skip: !em
       assert.equal(saved.winner, 'X');
     });
     await t.test('competing different actions cannot both update the same version', async () => {
-      await ref('RACE12').set(baseRoom());
+      await seed('RACE12', baseRoom());
       const results = await Promise.allSettled([
         applyRoomAction(db, projectId, 'alice', move('RACE12')),
-        applyRoomAction(db, projectId, 'alice', move('RACE12', { actionId: 'request_00000002', cell: 4 })),
+        applyRoomAction(db, projectId, 'alice', move('RACE12', { cell: 4 })),
       ]);
       assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
       assert.equal(results.find(result => result.status === 'rejected').reason.code, 'stale_version');
       assert.equal((await ref('RACE12').get()).data().board.filter(Boolean).length, 1);
     });
     await t.test('spectators, fake scores, stale actions and reused IDs cannot mutate state', async () => {
-      await ref('SAFE12').set(baseRoom());
+      await seed('SAFE12', baseRoom());
       await rejects(applyRoomAction(db, projectId, 'mallory', move('SAFE12')), 'not_a_player');
       await rejects(applyRoomAction(db, projectId, 'alice', { ...move('SAFE12'), scores: { alice: 999 } }), 'invalid_fields');
-      await applyRoomAction(db, projectId, 'alice', move('SAFE12'));
-      await rejects(applyRoomAction(db, projectId, 'alice', move('SAFE12', { cell: 1 })), 'action_id_reused');
+      const accepted = move('SAFE12');
+      await applyRoomAction(db, projectId, 'alice', accepted);
+      await rejects(applyRoomAction(db, projectId, 'alice', { ...accepted, cell: 1 }), 'action_id_reused');
       await rejects(applyRoomAction(db, projectId, 'bob', move('SAFE12', { cell: 4 })), 'stale_version');
       assert.equal((await ref('SAFE12').get()).data().version, 1);
     });
     await t.test('rate limit applies atomically without modifying the room', async () => {
-      await ref('RATE12').set(baseRoom());
+      await seed('RATE12', baseRoom(), 1000);
       const rateRef = db.doc(`artifacts/${projectId}/serverRateLimits/alice`);
       await rateRef.set({ windowStart: 1000, count: 30 });
       await rejects(applyRoomAction(db, projectId, 'alice', move('RATE12'), 1001), 'too_many_actions');
@@ -74,18 +81,21 @@ test('Firestore emulator: atomic actions and target security rules', { skip: !em
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }),
       });
       assert.equal(signup.status, 200);
-      const { idToken } = await signup.json();
+      const { idToken, localId } = await signup.json();
+      await seed('AUTH12', { ...baseRoom(), players: [localId, 'bob'], scores: { [localId]: 0, bob: 0 } });
       const headers = { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' };
       const api = `http://${emulator}/v1/projects/${projectId}/databases/(default)/documents`;
-      const path = `artifacts/${projectId}/public/data/roomsV2/SAFE12`;
+      const path = `artifacts/${projectId}/public/data/roomsV2/AUTH12`;
       assert.equal((await fetch(`${api}/${path}`, { headers })).status, 200);
       assert.equal((await fetch(`${api}/${path}`)).status, 403);
+      assert.equal((await fetch(`${api}/artifacts/${projectId}/public/data/roomsV2/SAFE12`, { headers })).status, 403);
       const forged = await fetch(`${api}/${path}?updateMask.fieldPaths=scores`, {
         method: 'PATCH', headers,
         body: JSON.stringify({ fields: { scores: { mapValue: { fields: { alice: { integerValue: '999' } } } } } }),
       });
       assert.equal(forged.status, 403);
       assert.equal((await fetch(`${api}/artifacts/${projectId}/roomActionReceipts/SAFE12/actors/alice`, { headers })).status, 403);
+      assert.equal((await fetch(`${api}/artifacts/${projectId}/serverRoomActors/${localId}`, { headers })).status, 403);
       assert.equal((await fetch(`${api}/artifacts/${projectId}/public/data/roomsV2`, { headers })).status, 403);
       assert.equal((await ref('SAFE12').get()).data().scores.alice, 0);
     });

@@ -42,3 +42,7 @@ Kullanıcı 18 Ekim 2026'da Firebase projesinin ücretsiz **Spark** planında ol
 Kaynaklar: https://firebase.google.com/docs/functions/quotas ve https://vercel.com/docs/functions/runtimes/node-js
 
 Firebase/Tailwind ana sürüm yükseltmeleri ayrıca ele alınmalıdır; ilk denetimde kalan 18 paket uyarısını zorla kapatmak için otomatik ana sürüm değişikliği yapılmadı. Sunucu hazırlığının uyumlu Admin SDK sürümüyle 22 Ekim taramasında toplam 26 uyarı var (10 yüksek, 16 orta); ek 8 orta uyarının bağımlılık zinciri ve çalışma zamanı sınırı `server/README.md` içinde açıklanır. Bu sayılar bağımsız canlı site açıklarının sayısı değildir; kapatılmış olarak raporlanmamalıdır.
+
+## XOX akışlarının hazırlanması — 22 Ekim 2026
+
+Yeni XOX oda kurma/katılma, hızlı eşleşme, izleyici, hamle, rövanş, ayrılma ve yeniden bağlanma akışları sunucuya bağlandı. 43 otomatik test ve 11 emülatör senaryosu geçti. İki bağımsız tarayıcı oturumuyla oynanış, tek puan, rövanş, yenileme, eşleşme ve Bekle akışı denendi; 320/390 px kare oranı kontrol edildi. Canlı etkinleştirme henüz yapılmadı: önce firestore.rollout.rules ile yalnız yeni oda üyelerine okuma ve kimliği doğrulanmış oturumlara salt okunur lobi özeti izni verilmeli, ardından iki Production bayrağı açılmalı ve gerçek sunucu çağrısı doğrulanmalı. Diğer oyunların mevcut izinleri bu aşamada korunur; tüm sitenin güvenliği tamamlanmış sayılmaz. Eski XOX odaları yeni istemcide devralınmaz, yeni oda açmak gerekir.

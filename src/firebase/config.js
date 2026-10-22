@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -12,9 +12,14 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-const app = initializeApp(firebaseConfig);
+const useEmulators = import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+const app = initializeApp(useEmulators ? { apiKey: 'emulator-only', projectId: 'demo-oyun-portali', authDomain: 'localhost' } : firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = firebaseConfig.projectId;
+if (useEmulators) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9199', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8180);
+}
+const appId = useEmulators ? 'demo-oyun-portali' : firebaseConfig.projectId;
 
 export { auth, db, appId };
