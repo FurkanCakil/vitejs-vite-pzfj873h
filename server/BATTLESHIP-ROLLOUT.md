@@ -1,6 +1,6 @@
 # Amiral Battı: özel filo ve sunucu geçişi
 
-22 Ekim 2026. Hazırlandı, yerelde sınandı; **henüz canlıda etkin değil**. XOX'un canlı sunucu akışı korunur. Aşağıdaki iki yeni ayar tanımlanmadığında Amiral Battı mevcut eski akışını kullanır.
+22 Ekim 2026. Kullanıcının açık onayıyla kurallar yayımlandı, iki yeni ayar yalnız Production ortamında açıldı ve **Amiral Battı canlıda etkinleştirildi**. `5096257` Production dağıtımı Ready; gerçek Firebase kimlikleri ve tarayıcı istemcisiyle doğrulandı. XOX'un canlı akışı da oluşturma/katılma/iki oyuncunun hamlesi/ayrılma/kapatma kontrolünden geçti. Eski Amiral Battı belgeleri taşınmaz; yeni oda gerekir.
 
 ## Düzeltilen riskler
 
@@ -22,15 +22,17 @@ XOX ve Amiral Battı aynı doğrulanmış üyelik, sürüm, işlem kaydı, bağl
 - İki bağımsız yerel tarayıcı oturumunda beş gemi yerleşimi, döndürme/kaldırma, Hazır iptali, iki Hazır sonrası başlangıç, isabet/karavana, yenileme, tam maç/tek puan, rövanş/başlangıç değişimi ve 1:1 skor denendi. Botta yerleşim, bot yanıtı ve insan atışı çalıştı.
 - 320/390 px viewport denemelerinde sayfa yatay taşmadı, hücreler kare kaldı; gözlenen konsollarda hata/uyarı yoktu. Bunlar gerçek Safari/Firefox/iOS ve uzun arka plan beklemesi testlerinin yerine geçmez.
 
+Canlı kontrol: [5096257 Production dağıtımı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/4nZJcANhhiU2TKgxp87XMoxy4j4E) Ready. Gerçek anonim hesaplarla kendi özel filonu okuma geçti; rakip/seyirci/oturumsuz okuma, özel belge listeleme, sunucu geçmişi okuma ve doğrudan yazma 403 döndü. Hazır iptali, eşzamanlı Hazır, uydurma isabet sonucu, sıra dışı hamle, 17 isabet/tek puan, aynı son atışın tekrarı, rövanş onayı, eski tur reddi, özel görünümlerin temizlenmesi, başlangıç değişimi ve karavanada sıra geçişi doğrulandı. Tarayıcı istemcisi bağımsız sunucu test oyuncusuna katıldı; kendi filosunu dizdi, Hazır dedi, isabetten sonra sayfayı yenileyip aynı tahtaya döndü ve maçı 1:0 bitirdi. Rövanşta Hazır (0/5 gemi), boş özel görünüm ve kare hücreler görüldü; gözlenen konsolda hata/uyarı yoktu. Yalnız yeni özel test odaları kullanıldı.
+
 ## Performans ve sınırlar
 
 - Orta tahmini etki: her genel oda güncellemesinde rakibin ve kendi filonun tamamını taşımak yerine normal oyunda yalnız atışlar ve genel durum taşınır. Kendi filo görünümü yerleşim/tur değişince güncellenir; bu etki için yük altında sayısal ölçüm yapılmadı.
 - Düşük tahmini etki: normal bağlantı yenilemesi özel filo belgesini okumaz/yazmaz; mevcut bağlantı ve işlem kayıtları yenilenir. Atışta yetkili özel durumu okumak için ek bir sunucu okuması gerekir; toplam veritabanı işlem sayısının azaldığı iddia edilmez.
 - Diğer oyunlar ve eski Amiral Battı belgeleri güvenli sayılmaz. Eski odalar taşınmaz; yeni istemcide yeni oda gerekir. Global oyuncu sayacı, anonim hesap açarak hız sınırını aşma ve token iptali denetimi önceki açık işlerdir. Ücretli plan, yeni IAM izni veya kalıcı anahtar gerekmez.
 
-## Canlı açılış sırası — onay bekler
+## Uygulanan canlı açılış — 22 Ekim 2026
 
-1. Firebase Console'da mevcut kuralları yeniden oku; test edilen `firestore.rollout.rules` dosyasını yayımla. Bu, XOX ve diğer oyunların mevcut kurallarını korurken kendi özel filonu okuma ve kimliği doğrulanmış oturumlara salt okunur Amiral Battı lobi özeti izni ekler. `server/firestore-v2.rules` tek başına yayımlanmaz.
-2. Vercel'de yalnız Production için `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` ayarlarını ekle. Preview'a üretim erişimi açma.
-3. Test edilmiş dalı ana dala gönder; yeni Production dağıtımında gerçek anonim kimliklerle özel filo erişimi, hazır, atış, galibiyet ve rövanşı tekrar doğrula.
-4. Eski odalar ve eski istemciler geçişten yararlanmaz. Yeni oda/sayfa yenileme gereksinimini kullanıcıya bildir. Eski geniş izinleri kapatmak, diğer oyunların geçişinden ayrı bir adımdır.
+1. Mevcut canlı XOX kuralları panelden yeniden okundu. Kullanıcının işlem anındaki açık onayından sonra test edilen `firestore.rollout.rules` yayımlandı; yeni yayın saati panelde doğrulandı. XOX ve diğer oyunların mevcut kuralları korundu; yalnız kendi özel filonu okuma ve kimliği doğrulanmış oturumlara salt okunur Amiral Battı lobi özeti eklendi.
+2. `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` yalnız Vercel Production için Config olarak kaydedildi. Preview'a üretim erişimi açılmadı; Preview API'si `server_not_enabled` döndü. Yeni IAM izni, kalıcı anahtar veya plan değişikliği yapılmadı.
+3. Test edilmiş dal ana dala gönderildi; Production Ready ve yukarıdaki gerçek kimlik/tarayıcı kontrolleri doğrulandı.
+4. Eski odaların devralınmayacağı ve yeni oda gerekeceği onay sorusunda bildirildi. Eski geniş izinleri kapatmak, diğer oyunların geçişinden ayrı bir adımdır; tüm sitenin güvenliği tamamlanmış sayılmaz.

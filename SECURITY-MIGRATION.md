@@ -1,6 +1,6 @@
 # Oyun Portalı: güvenlik geçiş planı
 
-22 Ekim 2026. Kullanıcının açık onayıyla XOX için aşamalı canlı Firebase kuralları yayımlandı ve iki Production geçiş bayrağı açıldı. Yeni XOX odaları sunucuda doğrulanıyor; gerçek canlı kimliklerle hamle, skor, rövanş ve yetkisiz erişim kontrolleri geçti. Diğer oyunların eski izinleri korunuyor. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
+22 Ekim 2026. Kullanıcının açık onayıyla XOX ve Amiral Battı için aşamalı canlı Firebase kuralları ve Production geçiş ayarları açıldı. Yeni odalar sunucuda doğrulanıyor; gerçek canlı kimliklerle hamle, skor, rövanş, özel filo gizliliği ve yetkisiz erişim kontrolleri geçti. Diğer oyunların ve eski odaların geniş izinleri korunuyor. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
 
 ## Doğrulanan sorun ve sınır
 
@@ -47,6 +47,6 @@ Firebase/Tailwind ana sürüm yükseltmeleri ayrıca ele alınmalıdır; ilk den
 
 Yeni XOX oda kurma/katılma, hızlı eşleşme, izleyici, hamle, rövanş, ayrılma ve yeniden bağlanma akışları sunucuya bağlandı. 43 otomatik test ve 11 emülatör senaryosu geçti. İki bağımsız yerel tarayıcı oturumuyla oynanış, tek puan, rövanş, yenileme, eşleşme ve Bekle akışı denendi; 320/390 px kare oranı kontrol edildi. Kullanıcının açık onayından sonra `firestore.rollout.rules` yayımlandı ve iki Production bayrağı açıldı; `26a9f06` dağıtımı Ready oldu. Gerçek canlı anonim kimliklerle katılma, seyirci, galibiyet/tek puan, rövanş, ayrılma/kapatma ve yetkisiz okuma/yazma kontrolleri geçti. Tarayıcı istemcisinde canlı katılım, hamle, yenilemeyle aynı tahtaya dönüş ve 1:0 maç sonucu doğrulandı. Diğer oyunların mevcut izinleri bu aşamada korunur; tüm sitenin güvenliği tamamlanmış sayılmaz. Eski XOX odaları yeni istemcide devralınmaz, yeni oda açmak gerekir. Önceki altyapı bölümlerindeki API kapalı açıklamaları geçiş öncesi tarihsel kayıttır.
 
-## Amiral Battı hazırlığı — 22 Ekim 2026
+## Amiral Battı canlı geçişi — 22 Ekim 2026
 
-Özel filo belgeleri, sunucuda tam filo/atış/puan doğrulaması ve istemci bağlantısı hazırlandı. Yeni dalda toplam 48 otomatik test ve 19 emülatör senaryosu bulunur; iki yerel oyuncuyla yerleşim, Hazır iptali, yenileme, galibiyet, rövanş ve 1:1 skor denendi. Bu oyun için canlı kural ve Production ayarları henüz açılmadı. Test kapsamı, kalan sınırlar ve onay sonrası sıra `server/BATTLESHIP-ROLLOUT.md` içindedir. XOX'un canlı durumu bu hazırlıktan ayrı değerlendirilmelidir.
+Özel filo belgeleri, sunucuda tam filo/atış/puan doğrulaması ve istemci bağlantısı tamamlandı. Toplam 48 otomatik test ve 19 emülatör senaryosu geçti; iki yerel oyuncuyla yerleşim, Hazır iptali, yenileme, galibiyet, rövanş ve 1:1 skor denendi. Kullanıcının açık onayıyla yeni kurallar yayımlandı, iki ayar yalnız Production ortamında açıldı ve `5096257` dağıtımı Ready oldu. Gerçek anonim kimliklerle özel filo gizliliği, hazır, atış/tek puan ve rövanş; tarayıcıda yerleşim, yenileme, 1:0 maç sonucu ve boş filo ile yeni tur doğrulandı. XOX'un canlı oluşturma/katılma/hamle/ayrılma akışı da geçti. Test kapsamı ve kalan sınırlar `server/BATTLESHIP-ROLLOUT.md` içindedir. Diğer oyunlar ve eski geniş izinler için geçiş tamamlanmadı.

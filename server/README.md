@@ -1,6 +1,6 @@
-# Sunucu güvenliği: XOX geçişi
+# Sunucu güvenliği: XOX ve Amiral Battı geçişi
 
-22 Ekim 2026. Kullanıcının açık onayıyla `firestore.rollout.rules` canlıya yayımlandı ve `GAME_API_ENABLED=true` ile `VITE_SERVER_XOX_ENABLED=true` yalnız Vercel Production ortamında açıldı. `26a9f06` üretim dağıtımı Ready; XOX'un oda ve oyun akışları canlı sunucuyu kullanıyor. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların eski izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
+22 Ekim 2026. Kullanıcının açık onayıyla `firestore.rollout.rules` canlıya yayımlandı; `GAME_API_ENABLED=true`, `VITE_SERVER_XOX_ENABLED=true`, `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` yalnız Vercel Production ortamında açık. XOX `26a9f06`, Amiral Battı `5096257` ile canlıya geçti; iki oyunun gerçek sunucu akışları doğrulandı. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların ve eski odaların geniş izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
 
 ## Hazır olan parça
 
@@ -40,9 +40,9 @@ Bu kimlikler gizli anahtar değildir; hiçbirinin başına `VITE_` konmamalıdı
 
 22 Ekim 2026: `c266a71` üretim dağıtımı **Ready** oldu; logda `Production server identity: Firestore read verified` görüldü. Canlı `/api/room-action` ve düzeltilen Preview sürümü `server_not_enabled` döndürüyor. 40 otomatik test ve 5 emülatör senaryosu geçti. [Vercel doğrulama kaydı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/8V1eCiJWNNyML8bVeiqcnryAyk8K).
 
-`npm test`: 43 test geçer; emülatör gerektiren iki suite normal komutta atlanır. Buna 11 sunucu testi ve aynı işlem kimliğiyle ağ tekrarı/oturum yenilemesi için 2 istemci testi dahildir. Vercel'de görülen `ERR_REQUIRE_ESM` hatasını tekrar yakalamak için API, CommonJS → ESM desteği kapalı ayrı Node sürecinde de yüklenir. Firebase Admin 14'ün `jwks-rsa` bağımlılığı bu ortamda başlatılamadığından resmi 13.10.0 sürümü sabitlendi. Emülatör suite'i normal komutta atlanır. Kaynak: [Firebase Admin hata kaydı](https://github.com/firebase/firebase-admin-node/issues/3181).
+`npm test`: 48 test geçer; emülatör gerektiren üç suite normal komutta atlanır. Buna önceki 11 sunucu testi, aynı işlem kimliğiyle ağ tekrarı/oturum yenilemesi için 2 istemci testi ve 5 yeni Amiral Battı çekirdek testi dahildir. Vercel'de görülen `ERR_REQUIRE_ESM` hatasını tekrar yakalamak için API, CommonJS → ESM desteği kapalı ayrı Node sürecinde de yüklenir. Firebase Admin 14'ün `jwks-rsa` bağımlılığı bu ortamda başlatılamadığından resmi 13.10.0 sürümü sabitlendi. Emülatör suite'i normal komutta atlanır. Kaynak: [Firebase Admin hata kaydı](https://github.com/firebase/firebase-admin-node/issues/3181).
 
-`npm run test:integration`: yalnız `demo-oyun-portali` projesi, `127.0.0.1:8180` Firestore ve `127.0.0.1:9199` Auth emülatörlerinde 11 senaryo çalıştırır (iki üst testle birlikte 13 test sonucu). Eşzamanlı kazandıran hamle tek puan verir, farklı hamleler aynı sürümü kullanamaz, sahte skor ve oyuncu reddedilir, hız sınırı aşılınca oda değişmez, istemci yazma/listeme ve özel işlem kaydı okuma istekleri kurallardan geçemez. Java 21+ gerekir. Test hiçbir canlı veritabanına bağlanmaz.
+`npm run test:integration`: yalnız `demo-oyun-portali` projesi, `127.0.0.1:8180` Firestore ve `127.0.0.1:9199` Auth emülatörlerinde 19 senaryo çalıştırır (üç üst testle birlikte 22 test sonucu). Eşzamanlı kazandıran hamle tek puan verir, farklı hamleler aynı sürümü kullanamaz, sahte skor ve oyuncu reddedilir, hız sınırı aşılınca oda değişmez, istemci yazma/listeme ve özel işlem kaydı okuma istekleri kurallardan geçemez. Java 21+ gerekir. Test hiçbir canlı veritabanına bağlanmaz.
 
 `firestore.rollout.rules` emülatörde sınanan ve 22 Ekim'de canlıya yayımlanan aşamalı kurallardır: yeni odaları yalnız üyeleri okuyabilir, istemci yazmaları ve listeleme kapalıdır; diğer oyunların mevcut kuralları korunur. `server/firestore-v2.rules` eski oyunları kapsamayan referanstır ve tek başına canlıya yayımlanmamalıdır. Normal `firebase.json` veya otomatik kural yayını eklenmedi.
 
@@ -52,11 +52,11 @@ Canlı doğrulama: [26a9f06 Production dağıtımı](https://vercel.com/yap-ai/v
 
 ## Kalan işler ve sınırlar
 
-Amiral Battı'nın özel filo/sunucu geçişi ayrı dalda hazırlandı; canlı açılış onay bekliyor. Kapsam, testler ve ayarlar `BATTLESHIP-ROLLOUT.md` içindedir. `firestore.rollout.rules` dosyasındaki yeni `playerData` ve `battleshipLobby` blokları henüz canlıya yayımlanmadı; yukarıdaki 22 Ekim XOX doğrulaması önceki kural sürümüne aittir.
+Amiral Battı'nın özel filo/sunucu geçişi kullanıcının açık onayıyla canlıya açıldı. `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` yalnız Production ortamında açık; yeni `playerData` ve `battleshipLobby` kuralları yayımlandı. Gerçek kimliklerle gizlilik/hamle/skor/rövanş ve tarayıcıda yenileme/tam maç doğrulandı. XOX'un canlı oluşturma/katılma/hamle akışı da yeniden denendi. Kapsam ve kanıtlar `BATTLESHIP-ROLLOUT.md` içindedir.
 
 1. XOX'ta gerçek Safari/Firefox/iOS cihazlarında ve uzun süre arka plana alınan sayfalarda ek uyumluluk testi. Yerel iki oturum ve canlı tarayıcı/API kontrolleri geçti; bütün cihaz/süre kombinasyonları sınanmadı.
 2. XOX için operasyonel izleme ve test verilerinin saklama politikasının belirlenmesi; otomatik temizleme görevi kurulmadı.
-3. Diğer oyunların geçişi; Amiral Battı filoları ve Okey ellerinin oyuncuya özel belgelerle ayrılması. Legacy odalar güvenli sayılmaz.
+3. Diğer oyunların sunucu geçişi ve Okey ellerinin oyuncuya özel belgelerle ayrılması. Eski Amiral Battı dahil legacy odalar güvenli sayılmaz.
 4. Uygulama bütünlüğü/kötüye kullanım önlemleri ve operasyonel kotalar: mevcut hız sınırı yeni anonim hesap açarak aşılabilir; başarısız istekleri ve tüm siteye yapılan yükü sınırlamaz.
 5. ID token doğrulaması imza, proje ve süre kontrollerini SDK ile yapar; kullanıcı iptali/devre dışı bırakma için ek Auth sorgusu yapılmaz. Mevcut anonim hesaplarda iptal edilen token'ın süresi dolana kadar kabul edilebilmesi kalan bir sınırdır; daha geniş Auth yönetimi izni verilmedi.
 6. Normal Firebase Auth kalıcıdır; `inMemoryPersistence` yalnız giriş başarısız olunca fallback olarak kullanılır. Kimlik kurtarma akışı, herkesçe görülebilen yerel oyuncu numarasıyla koltuk devralmaya izin vermeyecek şekilde geçirilmelidir.
