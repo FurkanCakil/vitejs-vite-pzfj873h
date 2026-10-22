@@ -1,11 +1,13 @@
 import { requireAction } from './errors.js';
 import { validateFleet } from './games/battleship.js';
+import { okeyFields, validateOkeyFields } from './okey-schema.js';
 
 const common = ['type', 'actionId'];
 const room = ['roomId'];
 const session = ['sessionId'];
 const version = ['expectedVersion'];
 const fields = {
+  ...okeyFields,
   'room.create': [...session, 'nickname', 'isPublic'],
   'room.match': [...session, 'nickname'],
   'room.join': [...room, ...session, 'nickname'],
@@ -44,5 +46,6 @@ export function validateAction(input) {
   if (keys.includes('roundId')) requireAction(typeof input.roundId === 'string' && /^[a-f0-9]{24}$/.test(input.roundId), 400, 'invalid_round');
   for (const key of ['row', 'col']) if (keys.includes(key)) requireAction(Number.isInteger(input[key]) && input[key] >= 0 && input[key] < 10, 400, 'invalid_cell');
   if (keys.includes('fleet')) validateFleet(input.fleet);
+  if (input.type.startsWith('okey.')) validateOkeyFields(input);
   return Object.fromEntries(keys.map(key => [key, key === 'nickname' ? input[key].trim() : input[key]]));
 }

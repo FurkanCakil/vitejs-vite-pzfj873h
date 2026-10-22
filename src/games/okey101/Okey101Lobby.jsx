@@ -13,7 +13,7 @@ const COUNTDOWN_MS = 3000;
 // KULLANICI İSTEĞİ: `botDifficulty` kaldırıldı (bkz. RulesPanel/botPlayers).
 const DEFAULT_RULES = { gameType: 'ffa', assistedEnabled: false, foldingEnabled: false, foldToPartnerEnabled: false };
 
-export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
+export default function Okey101Lobby({ roomData, roomCode, user, db, appId, sendAction = null }) {
   const isHost = roomData.host === user.uid;
   const rules = roomData.rules || DEFAULT_RULES;
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
@@ -32,11 +32,13 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
     // Bağımlı kural: 2v2 + katlamalı değilse "eşe katlama" anlamsızlaşır, otomatik kapat.
     if (key === 'gameType' && value !== '2v2') nextRules.foldToPartnerEnabled = false;
     if (key === 'foldingEnabled' && !value) nextRules.foldToPartnerEnabled = false;
+    if (sendAction) return sendAction('okey.rules', { rules: nextRules });
     await updateDoc(roomRef, { rules: nextRules }).catch((err) => console.error("Okey101 yazma hatası:", err));
   };
 
   // ---- Takım yönetimi (kendisi ya da host) ----
   const handleJoinTeam = async (targetUid, team) => {
+    if (sendAction) return sendAction('okey.team', { targetUid, team });
     if (!(isHost || targetUid === user.uid)) return;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -49,6 +51,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
   };
 
   const handleLeaveTeam = async (targetUid) => {
+    if (sendAction) return sendAction('okey.team', { targetUid, team: null });
     if (!(isHost || targetUid === user.uid)) return;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -60,6 +63,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
   };
 
   const handleRandomDistribute = async () => {
+    if (sendAction) return sendAction('okey.distribute');
     if (!isHost) return;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -81,6 +85,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
   // sonra oyunu başlatır, böylece host'un ayrıca oyuncu atamasına gerek kalmaz
   // ama yine de kısa bir "Maç Başlıyor" geri sayımı görünür.
   const handleFillWithBots = async () => {
+    if (sendAction) return sendAction('okey.bots');
     if (!isHost) return;
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
@@ -115,18 +120,18 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
 
   // ---- Geri sayım: 4 koltuk dolunca başlat, altına düşünce iptal et (sadece host yazar) ----
   useEffect(() => {
-    if (!isHost || roomData.status !== 'waiting') return;
+    if (sendAction || !isHost || roomData.status !== 'waiting') return;
     const total = roomData.players?.length || 0;
     if (total >= MAX_PLAYERS && !roomData.countdownStartedAt) {
       updateDoc(roomRef, { countdownStartedAt: Date.now() }).catch((err) => console.error("Okey101 yazma hatası:", err));
     } else if (total < MAX_PLAYERS && roomData.countdownStartedAt) {
       updateDoc(roomRef, { countdownStartedAt: null }).catch((err) => console.error("Okey101 yazma hatası:", err));
     }
-  }, [isHost, roomData.status, roomData.players?.length, roomData.countdownStartedAt]);
+  }, [isHost, roomData.status, roomData.players?.length, roomData.countdownStartedAt, sendAction]);
 
   // ---- Geri sayım süresi dolunca oyunu başlat (sadece host yazar) ----
   useEffect(() => {
-    if (!isHost || !roomData.countdownStartedAt || roomData.status !== 'waiting') return;
+    if (sendAction || !isHost || !roomData.countdownStartedAt || roomData.status !== 'waiting') return;
     const remaining = COUNTDOWN_MS - (Date.now() - roomData.countdownStartedAt);
     const timer = setTimeout(() => {
       runTransaction(db, async (t) => {
@@ -140,7 +145,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId }) {
       }).catch((err) => console.error("Okey101 yazma hatası:", err));
     }, Math.max(0, remaining));
     return () => clearTimeout(timer);
-  }, [isHost, roomData.countdownStartedAt, roomData.status, roomData.players?.length, roomCode, user.uid, db, appId]);
+  }, [isHost, roomData.countdownStartedAt, roomData.status, roomData.players?.length, roomCode, user.uid, db, appId, sendAction]);
 
   // ---- Ekranda gösterilecek geri sayım (tüm istemcilerde ortak countdownStartedAt'tan türetilir) ----
   const [countdownDisplay, setCountdownDisplay] = useState(null);

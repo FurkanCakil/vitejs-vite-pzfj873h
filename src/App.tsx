@@ -8,7 +8,7 @@ import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, 
 import { auth, db, appId } from './firebase/config.js';
 import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
 import { roomRecoveryUpdate } from './utils/roomRecovery.js';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, serverGameEnabled, gameErrorMessage } from './utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
@@ -45,6 +45,7 @@ const TavlaGame = lazy(() => import('./games/backgammon/TavlaGame.jsx'));
 const ChessGame = lazy(() => import('./games/chess/ChessGame.jsx'));
 const CheckersGame = lazy(() => import('./games/checkers/CheckersGame.jsx'));
 const Okey101Game = lazy(() => import('./games/okey101/Okey101Game.jsx'));
+const ServerOkey101Game = lazy(() => import('./games/okey101/ServerOkey101Game.jsx'));
 const Connect4Game = lazy(() => import('./games/connect4/Connect4Game.jsx'));
 const BattleshipGame = lazy(() => import('./games/battleship/BattleshipGame.jsx'));
 
@@ -222,7 +223,7 @@ export default function App() {
       savedCode = sessionRoomStorage.get();
       savedCode = normalizeRoomCode(savedCode);
       if (savedCode && currentUser) {
-        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED) sessionRoomStorage.remove();
+        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED && !SERVER_OKEY_ENABLED) sessionRoomStorage.remove();
         else { setIsServerRoom(sessionRoomStorage.isServer()); restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
       }
 
@@ -613,7 +614,7 @@ export default function App() {
         const api = xoxApi(user);
         let result;
         for (let attempt = 0; attempt < 4; attempt++) {
-          try { result = await api({ type: gameId === 'amiralbatti' ? 'battleship.create' : 'room.create', nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
+          try { result = await api({ type: serverCreateType(gameId), nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
           catch (error) { if (error.code !== 'room_code_collision' || attempt === 3) throw error; }
         }
         enterServerRoom(result);
@@ -920,7 +921,7 @@ export default function App() {
     if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
     try {
       serverSpectateRef.current = false;
-      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED) {
+      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED || SERVER_OKEY_ENABLED) {
         try {
           const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
           enterServerRoom(result); return;
@@ -954,7 +955,7 @@ export default function App() {
     setMatchmakingGameId(gameId);
     try {
       if (serverGameEnabled(gameId)) {
-        const result = await xoxApi(user)({ type: gameId === 'amiralbatti' ? 'battleship.match' : 'room.match', nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+        const result = await xoxApi(user)({ type: serverMatchType(gameId), nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
         enterServerRoom(result); return;
       }
       const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
@@ -1339,7 +1340,9 @@ export default function App() {
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'okey101' && <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />}
+                   {roomData?.gameId === 'okey101' && (isServerRoom
+                     ? <ServerOkey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={sendXoxAction} />
+                     : <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />)}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    </Suspense>

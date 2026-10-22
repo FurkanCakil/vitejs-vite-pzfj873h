@@ -9,7 +9,7 @@ export default function SpectatePrompt({ acceptSpectate, setSpectatePrompt, isJo
     <div className="fixed inset-0 z-[9999] bg-slate-900/90 flex flex-col items-center justify-center backdrop-blur-sm p-4 h-[100dvh]">
       <Eye className="w-16 h-16 text-indigo-500 mb-4" />
       <h2 className="text-2xl font-bold text-center mb-2">Bu Oda Dolu</h2>
-      <p className="text-slate-300 text-center mb-8 max-w-md">Odaya zaten iki oyuncu bağlanmış durumda. Maçı seyirci olarak izlemek ister misiniz?</p>
+      <p className="text-slate-300 text-center mb-8 max-w-md">Odadaki oyuncu koltukları dolu. Maçı seyirci olarak izlemek ister misiniz?</p>
       <div className="flex gap-4">
         <button onClick={acceptSpectate} disabled={isJoining} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed px-6 py-3 rounded-lg font-bold transition-colors flex items-center gap-2">
           {isJoining && <Loader2 className="w-4 h-4 animate-spin" />}{isJoining ? 'Bağlanılıyor...' : 'İzle'}

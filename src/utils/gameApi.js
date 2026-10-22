@@ -1,7 +1,10 @@
 export const SERVER_XOX_ENABLED = import.meta.env?.VITE_SERVER_XOX_ENABLED === 'true';
 export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP_ENABLED === 'true';
+export const SERVER_OKEY_ENABLED = import.meta.env?.VITE_SERVER_OKEY_ENABLED === 'true';
 export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
-  || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED);
+  || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED) || (game === 'okey101' && SERVER_OKEY_ENABLED);
+export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create' })[game];
+export const serverMatchType = game => ({ xox: 'room.match', amiralbatti: 'battleship.match', okey101: 'okey.match' })[game];
 
 export class GameApiError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -48,7 +51,18 @@ export function gameErrorMessage(error) {
     not_your_turn: 'Henüz senin sıran değil.', occupied_cell: 'Bu kare dolu.',
     already_shot: 'Bu hücreye zaten ateş ettin.', invalid_fleet: 'Gemilerin yerleşimi geçerli değil. Filonu kontrol et.',
     setup_locked: 'Yerleştirme aşaması değişti. Son durumu kontrol et.',
-    stale_round: 'Yeni tur başladı. Gemilerini bu tur için yeniden yerleştir.',
+    stale_round: 'Yeni tur başladı. Son durumu kontrol edip tekrar dene.',
+    stale_turn: 'Sıra değişti. Son durumu kontrol edip tekrar dene.',
+    turn_expired: 'Hamle süren doldu; otomatik hamle bekleniyor.',
+    tile_not_owned: 'Taşların güncellendi. Son elini kontrol et.',
+    side_tile_unused: 'Yandan aldığın taşı kullanmalı veya geri koymalısın.',
+    invalid_melds: 'Per veya çift seçimi geçerli değil.',
+    must_keep_tile: 'Istakanda atacak en az bir taş kalmalı.',
+    not_enough_pairs: 'Çift açmak için gereken çift sayısına ulaşamadın.',
+    team_full: 'Bu takım dolu.', teams_incomplete: 'İki takımın da ikişer oyuncusu olmalı.',
+    seat_unavailable: 'Bu koltuk veya teklif artık uygun değil.',
+    lobby_locked: 'Oyun başladı; oda ayarları artık değiştirilemez.',
+    too_early: 'Sayaç henüz dolmadı.',
     too_many_actions: 'Çok hızlı işlem yapıldı. Birkaç saniye sonra tekrar dene.',
     too_many_rooms: 'Kısa sürede çok oda açıldı. Bir dakika sonra tekrar dene.',
     server_not_enabled: 'Yeni oyun sistemi henüz açılmadı. Sayfayı yenileyip tekrar dene.',

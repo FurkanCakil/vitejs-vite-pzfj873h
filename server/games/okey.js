@@ -17,8 +17,8 @@ import {
   findTackOpportunities, pickDiscardTile, pickSmallestSafeDiscard,
 } from '../../src/games/okey101/botAI.js';
 
-// This module is deliberately not wired to the public API yet. The caller must
-// transactionally persist the private state, projections, leases and receipts.
+// The room service transactionally persists state, projections and receipts;
+// the Okey route remains disabled unless its separate rollout flag is enabled.
 const tileId = id => typeof id === 'string' && /^T(?:[0-9]|[1-9][0-9]|10[0-5])$/.test(id);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -123,7 +123,7 @@ export function dealOkeyRound(room, now = Date.now(), starter = null) {
   }
   const setupPhase = !data.rules?.assistedEnabled;
   return {
-    ...data, status: 'playing', roundId: newRoundId(), turnNumber: 0,
+    ...data, status: 'playing', roundId: newRoundId(), turnNumber: 0, playVersion: 0,
     racks, groups, drawPile: pile, indicator, okey,
     discardPiles: Object.fromEntries(data.players.map(uid => [uid, []])),
     openedHands: Object.fromEntries(data.players.map(uid => [uid, []])),
@@ -416,7 +416,7 @@ const publicFields = [
   'schemaVersion', 'gameType', 'gameId', 'version', 'host', 'players', 'spectators', 'playerNames',
   'status', 'isPublic', 'rules', 'teams', 'isBotPlayer', 'scores', 'roundStartScores',
   'abandonedBy', 'abandonReason', 'createdAt', 'updatedAt', 'closedBy', 'seatRequests', 'countdownStartedAt',
-  'roundId', 'turnNumber', 'indicator', 'okey', 'discardPiles', 'openedHands', 'hasOpened', 'openedWithPairs',
+  'roundId', 'turnNumber', 'playVersion', 'handVersions', 'indicator', 'okey', 'discardPiles', 'openedHands', 'hasOpened', 'openedWithPairs',
   'setupPhase', 'setupEndsAt', 'turn', 'starterUid', 'turnDeadline', 'botReadyAt', 'hasDrawnThisTurn',
   'sideTake', 'forcedPileDraw', 'roundEnded', 'roundResult', 'centerDiscard', 'openedBeforeCurrentTurn',
   'tackHint', 'foldBarrier', 'foldPairsBarrier', 'foldMultiplier',
@@ -425,6 +425,7 @@ export function publicOkeyState(state) {
   const projection = Object.fromEntries(publicFields.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
   projection.rackCounts = Object.fromEntries(state.players.map(uid => [uid, (state.racks?.[uid] ?? []).filter(Boolean).length]));
   projection.drawPileCount = state.drawPile?.length ?? 0;
+  projection.hasDealt = !!state.racks;
   return structuredClone(projection);
 }
 export function privateOkeyView(state, uid) {

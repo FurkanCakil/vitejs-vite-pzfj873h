@@ -6,6 +6,8 @@ process.env.VITE_USE_FIREBASE_EMULATORS = 'true';
 process.env.VITE_SERVER_XOX_ENABLED = 'true';
 process.env.VITE_SERVER_BATTLESHIP_ENABLED = 'true';
 process.env.BATTLESHIP_API_ENABLED = 'true';
+process.env.VITE_SERVER_OKEY_ENABLED = 'true';
+process.env.OKEY_API_ENABLED = 'true';
 const { createServer } = await import('vite');
 const server = await createServer({ server: { host: '127.0.0.1', port: 5173, strictPort: true } });
 await server.listen();

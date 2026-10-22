@@ -3,6 +3,7 @@ import { requireAction } from './errors.js';
 import { applyXoxMove } from './games/xox.js';
 import { freshBattle, validateFleet, applyBattleShot } from './games/battleship.js';
 import { validateAction } from './room-schema.js';
+import { executeOkeyTransaction } from './okey-rooms.js';
 
 export const CONNECTION_TTL = 60_000;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -28,7 +29,7 @@ function freshGame(players, scores, starter = players[0], game = 'xox', roundId)
 // All public game data and server-only connection/receipt records are committed
 // together. No client-supplied identity, board, result or score is accepted.
 export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode,
-  { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true' } = {}) {
+  { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true', okeyEnabled = process.env.OKEY_API_ENABLED === 'true' } = {}) {
   const action = validateAction(input);
   requireAction(typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid), 401, 'invalid_identity');
   const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -37,8 +38,8 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const actorRef = db.doc(`${root}/serverRoomActors/${uid}`);
   const rateRef = db.doc(`${root}/serverRateLimits/${uid}`);
-  const createAction = ['room.create', 'battleship.create'].includes(action.type);
-  const matchAction = ['room.match', 'battleship.match'].includes(action.type);
+  const createAction = ['room.create', 'battleship.create', 'okey.create'].includes(action.type);
+  const matchAction = ['room.match', 'battleship.match', 'okey.match'].includes(action.type);
   const candidateCode = createAction || matchAction ? codeSupplier() : null;
   const nextRoundId = randomBytes(12).toString('hex');
   if (candidateCode) requireAction(/^[A-Z0-9]{6}$/.test(candidateCode), 500, 'invalid_generated_code');
@@ -60,14 +61,21 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     let data;
     let connections;
     let creating = false;
-    let game = action.type.startsWith('battleship.') ? 'amiralbatti' : 'xox';
+    let game = action.type.startsWith('okey.') ? 'okey101' : action.type.startsWith('battleship.') ? 'amiralbatti' : 'xox';
     if (!createAction && !matchAction) {
       const [saved, presence] = await tx.getAll(roomRef(id), presenceRef(id));
       requireAction(saved.exists, 404, 'room_not_found');
       data = saved.data(); game = data.gameType;
       connections = pruneConnections(presence.data()?.connections, now);
     }
-    requireAction(['xox', 'amiralbatti'].includes(game), 409, 'unsupported_room');
+    if (game === 'okey101') {
+      requireAction(okeyEnabled, 503, 'server_not_enabled');
+      const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor });
+      tx.set(actorRef, { ...actor, recent: [...recent.slice(-31), { actionId: action.actionId, fingerprint, result }] });
+      tx.set(rateRef, { windowStart: sameWindow ? rate.windowStart : now, count: count + 1 });
+      return result;
+    }
+    requireAction(['xox', 'amiralbatti'].includes(game) && !action.type.startsWith('okey.'), 409, 'unsupported_room');
     requireAction(game !== 'amiralbatti' || battleshipEnabled, 503, 'server_not_enabled');
     if (action.type.startsWith('xox.')) requireAction(game === 'xox', 409, 'unsupported_room');
     if (action.type.startsWith('battleship.')) requireAction(game === 'amiralbatti', 409, 'unsupported_room');
