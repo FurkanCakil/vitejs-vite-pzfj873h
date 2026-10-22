@@ -1,6 +1,6 @@
 # Oyun Portalı: güvenlik geçiş planı
 
-22 Ekim 2026. Canlı Firebase kuralları değiştirilmedi. İlk sunucu parçası hazırlandı ve yerel emülatörde test edildi; mevcut istemciye bağlanmadı. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
+22 Ekim 2026. Kullanıcının açık onayıyla XOX için aşamalı canlı Firebase kuralları yayımlandı ve iki Production geçiş bayrağı açıldı. Yeni XOX odaları sunucuda doğrulanıyor; gerçek canlı kimliklerle hamle, skor, rövanş ve yetkisiz erişim kontrolleri geçti. Diğer oyunların eski izinleri korunuyor. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
 
 ## Doğrulanan sorun ve sınır
 
@@ -43,6 +43,6 @@ Kaynaklar: https://firebase.google.com/docs/functions/quotas ve https://vercel.c
 
 Firebase/Tailwind ana sürüm yükseltmeleri ayrıca ele alınmalıdır; ilk denetimde kalan 18 paket uyarısını zorla kapatmak için otomatik ana sürüm değişikliği yapılmadı. Sunucu hazırlığının uyumlu Admin SDK sürümüyle 22 Ekim taramasında toplam 26 uyarı var (10 yüksek, 16 orta); ek 8 orta uyarının bağımlılık zinciri ve çalışma zamanı sınırı `server/README.md` içinde açıklanır. Bu sayılar bağımsız canlı site açıklarının sayısı değildir; kapatılmış olarak raporlanmamalıdır.
 
-## XOX akışlarının hazırlanması — 22 Ekim 2026
+## XOX canlı geçişi — 22 Ekim 2026
 
-Yeni XOX oda kurma/katılma, hızlı eşleşme, izleyici, hamle, rövanş, ayrılma ve yeniden bağlanma akışları sunucuya bağlandı. 43 otomatik test ve 11 emülatör senaryosu geçti. İki bağımsız tarayıcı oturumuyla oynanış, tek puan, rövanş, yenileme, eşleşme ve Bekle akışı denendi; 320/390 px kare oranı kontrol edildi. Canlı etkinleştirme henüz yapılmadı: önce firestore.rollout.rules ile yalnız yeni oda üyelerine okuma ve kimliği doğrulanmış oturumlara salt okunur lobi özeti izni verilmeli, ardından iki Production bayrağı açılmalı ve gerçek sunucu çağrısı doğrulanmalı. Diğer oyunların mevcut izinleri bu aşamada korunur; tüm sitenin güvenliği tamamlanmış sayılmaz. Eski XOX odaları yeni istemcide devralınmaz, yeni oda açmak gerekir.
+Yeni XOX oda kurma/katılma, hızlı eşleşme, izleyici, hamle, rövanş, ayrılma ve yeniden bağlanma akışları sunucuya bağlandı. 43 otomatik test ve 11 emülatör senaryosu geçti. İki bağımsız yerel tarayıcı oturumuyla oynanış, tek puan, rövanş, yenileme, eşleşme ve Bekle akışı denendi; 320/390 px kare oranı kontrol edildi. Kullanıcının açık onayından sonra `firestore.rollout.rules` yayımlandı ve iki Production bayrağı açıldı; `26a9f06` dağıtımı Ready oldu. Gerçek canlı anonim kimliklerle katılma, seyirci, galibiyet/tek puan, rövanş, ayrılma/kapatma ve yetkisiz okuma/yazma kontrolleri geçti. Tarayıcı istemcisinde canlı katılım, hamle, yenilemeyle aynı tahtaya dönüş ve 1:0 maç sonucu doğrulandı. Diğer oyunların mevcut izinleri bu aşamada korunur; tüm sitenin güvenliği tamamlanmış sayılmaz. Eski XOX odaları yeni istemcide devralınmaz, yeni oda açmak gerekir. Önceki altyapı bölümlerindeki API kapalı açıklamaları geçiş öncesi tarihsel kayıttır.

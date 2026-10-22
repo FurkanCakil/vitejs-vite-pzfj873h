@@ -1,6 +1,6 @@
 # Sunucu güvenliği: XOX geçişi
 
-22 Ekim 2026. XOX'un oda ve oyun akışları sunucuya bağlandı; yerel demo ortamında test edildi. Canlı geçiş henüz açılmadı. `GAME_API_ENABLED=true` sunucu eylemlerini, `VITE_SERVER_XOX_ENABLED=true` yeni XOX istemcisini açar; ikisi yalnız Production ortamına uygulanmalıdır. Preview sunucusu üretim erişimini kullanamaz. Canlı kurallar, `firestore.rollout.rules` yayımlanmadan yeni oda dinleyicilerine izin vermez.
+22 Ekim 2026. Kullanıcının açık onayıyla `firestore.rollout.rules` canlıya yayımlandı ve `GAME_API_ENABLED=true` ile `VITE_SERVER_XOX_ENABLED=true` yalnız Vercel Production ortamında açıldı. `26a9f06` üretim dağıtımı Ready; XOX'un oda ve oyun akışları canlı sunucuyu kullanıyor. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların eski izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
 
 ## Hazır olan parça
 
@@ -32,7 +32,7 @@ Yalnız Vercel Production ortamında gereken sunucu ayarları:
 | GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID | vercel |
 | GCP_SERVICE_ACCOUNT_EMAIL | oyun-portali-server@oyun-odasi-8ecee.iam.gserviceaccount.com |
 
-Bu kimlikler gizli anahtar değildir; hiçbirinin başına `VITE_` konmamalıdır. `GAME_API_ENABLED` bu aşamada tanımlanmamalıdır. Yeni sunucu paketleri Node 22+ istediğinden dağıtım ve geliştirme Node 24'e sabitlenmiştir.
+Bu kimlikler gizli anahtar değildir; hiçbirinin başına `VITE_` konmamalıdır. XOX geçiş bayrakları yalnız Production ortamında açıktır. Yeni sunucu paketleri Node 22+ istediğinden dağıtım ve geliştirme Node 24'e sabitlenmiştir.
 
 ## Doğrulama
 
@@ -44,17 +44,19 @@ Bu kimlikler gizli anahtar değildir; hiçbirinin başına `VITE_` konmamalıdı
 
 `npm run test:integration`: yalnız `demo-oyun-portali` projesi, `127.0.0.1:8180` Firestore ve `127.0.0.1:9199` Auth emülatörlerinde 11 senaryo çalıştırır (iki üst testle birlikte 13 test sonucu). Eşzamanlı kazandıran hamle tek puan verir, farklı hamleler aynı sürümü kullanamaz, sahte skor ve oyuncu reddedilir, hız sınırı aşılınca oda değişmez, istemci yazma/listeme ve özel işlem kaydı okuma istekleri kurallardan geçemez. Java 21+ gerekir. Test hiçbir canlı veritabanına bağlanmaz.
 
-`firestore.rollout.rules` emülatörde sınanan aşamalı kurallardır: yeni odaları yalnız üyeleri okuyabilir, istemci yazmaları ve listeleme kapalıdır; diğer oyunların mevcut kuralları korunur. `server/firestore-v2.rules` eski oyunları kapsamayan referanstır ve tek başına canlıya yayımlanmamalıdır. Normal `firebase.json` veya otomatik kural yayını eklenmedi. Canlı kural değişikliği ayrıca uygulanıp doğrulanmalıdır.
+`firestore.rollout.rules` emülatörde sınanan ve 22 Ekim'de canlıya yayımlanan aşamalı kurallardır: yeni odaları yalnız üyeleri okuyabilir, istemci yazmaları ve listeleme kapalıdır; diğer oyunların mevcut kuralları korunur. `server/firestore-v2.rules` eski oyunları kapsamayan referanstır ve tek başına canlıya yayımlanmamalıdır. Normal `firebase.json` veya otomatik kural yayını eklenmedi.
+
+Canlı doğrulama: [26a9f06 Production dağıtımı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/DdtJ9fdatqN249UARR9d8GaoES5U) Ready. Gerçek Firebase anonim test kimlikleriyle oda oluşturma ve aynı isteği tekrarlama, katılma, seyirci, beş hamlede galibiyet/tek puan, rakip onayıyla rövanş/başlangıç değişimi/skor koruma, ayrılma ve kapatma geçti. Üye olmayan ve oturumsuz oda okuma, oda listeleme, özel işlem kaydı okuma ve üyenin doğrudan yazma girişimi 403; seyirci hamlesi 403, sıra dışı hamle 409 ve sahte skor alanı 400 döndü. Yalnız yeni özel test odaları kullanıldı. Ayrıca gerçek tarayıcı istemcisi bağımsız test oyuncusuna katıldı, hamle yaptı, yenileme sonrası aynı tahtaya döndü ve maç sonucunu 1:0 gördü. Bu kontroller çalışan function içindeki anahtarsız Firestore okuma/yazma işlemini de doğrular.
 
 22 Ekim paket taraması, uyumlu Admin SDK ile 26 uyarı bildirdi (10 yüksek, 16 orta). Önceki 18'e eklenen 8 orta uyarı Admin SDK'nın Google Cloud bağımlılıklarında eski `uuid` zincirinden geliyor; bildirilen sorun buffer verilerek çağrılan v3/v5/v6 yollarında. Bu uygulama Admin SDK'dan yalnız Auth kullanır, Firestore için ayrı güncel Google istemcisini kullanır. Uyarılar kapatılmış sayılmaz; Admin SDK 14'ün Vercel uyumluluğu düzeldiğinde tekrar değerlendirilmelidir. Kullanılmayan bağımlılıkların uyarılarını zorla kapatmak için desteklenmeyen sürüm override'ı eklenmedi.
 
 ## Kalan işler ve sınırlar
 
-1. Onaylı bulut bağlantısının gerçek Vercel function içinde doğrulanması.
-2. XOX için kurallar ve Production bayraklarıyla canlı geçiş; gerçek Firebase token'ı ile uçtan uca doğrulama. Yerel istemci entegrasyonu, oda akışları ve yeniden bağlanma tamamlandı.
+1. XOX'ta gerçek Safari/Firefox/iOS cihazlarında ve uzun süre arka plana alınan sayfalarda ek uyumluluk testi. Yerel iki oturum ve canlı tarayıcı/API kontrolleri geçti; bütün cihaz/süre kombinasyonları sınanmadı.
+2. XOX için operasyonel izleme ve test verilerinin saklama politikasının belirlenmesi; otomatik temizleme görevi kurulmadı.
 3. Diğer oyunların geçişi; Amiral Battı filoları ve Okey ellerinin oyuncuya özel belgelerle ayrılması. Legacy odalar güvenli sayılmaz.
 4. Uygulama bütünlüğü/kötüye kullanım önlemleri ve operasyonel kotalar: mevcut hız sınırı yeni anonim hesap açarak aşılabilir; başarısız istekleri ve tüm siteye yapılan yükü sınırlamaz.
-5. ID token doğrulaması imza, proje ve süre kontrollerini SDK ile yapar; kullanıcı iptali/devre dışı bırakma için ek Auth sorgusu henüz yapılmaz. Bu sınır etkinleştirme öncesi ayrıca değerlendirilmelidir.
+5. ID token doğrulaması imza, proje ve süre kontrollerini SDK ile yapar; kullanıcı iptali/devre dışı bırakma için ek Auth sorgusu yapılmaz. Mevcut anonim hesaplarda iptal edilen token'ın süresi dolana kadar kabul edilebilmesi kalan bir sınırdır; daha geniş Auth yönetimi izni verilmedi.
 6. Normal Firebase Auth kalıcıdır; `inMemoryPersistence` yalnız giriş başarısız olunca fallback olarak kullanılır. Kimlik kurtarma akışı, herkesçe görülebilen yerel oyuncu numarasıyla koltuk devralmaya izin vermeyecek şekilde geçirilmelidir.
 
 Kaynaklar: [Vercel OIDC/GCP](https://vercel.com/docs/oidc/gcp), [Firebase ID token doğrulama](https://firebase.google.com/docs/auth/admin/verify-id-tokens), [Firestore IAM](https://firebase.google.com/docs/firestore/security/iam).
