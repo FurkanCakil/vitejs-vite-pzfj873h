@@ -1,6 +1,6 @@
-# Sunucu güvenliği: XOX ve Amiral Battı geçişi
+# Sunucu güvenliği: XOX, Amiral Battı ve Okey geçişi
 
-22 Ekim 2026. Kullanıcının açık onayıyla `firestore.rollout.rules` canlıya yayımlandı; `GAME_API_ENABLED=true`, `VITE_SERVER_XOX_ENABLED=true`, `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` yalnız Vercel Production ortamında açık. XOX `26a9f06`, Amiral Battı `5096257` ile canlıya geçti; iki oyunun gerçek sunucu akışları doğrulandı. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların ve eski odaların geniş izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
+23 Ekim 2026. Kullanıcının yetkisiyle `firestore.rollout.rules` canlıya yayımlandı; XOX ve Amiral Battı'nın önceki ayarlarına ek `OKEY_API_ENABLED=true` ve `VITE_SERVER_OKEY_ENABLED=true` yalnız Vercel Production ortamında açık. XOX `26a9f06`, Amiral Battı `5096257`, Okey `cb0e06f` ile sunucu akışına geçti; üç oyunun gerçek sunucu akışları doğrulandı. Okey için yeni IAM, kalıcı anahtar veya ücretli plan gerekmedi. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların ve eski odaların geniş izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
 
 ## Hazır olan parça
 
@@ -52,13 +52,13 @@ Canlı doğrulama: [26a9f06 Production dağıtımı](https://vercel.com/yap-ai/v
 
 ## Kalan işler ve sınırlar
 
-23 Ekim 2026: Okey çekirdeği dört kişilik oda API'sine ve özel el dinleyicisine bağlandı; iki ayrı ayar varsayılan kapalıdır. 11 yeni emülatör senaryosuyla toplam 30 senaryo/34 test sonucu geçti. Oda/takım/bot/seyirci/koltuk devri, tekrar ceza/çekiş, tam bot eli, sonuç ve yeni el sınandı; tarayıcıda iki originle temel oynanış, kontrollü el bitirme, yeni el ve mobil kontrol geçti. **Canlı kurallar/ayarlar doğrulanana kadar canlı Okey açığı kapanmış sayılmaz.** Ayrıntı ve kalan açılış adımları `OKEY-MIGRATION.md` içindedir.
+23 Ekim 2026: Okey çekirdeği dört kişilik oda API'sine ve özel el dinleyicisine bağlandı; kullanıcı yetkisiyle iki ayar yalnız Production'da açıldı. 11 yeni emülatör senaryosuyla toplam 30 senaryo/34 test sonucu geçti. Gerçek canlı kimliklerle özel el gizliliği, yazma reddi, tek çekiş, botlarla tam el, skor ve yeni el doğrulandı. Canlı tarayıcıda özel el, botlar, kapalı çekiş ve yenilemeyle aynı taşlara dönüş geçti. **Yalnız yeni Okey odalarının geçişi tamamlandı; eski odalar ve bütün site güvenli sayılmaz.** Ayrıntılar `OKEY-MIGRATION.md` içindedir.
 
 Amiral Battı'nın özel filo/sunucu geçişi kullanıcının açık onayıyla canlıya açıldı. `BATTLESHIP_API_ENABLED=true` ve `VITE_SERVER_BATTLESHIP_ENABLED=true` yalnız Production ortamında açık; yeni `playerData` ve `battleshipLobby` kuralları yayımlandı. Gerçek kimliklerle gizlilik/hamle/skor/rövanş ve tarayıcıda yenileme/tam maç doğrulandı. XOX'un canlı oluşturma/katılma/hamle akışı da yeniden denendi. Kapsam ve kanıtlar `BATTLESHIP-ROLLOUT.md` içindedir.
 
 1. XOX'ta gerçek Safari/Firefox/iOS cihazlarında ve uzun süre arka plana alınan sayfalarda ek uyumluluk testi. Yerel iki oturum ve canlı tarayıcı/API kontrolleri geçti; bütün cihaz/süre kombinasyonları sınanmadı.
 2. XOX için operasyonel izleme ve test verilerinin saklama politikasının belirlenmesi; otomatik temizleme görevi kurulmadı.
-3. Diğer oyunların sunucu geçişi ve Okey ellerinin oyuncuya özel belgelerle ayrılması. Eski Amiral Battı dahil legacy odalar güvenli sayılmaz.
+3. Diğer oyunların sunucu geçişi ve eski geniş izinlerin kapatılması. Eski Amiral Battı/Okey dahil legacy odalar güvenli sayılmaz; yeni istemci bunları devralmaz.
 4. Uygulama bütünlüğü/kötüye kullanım önlemleri ve operasyonel kotalar: mevcut hız sınırı yeni anonim hesap açarak aşılabilir; başarısız istekleri ve tüm siteye yapılan yükü sınırlamaz.
 5. ID token doğrulaması imza, proje ve süre kontrollerini SDK ile yapar; kullanıcı iptali/devre dışı bırakma için ek Auth sorgusu yapılmaz. Mevcut anonim hesaplarda iptal edilen token'ın süresi dolana kadar kabul edilebilmesi kalan bir sınırdır; daha geniş Auth yönetimi izni verilmedi.
 6. Normal Firebase Auth kalıcıdır; `inMemoryPersistence` yalnız giriş başarısız olunca fallback olarak kullanılır. Kimlik kurtarma akışı, herkesçe görülebilen yerel oyuncu numarasıyla koltuk devralmaya izin vermeyecek şekilde geçirilmelidir.

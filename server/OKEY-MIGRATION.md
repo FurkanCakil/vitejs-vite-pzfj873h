@@ -1,6 +1,6 @@
 # 101 Okey — doğrulama çekirdeği ve kalan geçiş
 
-23 Ekim 2026. Okey çekirdeği dört kişilik oda API'sine ve kendi elini dinleyen istemciye bağlandı. `OKEY_API_ENABLED=true` ve `VITE_SERVER_OKEY_ENABLED=true` ayrı geçiş ayarlarıdır; varsayılan kapalıdır. Aşağıdaki yerel kabul kontrolleri geçti. Canlı kurallar/ayarlar ve gerçek çalışan işlev doğrulanmadan Okey'in canlı güvenlik geçişi tamamlandı denmemelidir.
+23 Ekim 2026. **Yeni Okey odalarının sunucu ve özel el geçişi canlıda doğrulandı.** `OKEY_API_ENABLED=true` ve `VITE_SERVER_OKEY_ENABLED=true` yalnız Production ortamında açık; uygulamadaki varsayılan kapalıdır. Eski Okey odaları devralınmaz, yeni oda gerekir. Legacy oda belgeleri ve diğer oyunlar için eski geniş izinlerin riski devam eder; tüm sitenin güvenlik denetimi tamamlanmış değildir.
 
 ## Mevcut akışta güvenli düzeltmeler
 
@@ -31,11 +31,15 @@ Hızlı eşleşme en çok 30 oda içeren tek `okeyLobby/queue` belgesiyle eşzam
 
 Eski tarayıcı süre bitiminden sonra kurtarma işlemi yetişene kadar hamleyi kabul edebiliyordu. Yeni sunucu süre + mevcut 2 saniyelik tolerans sonrasında normal hamleyi reddeder; süreyi istemci uzatamaz. El açınca mevcut 15 saniye ek süre, bot karar kuralları ve takım puanları korunur. Botun ara çekme/açma/işleme/atma adımları tek transaction'da hesaplandığı için masa tamamlanan bot turunu birlikte görür.
 
-## Canlıya açmadan önce kalan işler
+## Canlı açılış ve kanıtlar
 
-1. Test edilen kodu kapalı Production ayarlarıyla yayımlayıp mevcut XOX/Amiral işlevlerinin çalışmasını kontrol etme.
-2. Mevcut aşamalı kurallara sadece Okey eşleşme özeti ekini yayımlama ve iki Okey ayarını yalnız Production ortamında açma. Yeni IAM, kalıcı anahtar veya plan değişikliği gerekmez.
-3. Gerçek anonim test kimlikleriyle kendi/rakip/seyirci el erişimi, sunucu deste erişim reddi, tekrar ceza/çekiş, bot, sonuç ve yeni el kontrollerini canlıda yapma. Ardından tarayıcı ve uygulama dosyası/yayın kaydını doğrulama.
+1. `cb0e06f` önce Okey ayarları kapalıyken Production'a gönderildi ve Ready oldu. Gerçek yeni özel test odalarında XOX oluşturma/katılma/iki hamle/ayrılma, Amiral oluşturma/katılma/ayrılma yeniden geçti; Okey kapalı yanıtı doğrulandı.
+2. Firebase `oyun-odasi-8ecee` aşamalı kuralları 23 Ekim 01:40'ta Okey'in genel eşleşme özeti ekiyle yayımlandı; mevcut özel el üyelik kuralı korundu. İki ayar yalnız YapAI projesinin Production ortamında açıldı. Yeni IAM yetkisi, kalıcı anahtar, ücretli plan veya zamanlanmış görev eklenmedi.
+3. [Açık Okey Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/DygH6eSfFHtC8chiFzUYsUCdToDk) Ready oldu. Gerçek anonim kimliklerle kendi elini okuma 200; rakip/seyirci/oturumsuz el okuma, özel belge listeleme, sunucu deste belgesini okuma ve doğrudan oda/özel el yazma 403 döndü. Sahte skor alanı 400, seyirci hamlesi 403, sıra dışı hamle 409 döndü. Henüz genel oda açılmadığı için özet belgesi olmayabiliyor; girişli `get` o durumda 404, oturumsuz `get` 403 döner ve lobi boş özet gösterir.
+4. Aynı işlem kimliğiyle çekiş tekrarlandı; yalnız bir taş geldi. İki test insanının normal çekme/atma istekleri ve sunucudaki iki botla tam el tamamlandı. Yeni el, skorun korunması, başlangıcın sıradaki koltuğa geçmesi ve eski el düzenleme isteğinin reddi geçti. Yalnız yeni özel denetim odaları kullanıldı ve normal ayrılma akışıyla kapatıldı; başarısız ilk özet-belgesi varsayımındaki test odası da kapatıldı.
+5. Canlı tarayıcıda özel oda, yardımlı mod, üç botla başlama, özel el yükleme, kapalı çekiş ve otomatik bot/süre ilerlemesi görüldü. Yenileme öncesi/sonrası aynı 21 taş doğrulandı. Mobil 390 görünümünde kullanılabilir 375 piksel belge/kaydırma genişliği eşitti; taşlar 29×41 pikseldi. Bu açılış/oynanış/yenileme kontrolünün konsolunda hata/uyarı yoktu. Canlı uygulamanın Okey ve özel el bileşeni dosyaları üç ayar açık yerel üretim çıktısıyla SHA-256 karşılaştırmasında eşleşti.
+
+Token iptali kontrolü, yeni anonim kimlikle hız sınırının aşılması, global oyuncu sayacı yetkisi, otomatik eski veri temizliği ve gerçek Safari/Firefox/iOS/uzun süreli yük kontrolleri kalan genel işlerdir. Güvensiz eski oda izinlerine otomatik geri dönüş yapılmaz.
 
 ## Doğrulama ve etkiler
 
