@@ -36,6 +36,8 @@ Bu kimlikler gizli anahtar değildir; hiçbirinin başına `VITE_` konmamalıdı
 
 Üretim derlemesi `scripts/check-server-connection.mjs` ile sabit bir sunucu belgesini yalnız okumayı dener; belge yoksa da başarılı okuma yetkiyi doğrular. İçerik veya kimlik bilgisi yazdırılmaz, başarısızlık yayını durdurur. Yerel ve Preview derlemeleri bu kontrolü atlar. Bu kontrol derleme kimliğini sınar; çalışan function içindeki bağlantının ayrıca sınanması gerekir.
 
+22 Ekim 2026: `c266a71` üretim dağıtımı **Ready** oldu; logda `Production server identity: Firestore read verified` görüldü. Canlı `/api/room-action` ve düzeltilen Preview sürümü `server_not_enabled` döndürüyor. 40 otomatik test ve 5 emülatör senaryosu geçti. [Vercel doğrulama kaydı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/8V1eCiJWNNyML8bVeiqcnryAyk8K).
+
 `npm test`: mevcut 30 teste ek 10 sunucu testi. Vercel'de görülen `ERR_REQUIRE_ESM` hatasını tekrar yakalamak için API, CommonJS → ESM desteği kapalı ayrı Node sürecinde de yüklenir. Firebase Admin 14'ün `jwks-rsa` bağımlılığı bu ortamda başlatılamadığından resmi 13.10.0 sürümü sabitlendi. Emülatör suite'i normal komutta atlanır. Kaynak: [Firebase Admin hata kaydı](https://github.com/firebase/firebase-admin-node/issues/3181).
 
 `npm run test:integration`: yalnız `demo-oyun-portali` projesi, `127.0.0.1:8180` Firestore ve `127.0.0.1:9199` Auth emülatörlerinde 5 senaryo çalıştırır. Eşzamanlı kazandıran hamle tek puan verir, farklı hamleler aynı sürümü kullanamaz, sahte skor ve oyuncu reddedilir, hız sınırı aşılınca oda değişmez, istemci yazma/listeme ve özel işlem kaydı okuma istekleri kurallardan geçemez. Java 21+ gerekir. Test hiçbir canlı veritabanına bağlanmaz.

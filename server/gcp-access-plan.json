@@ -1,6 +1,7 @@
 {
-  "status": "applied-connection-verification-pending",
+  "status": "applied-production-build-read-verified",
   "verifiedAt": "2026-10-22",
+  "verificationDeployment": "https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/8V1eCiJWNNyML8bVeiqcnryAyk8K",
   "projectId": "oyun-odasi-8ecee",
   "projectNumber": "687462141533",
   "poolId": "oyun-portali-prod",
