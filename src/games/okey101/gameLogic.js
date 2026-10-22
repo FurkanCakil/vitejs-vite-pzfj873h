@@ -321,13 +321,17 @@ export function orderGroupTiles(tiles, type, okeyInfo) {
 // Birden fazla seçili per'in HEPSİNİN geçerli olup olmadığını kontrol eder.
 // Tek bir geçersiz per varsa "Geçersiz Per Dizilimi!" ile tüm işlem reddedilmeli.
 export function validateGroups(groupsMap, tilesById, selectedGroupIds, okeyInfo) {
+  const selected = selectedGroupIds.flatMap(gid => groupsMap[gid] || []);
+  const uniqueSelection = selectedGroupIds.length > 0
+    && new Set(selectedGroupIds).size === selectedGroupIds.length
+    && new Set(selected).size === selected.length;
   const results = selectedGroupIds.map((gid) => {
     const tileIds = groupsMap[gid] || [];
     const tiles = tileIds.map((id) => tilesById[id]).filter(Boolean);
     const res = validateGroup(tiles, okeyInfo);
-    return { gid, tiles, ...res };
+    return { gid, tiles, ...res, valid: res.valid && tiles.length === tileIds.length };
   });
-  return { allValid: results.every((r) => r.valid), results };
+  return { allValid: uniqueSelection && results.every((r) => r.valid), results };
 }
 
 export function computeSelectedGroupsValue(results) {
@@ -387,6 +391,8 @@ export function isValidPairTiles(a, b, okeyInfo, indicator = null) {
 // joker sayılmasını sağlar (2. madde). Diğer tüm durumlarda null geçilmelidir.
 export function validatePairs(groupsMap, tilesById, selectedGroupIds, okeyInfo, minPairs = 5, indicator = null) {
   if (selectedGroupIds.length < minPairs) return { valid: false };
+  const selected = selectedGroupIds.flatMap(gid => groupsMap[gid] || []);
+  if (new Set(selectedGroupIds).size !== selectedGroupIds.length || new Set(selected).size !== selected.length) return { valid: false };
   for (const gid of selectedGroupIds) {
     const tileIds = groupsMap[gid] || [];
     if (tileIds.length !== 2) return { valid: false };

@@ -799,7 +799,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         // Artık her adım denenir ve en sonda tur her hâlükârda ilerletilir.
         const stillMine = () => !(data.setupPhase || data.roundEnded || data.turn !== turnUid);
 
-        if (data.sideTake?.uid === turnUid && !data.hasOpened?.[turnUid]) {
+        if (data.sideTake?.uid === turnUid) {
           apply(await handleCancelSideTake(turnUid));
         }
         if (stillMine() && !data.hasDrawnThisTurn) {
