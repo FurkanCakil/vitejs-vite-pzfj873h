@@ -22,9 +22,9 @@ export default function useDrawDrag({ enabled, onDraw }) {
   const dragRef = useRef(null);
   const growTimerRef = useRef(null);
   const ghostElRef = useRef(null);
+  const latest = useRef({ enabled, onDraw }); latest.current = { enabled, onDraw };
   const [active, setActive] = useState(false);
   const [grown, setGrown] = useState(false);
-  useEffect(() => () => clearTimeout(growTimerRef.current), []);
 
   const applyPos = (el, x, y) => {
     if (el) el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
@@ -39,22 +39,23 @@ export default function useDrawDrag({ enabled, onDraw }) {
   }, []);
 
   const reset = useCallback(() => {
+    dragRef.current = null;
     if (growTimerRef.current) { clearTimeout(growTimerRef.current); growTimerRef.current = null; }
     setActive(false);
     setGrown(false);
   }, []);
 
   const onPointerDown = useCallback((e) => {
-    if (!enabled) return;
+    if (!latest.current.enabled || dragRef.current || (e.button !== undefined && e.button !== 0)) return;
     e.preventDefault();
-    dragRef.current = { targetIndex: null, moved: false };
+    dragRef.current = { pointerId: e.pointerId, moved: false, x: e.clientX, y: e.clientY };
     setActive(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
-  }, [enabled]);
+  }, []);
 
   const onPointerMove = useCallback((e) => {
     const d = dragRef.current;
-    if (!d) return;
+    if (!d || d.pointerId !== e.pointerId) return;
     if (!d.moved) {
       d.moved = true;
       growTimerRef.current = setTimeout(() => setGrown(true), 80);
@@ -65,22 +66,45 @@ export default function useDrawDrag({ enabled, onDraw }) {
 
   const onPointerUp = useCallback((e) => {
     const d = dragRef.current;
-    dragRef.current = null;
+    if (!d || d.pointerId !== e.pointerId) return;
     reset();
-    if (!d) return;
+    if (!latest.current.enabled) return;
     // Hiç hareket etmeden bırakıldıysa (klasik tık) hedef YOKTUR: çağıran
     // taraf ıstakanın ilk boş slotuna çeker — imlecin o an bulunduğu
     // (destenin üstündeki) noktaya "en yakın" slota çekmek anlamsız olurdu.
-    if (!d.moved) { onDraw(null); return; }
+    if (!d.moved) { latest.current.onDraw(null); return; }
     // Hedef, bırakma ANINDAKİ konuma göre hesaplanır (pointermove'da değil):
     // parmak son karede hâlâ kayıyor olabilir, asıl belirleyici bırakma noktasıdır.
     const x = e?.clientX ?? d.x;
     const y = e?.clientY ?? d.y;
-    onDraw(findNearestSlotIndex(x, y, { emptyOnly: true }));
-  }, [onDraw, reset]);
+    latest.current.onDraw(findNearestSlotIndex(x, y, { emptyOnly: true }));
+  }, [reset]);
+
+  const onPointerCancel = useCallback((e) => {
+    if (dragRef.current?.pointerId === e.pointerId) reset();
+  }, [reset]);
+
+  useEffect(() => { if (!enabled) reset(); }, [enabled, reset]);
+  useEffect(() => {
+    const hidden = () => { if (document.visibilityState !== 'visible') reset(); };
+    // A turn update may remove the source handlers before pointerup arrives.
+    // Window listeners also finish drops outside the source/capture target.
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('blur', reset);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('blur', reset);
+      document.removeEventListener('visibilitychange', hidden);
+      dragRef.current = null;
+      clearTimeout(growTimerRef.current);
+    };
+  }, [onPointerUp, onPointerCancel, reset]);
 
   const handlers = enabled
-    ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp }
+    ? { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onLostPointerCapture: onPointerCancel }
     : {};
 
   return { active, grown, ghostRef, handlers };

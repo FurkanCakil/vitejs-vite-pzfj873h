@@ -137,15 +137,91 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       assert.deepEqual((await own('OKST12', 'seat-viewer').get()).data().rack, state.racks[botUid]);
       hidden((await pub('OKST12').get()).data());
     });
-    await t.test('leave and wait archive private hands by UID lineup and replacement gets a new deal', async () => {
+    await t.test('a departing third human becomes a bot without changing its drawn hand, score, team or seat', async () => {
+      clock += 100_000; await create('leave-a', 'OKLV12'); await join('leave-b', 'OKLV12'); await join('leave-c', 'OKLV12');
+      await command('leave-a', 'OKLV12', 'okey.rules', { rules: { gameType: '2v2', assistedEnabled: true, foldingEnabled: true, foldToPartnerEnabled: false } });
+      await fillStart('leave-a', 'OKLV12');
+      let state = await load('OKLV12');
+      state.turn = 'leave-b'; state.hasDrawnThisTurn = false; state.turnDeadline = clock + 45_000;
+      state.scores['leave-b'] = 37; state.roundStartScores['leave-b'] = 12;
+      await secret('OKLV12').set(state);
+      await command('leave-b', 'OKLV12', 'okey.draw', { source: 'pile', targetIndex: null });
+      state = await load('OKLV12');
+      const leave = request('room.leave', { roomId: 'OKLV12', sessionId });
+      await Promise.all([run('leave-b', leave), run('leave-b', leave)]);
+      const saved = await load('OKLV12'), replacement = saved.players[state.players.indexOf('leave-b')];
+      assert.equal(saved.status, 'playing'); assert.equal(saved.players.length, 4);
+      assert.equal(saved.players.filter(uid => saved.isBotPlayer[uid]).length, 2);
+      assert.equal(saved.isBotPlayer[replacement], true); assert.equal(saved.turn, replacement);
+      assert.equal(saved.hasDrawnThisTurn, true); assert.equal(saved.botReadyAt, clock + 2000);
+      assert.equal(saved.roundId, state.roundId); assert.equal(saved.turnNumber, state.turnNumber);
+      assert.deepEqual(saved.racks[replacement], state.racks['leave-b']);
+      assert.equal(saved.scores[replacement], 37); assert.equal(saved.roundStartScores[replacement], 12);
+      for (const team of ['A', 'B']) assert.deepEqual(saved.teams[team], state.teams[team].map(uid => uid === 'leave-b' ? replacement : uid));
+      assert.deepEqual(saved.drawPile, state.drawPile);
+      assert.equal(saved.racks['leave-b'], undefined); assert.equal(saved.handVersions['leave-b'], undefined);
+      assert.equal((await own('OKLV12', 'leave-b').get()).exists, false);
+      await rejects(heartbeat('leave-b', 'OKLV12'), 'not_a_player');
+      await rejects(command('leave-b', 'OKLV12', 'okey.tick'), 'not_a_player');
+      clock += 2000; await command('leave-a', 'OKLV12', 'okey.tick');
+      const played = await load('OKLV12'); assert.equal(played.turnNumber, saved.turnNumber + 1);
+      assert.equal(played.drawPile.length, saved.drawPile.length); // Already drawn: no second tile.
+      hidden((await pub('OKLV12').get()).data());
+    });
+    await t.test('host departure transfers room ownership to a human and the last human closes it', async () => {
+      clock += 100_000; await create('host-a', 'OKHS12'); await join('host-b', 'OKHS12'); await fillStart('host-a', 'OKHS12');
+      const before = await load('OKHS12');
+      await run('host-a', request('room.leave', { roomId: 'OKHS12', sessionId }));
+      const saved = await load('OKHS12'); assert.equal(saved.host, 'host-b'); assert.equal(saved.status, 'playing');
+      assert.equal(saved.isBotPlayer[saved.host], undefined); assert.equal(saved.roundId, before.roundId);
+      await run('host-b', request('room.leave', { roomId: 'OKHS12', sessionId }));
+      assert.equal((await load('OKHS12')).status, 'closed');
+    });
+    await t.test('refresh and another live tab preserve a seat; expired leases turn missing humans into bots', async () => {
+      clock += 100_000; await create('lease-a', 'OKLS12'); await join('lease-b', 'OKLS12'); await join('lease-c', 'OKLS12');
+      await fillStart('lease-a', 'OKLS12');
+      const original = await load('OKLS12');
+      await run('lease-b', request('room.disconnect', { roomId: 'OKLS12', sessionId }));
+      clock += 30_000; await heartbeat('lease-a', 'OKLS12');
+      assert.ok((await load('OKLS12')).players.includes('lease-b'));
+      const secondTab = 'okey_test_second_tab';
+      await run('lease-b', request('room.heartbeat', { roomId: 'OKLS12', sessionId: secondTab }));
+      clock += 30_001; await heartbeat('lease-a', 'OKLS12');
+      let saved = await load('OKLS12'); assert.ok(saved.players.includes('lease-b')); assert.ok(!saved.players.includes('lease-c'));
+      assert.equal(saved.players.filter(uid => saved.isBotPlayer[uid]).length, 2);
+      // Refresh the surviving tab before its lease expires; both membership
+      // and the exact own hand survive, with no new deal.
+      await run('lease-b', request('room.disconnect', { roomId: 'OKLS12', sessionId: secondTab }));
+      clock += 20_000; await heartbeat('lease-b', 'OKLS12'); await heartbeat('lease-a', 'OKLS12');
+      saved = await load('OKLS12'); assert.deepEqual(saved.racks['lease-b'], original.racks['lease-b']);
+      clock += 60_001; await heartbeat('lease-a', 'OKLS12');
+      saved = await load('OKLS12'); assert.ok(!saved.players.includes('lease-b'));
+      assert.equal(saved.players.filter(uid => saved.isBotPlayer[uid]).length, 3);
+      assert.equal(saved.roundId, original.roundId); assert.equal(saved.players.length, 4);
+      assert.equal((await own('OKLS12', 'lease-b').get()).exists, false);
+    });
+    await t.test('a late leave cannot replace a seat and reopen an already closed match', async () => {
+      clock += 100_000; await create('closed-a', 'OKCL12'); await join('closed-b', 'OKCL12'); await fillStart('closed-a', 'OKCL12');
+      const state = await load('OKCL12'); state.status = 'closed'; state.closedBy = 'closed-b';
+      await secret('OKCL12').set(state); await pub('OKCL12').set(publicOkeyState(state));
+      await run('closed-a', request('room.leave', { roomId: 'OKCL12', sessionId }));
+      const saved = await load('OKCL12'); assert.equal(saved.status, 'closed'); assert.equal(saved.closedBy, 'closed-b');
+      assert.deepEqual(saved.players, state.players); assert.equal(saved.host, state.host);
+    });
+    await t.test('legacy abandoned rooms can still archive private hands by UID lineup', async () => {
       clock += 100_000; await create('life-a', 'OKLF12'); await join('life-b', 'OKLF12'); await fillStart('life-a', 'OKLF12');
       const original = await load('OKLF12');
-      await run('life-b', request('room.leave', { roomId: 'OKLF12', sessionId }));
+      const abandonLegacy = async () => {
+        const state = await load('OKLF12');
+        state.status = 'abandoned'; state.abandonedBy = 'life-b'; state.abandonReason = 'left';
+        await secret('OKLF12').set(state); await pub('OKLF12').set(publicOkeyState(state));
+      };
+      await abandonLegacy();
       await command('life-a', 'OKLF12', 'room.wait');
       assert.equal((await load('OKLF12')).racks, undefined);
       await join('life-b', 'OKLF12');
       let restored = await load('OKLF12'); assert.equal(restored.roundId, original.roundId); assert.deepEqual(restored.racks, original.racks);
-      await run('life-b', request('room.leave', { roomId: 'OKLF12', sessionId })); await command('life-a', 'OKLF12', 'room.wait');
+      await abandonLegacy(); await command('life-a', 'OKLF12', 'room.wait');
       await join('life-c', 'OKLF12'); clock += 3200; await command('life-a', 'OKLF12', 'okey.start');
       restored = await load('OKLF12'); assert.notEqual(restored.roundId, original.roundId); assert.equal(restored.racks['life-b'], undefined);
       hidden((await pub('OKLF12').get()).data());
@@ -209,6 +285,12 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       assert.equal((await fetch(`${api}/${path}/playerData/${a.localId}`, { method: 'PATCH', headers: headers(a.idToken), body: '{"fields":{}}' })).status, 403);
       assert.equal((await fetch(`${api}/public/data/okeyLobby/queue`, { headers: headers(c.idToken) })).status, 200);
       assert.equal((await fetch(`${api}/public/data/okeyLobby/queue`)).status, 403);
+      await run(b.localId, request('room.leave', { roomId: 'OKAU12', sessionId }));
+      assert.equal((await own('OKAU12', b.localId).get()).exists, false);
+      assert.equal((await fetch(`${api}/${path}/playerData/${b.localId}`, { headers: headers(b.idToken) })).status, 403);
+      await run(b.localId, request('room.spectate', { roomId: 'OKAU12', sessionId }));
+      assert.equal((await fetch(`${api}/${path}/playerData/${b.localId}`, { headers: headers(b.idToken) })).status, 403);
+      assert.equal((await fetch(`${api}/${path}/playerData/${a.localId}`, { headers: headers(a.idToken) })).status, 200);
     });
   } finally { await db.terminate(); }
 });

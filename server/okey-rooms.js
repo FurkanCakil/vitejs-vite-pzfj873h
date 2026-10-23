@@ -15,6 +15,21 @@ const lineup = players => createHash('sha256').update(JSON.stringify([...players
 const defaults = { gameType: 'ffa', assistedEnabled: false, foldingEnabled: false, foldToPartnerEnabled: false };
 const lobbyActions = new Set(['okey.rules', 'okey.team', 'okey.distribute', 'okey.bots', 'okey.start']);
 const humanPlayers = data => data.players.filter(uid => !bot(data, uid));
+function replaceWithBot(data, uid, connections, now) {
+  const replacement = createBotPlayers(1, data.players.indexOf(uid))[0];
+  const wasHost = data.host === uid;
+  const deadline = data.turnDeadline;
+  Object.assign(data, buildSeatSwapUpdate(data, uid, replacement.uid, replacement.name));
+  data.turnDeadline = deadline;
+  data.isBotPlayer[replacement.uid] = true;
+  delete data.handVersions[uid];
+  delete connections[uid];
+  // A bot inherits the seat, never ownership of the room.
+  if (wasHost) data.host = humanPlayers(data).find(id => connected(connections, id)) ?? humanPlayers(data)[0];
+  data.status = 'playing'; data.abandonedBy = null; data.abandonReason = null;
+  data.playVersion = (data.playVersion ?? 0) + 1;
+  if (data.turn === replacement.uid && !data.roundEnded && !data.setupPhase) data.botReadyAt = now + 2000;
+}
 const readyTeams = data => data.rules.gameType !== '2v2' || (data.teams.A.length === 2 && data.teams.B.length === 2);
 function distribute(data) {
   const assigned = new Set([...data.teams.A, ...data.teams.B]);
@@ -111,14 +126,25 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   }
   if (action.type === 'room.leave' || action.type === 'room.disconnect') {
     if (action.type === 'room.leave') requireAction(connected(connections, uid) && Object.hasOwn(connections[uid], action.sessionId), 409, 'session_expired');
-    delete connections[uid]?.[action.sessionId];
+    // Page hide also fires on refresh. Keep the last lease until its normal
+    // 60s expiry so a short reconnect cannot turn a human into a bot.
+    if (action.type === 'room.leave' || !data.racks) delete connections[uid]?.[action.sessionId];
     if (action.type === 'room.leave') {
       delete connections[uid];
       if (!player) { data.spectators = data.spectators.filter(id => id !== uid); delete data.seatRequests[uid]; }
-      else if (humanPlayers(data).length === 1) { data.status = 'closed'; data.closedBy = uid; }
-      else if (!data.racks) data = waitingState(data, data.players.filter(id => id !== uid));
-      else if (data.status === 'abandoned' && data.abandonedBy !== uid) { data.status = 'closed'; data.closedBy = uid; }
-      else { data.status = 'abandoned'; data.abandonedBy = uid; data.abandonReason = 'left'; }
+      else if (data.status !== 'closed') {
+        if (humanPlayers(data).length === 1) { data.status = 'closed'; data.closedBy = uid; }
+        else if (!data.racks) data = waitingState(data, data.players.filter(id => id !== uid));
+        else replaceWithBot(data, uid, connections, now);
+      }
+    }
+  }
+  if (action.type === 'room.heartbeat' && player && data.racks && data.status !== 'closed') {
+    // Only a surviving player's heartbeat retires expired seats. Refreshing
+    // players renew their own lease above before this decision is made.
+    for (const missing of humanPlayers(data).filter(id => !connected(connections, id)
+      || (data.status === 'abandoned' && data.abandonedBy === id && data.abandonReason === 'left'))) {
+      if (missing !== uid) replaceWithBot(data, missing, connections, now);
     }
   }
   if (['room.wait', 'room.close'].includes(action.type)) {
@@ -213,6 +239,9 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   if (changed || creating) {
     tx.set(secretRef(id), data); tx.set(roomRef(id), publicOkeyState(data));
     for (const [uid, view] of handWrites) tx.set(roomRef(id).collection('playerData').doc(uid), view);
+    for (const retired of humanPlayers(before).filter(uid => !data.players.includes(uid))) {
+      tx.delete(roomRef(id).collection('playerData').doc(retired));
+    }
   }
   tx.set(presenceRef(id), { connections });
   if (touchesQueue && JSON.stringify(entries) !== JSON.stringify(queue)) tx.set(queueRef, { entries });
