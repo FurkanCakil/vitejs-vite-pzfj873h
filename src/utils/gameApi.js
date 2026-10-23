@@ -1,6 +1,7 @@
 export const SERVER_XOX_ENABLED = import.meta.env?.VITE_SERVER_XOX_ENABLED === 'true';
 export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP_ENABLED === 'true';
 export const SERVER_OKEY_ENABLED = import.meta.env?.VITE_SERVER_OKEY_ENABLED === 'true';
+export const SERVER_PRESENCE_ENABLED = import.meta.env?.VITE_SERVER_PRESENCE_ENABLED === 'true';
 export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
   || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED) || (game === 'okey101' && SERVER_OKEY_ENABLED);
 export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create' })[game];
@@ -65,6 +66,8 @@ export function gameErrorMessage(error) {
     too_early: 'Sayaç henüz dolmadı.',
     too_many_actions: 'Çok hızlı işlem yapıldı. Birkaç saniye sonra tekrar dene.',
     too_many_rooms: 'Kısa sürede çok oda açıldı. Bir dakika sonra tekrar dene.',
+    too_many_tabs: 'Çok fazla bağlantı açıldı. Kullanmadığın sekmeleri kapatıp biraz bekle.',
+    presence_capacity: 'Bağlantı sayacı şu anda yoğun. Kısa süre sonra tekrar dene.',
     server_not_enabled: 'Yeni oyun sistemi henüz açılmadı. Sayfayı yenileyip tekrar dene.',
     invalid_token: 'Oturum doğrulanamadı. Sayfayı yenileyip tekrar dene.',
     connection_failed: 'İşlem doğrulanamadı. İnternet bağlantını kontrol edip tekrar dene.',

@@ -1,5 +1,7 @@
 # Sunucu güvenliği: XOX, Amiral Battı ve Okey geçişi
 
+Sayaç için doğrulanmış UID/zaman, bounded 16 parça ve eski oyun eşleşme adaptörü hazırlandı. Ayrı Production bayrakları ve yayın sırası, doğrulamalar, kota etkisi ve kalan sınırlar [PRESENCE-ROLLOUT.md](PRESENCE-ROLLOUT.md) içindedir. Son `firestore.rollout.rules` eski sayaç yazmasını kapatır; hazırlıkta bu yasak yeni istemci açılmadan yayımlanmamalıdır.
+
 23 Ekim 2026. Kullanıcının yetkisiyle `firestore.rollout.rules` canlıya yayımlandı; XOX ve Amiral Battı'nın önceki ayarlarına ek `OKEY_API_ENABLED=true` ve `VITE_SERVER_OKEY_ENABLED=true` yalnız Vercel Production ortamında açık. XOX `26a9f06`, Amiral Battı `5096257`, Okey `cb0e06f` ile sunucu akışına geçti; üç oyunun gerçek sunucu akışları doğrulandı. Okey için yeni IAM, kalıcı anahtar veya ücretli plan gerekmedi. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların ve eski odaların geniş izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.
 
 ## Hazır olan parça

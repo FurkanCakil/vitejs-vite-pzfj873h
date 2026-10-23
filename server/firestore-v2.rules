@@ -3,6 +3,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /artifacts/{appId}/public/data/presenceV2/{shardId} {
+      allow get, list: if request.auth != null;
+      allow write: if false;
+    }
     match /artifacts/{appId}/public/data/roomsV2/{roomId} {
       allow get: if request.auth != null
         && (request.auth.uid in resource.data.players || request.auth.uid in resource.data.spectators);

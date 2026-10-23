@@ -7,6 +7,8 @@ const room = ['roomId'];
 const session = ['sessionId'];
 const version = ['expectedVersion'];
 const fields = {
+  'presence.heartbeat': [...session, 'roomCode'],
+  'presence.leave': [...session],
   ...okeyFields,
   'room.create': [...session, 'nickname', 'isPublic'],
   'room.match': [...session, 'nickname'],
@@ -38,6 +40,7 @@ export function validateAction(input) {
   requireAction(Object.keys(input).length === keys.length && Object.keys(input).every(key => keys.includes(key)), 400, 'invalid_fields');
   requireAction(typeof input.actionId === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(input.actionId), 400, 'invalid_action_id');
   if (keys.includes('roomId')) requireAction(typeof input.roomId === 'string' && /^[A-Z0-9]{6}$/.test(input.roomId), 400, 'invalid_room_id');
+  if (keys.includes('roomCode')) requireAction(input.roomCode === null || (typeof input.roomCode === 'string' && /^[A-Z0-9]{6}$/.test(input.roomCode)), 400, 'invalid_room_id');
   if (keys.includes('sessionId')) requireAction(typeof input.sessionId === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(input.sessionId), 400, 'invalid_session_id');
   if (keys.includes('expectedVersion')) requireAction(Number.isSafeInteger(input.expectedVersion) && input.expectedVersion >= 0 && input.expectedVersion < Number.MAX_SAFE_INTEGER, 400, 'invalid_version');
   if (keys.includes('cell')) requireAction(Number.isInteger(input.cell) && input.cell >= 0 && input.cell < 9, 400, 'invalid_cell');

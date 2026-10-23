@@ -3,7 +3,9 @@ import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, serverGameEnabled } from '../utils/gameApi.js';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
-import { presenceCounterRef, countActiveSessions } from '../hooks/usePresence.js';
+import { subscribePresenceSessions } from '../hooks/presenceStore.js';
+import { countActiveSessions } from '../utils/presence.js';
+import { presenceNow } from '../utils/presenceProtocol.js';
 import { waitingPlayers, livePlayersByRoom } from '../utils/presence.js';
 
 const GAMES = [
@@ -33,22 +35,22 @@ const DIFFICULTY_OPTIONS = [
 
 export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame, findMatch, matchmakingGameId, userId }) {
   // ---- Aktif Kullanıcı Sayacı --------------------------------------------
-  // SADECE bu tekil doküman dinlenir (kullanıcı başına ayrı dinleyici YOK) ve
-  // dinleyici yalnızca Lobby EKRANDAYKEN kuruludur — bir odaya girildiğinde
+  // Tek bir bounded shard sorgusu dinlenir (legacy bayrak kapalıysa tek belge).
+  // Dinleyici yalnızca Lobby EKRANDAYKEN kuruludur — bir odaya girildiğinde
   // (Lobby unmount) otomatik kapanır, oyun içinde hiç okuma maliyeti olmaz.
   const [sessions, setSessions] = useState(null);
   const [presenceError, setPresenceError] = useState(false);
-  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [nowTick, setNowTick] = useState(() => presenceNow());
   // Dinleyici, ANONİM GİRİŞ tamamlanmadan (userId gelmeden) kurulmaz:
   // güvenlik kuralı `request.auth != null` istediği için, auth'tan önce açılan
   // bir dinleyici kalıcı olarak "permission denied" alıp bir daha kendini
   // toparlamıyordu (sayaç sonsuza dek "—" kalıyordu).
   useEffect(() => {
     if (!userId) return undefined;
-    const unsub = onSnapshot(presenceCounterRef, (snap) => {
+    const unsub = subscribePresenceSessions((sessions) => {
       setPresenceError(false);
-      setSessions(snap.data({ serverTimestamps: 'estimate' })?.sessions || {});
-      setNowTick(Date.now());
+      setSessions(sessions);
+      setNowTick(presenceNow());
     }, (err) => {
       console.error('Aktif kullanıcı sayacı okunamadı:', err);
       setPresenceError(true);
@@ -59,7 +61,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   // Oturumlar ZAMANLA bayatlar (bkz. usePresence#FRESH_MS): yeni bir snapshot
   // gelmese bile sayının düşebilmesi için periyodik olarak yeniden hesaplanır.
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 5_000);
+    const t = setInterval(() => setNowTick(presenceNow()), 5_000);
     return () => clearInterval(t);
   }, []);
   const activeUsers = useMemo(

@@ -8,10 +8,12 @@ import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, 
 import { auth, db, appId } from './firebase/config.js';
 import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
 import { roomRecoveryUpdate } from './utils/roomRecovery.js';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_PRESENCE_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
-import usePresence, { presenceCounterRef } from './hooks/usePresence.js';
+import usePresence from './hooks/usePresence.js';
+import { readPresenceSessions } from './hooks/presenceStore.js';
+import { presenceNow } from './utils/presenceProtocol.js';
 import { waitingPlayers, livePlayersByRoom } from './utils/presence.js';
 
 import useViewport from './hooks/useViewport.js';
@@ -123,7 +125,10 @@ export default function App() {
   const [isBotGame, setIsBotGame] = useState(false);
   const [isServerRoom, setIsServerRoom] = useState(false);
   const serverSpectateRef = useRef(false);
-  usePresence(user?.uid, myPlayerId, isBotGame ? null : roomCode);
+  const countedRoomCode = isBotGame ? null : SERVER_PRESENCE_ENABLED
+    ? (roomData?.isPublic && roomData.status === 'waiting' && !serverGameEnabled(roomData.gameId) ? roomCode : null)
+    : roomCode;
+  usePresence(user?.uid, myPlayerId, countedRoomCode);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
@@ -717,8 +722,8 @@ export default function App() {
         if (serverGameEnabled(data.gameId)) throw new Error('legacy-server-game');
         if (data.status === 'closed') throw new Error("closed");
         if (matchmaking) {
-          const presence = await transaction.get(presenceCounterRef);
-          if (!waitingPlayers(data, cleanCode, presence.data()?.sessions, user.uid).length) {
+          const sessions = await readPresenceSessions(transaction);
+          if (!waitingPlayers(data, cleanCode, sessions, user.uid).length) {
             throw new Error('no-live-opponent');
           }
         }
@@ -965,12 +970,11 @@ export default function App() {
         where('status', '==', 'waiting'),
         where('isPublic', '==', true),
       );
-      const [snap, presence] = await Promise.all([getDocs(q), getDoc(presenceCounterRef)]);
+      const [snap, sessions] = await Promise.all([getDocs(q), readPresenceSessions()]);
       // Kendi kurduğum (hâlâ tek başıma beklediğim) bir oda adaylar arasında
       // çıkabilir — ona "2. oyuncu" olarak katılmaya çalışmak anlamsızdır,
       // baştan elenir.
-      const now = Date.now();
-      const sessions = presence.data()?.sessions;
+      const now = presenceNow();
       const liveRooms = livePlayersByRoom(sessions, now);
       const candidates = snap.docs.filter((d) => waitingPlayers(d.data(), d.id, sessions, user.uid, now, liveRooms).length);
 
