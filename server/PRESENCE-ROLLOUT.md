@@ -30,6 +30,16 @@ Lobi ve eski oyunların hızlı eşleşmesi aynı özet adaptörünü kullanır.
 
 Yeni IAM, kalıcı anahtar, ücretli plan veya zamanlanmış iş gerekmez. Mevcut Production kimliği kullanılır; Preview erişimi genişletilmez. Canlı sonuçlar kalıcı denetim kaydına eklenir.
 
+## Canlı sonuç — 23 Ekim 2026
+
+`0c56996` önce kapalı ayarlarla Ready oldu; mevcut XOX, Amiral ve Okey canlı oda akışları geçti. Ardından salt okunur yeni özet kuralı yayımlandı ve iki sayaç ayarı yalnız Production'da açıldı. [Açık Production sürümü](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/A7pvvxPwt8ZNR2cjbCh4i2iQCre4) Ready oldu; canlı uygulama dosyasının SHA-256 özeti yerel açık üretim çıktısıyla eşleşti. Kullanıcının eski sayaç yazmasını kapatma onayıyla son kurallar 18:16'da yayımlandı. Eski açık sekmeler yenilenmelidir.
+
+Gerçek anonim test kimlikleriyle iki sekmenin tek kişi sayılması, birini kapatınca diğerinin korunması, son sekme ayrılınca kaldırma ve geç heartbeat'in kapalı sekmeyi diriltmemesi geçti. Sahte UID/oyuncu numarası/toplam/gelecek zaman alanları reddedildi. Özel oda kodu genel özete sızmadı. Giriş yapanların genel özeti okuması geçti; oturumsuz genel okuma, özel sunucu kaydı okuma, yeni özete doğrudan yazma ve eski `serverStatus` yazması 403 döndü. Kendi yeni özel XOX test odası normal ayrılmayla kapatıldı; mevcut oyuncu odaları kullanılmadı.
+
+Son kurallar sonrası canlı tarayıcıda yenilemeyle sayaç bir oyuncuyu gösterdi; hızlı eşleşme seçicisinde bütün oyunlar `Bekleyen yok` durumundaydı ve gözlenen konsolda hata/uyarı yoktu. Aynı kimlikle açılan ikinci sekme sayıyı artırmadı. Bu sayaç aşamasında gerçek mobil cihaz, Safari/Firefox/iOS veya uzun süreli yük doğrulaması yapılmadı; oyun CSS/tahta boyutları değiştirilmedi.
+
+Bu aşama sayaç yetkilendirmesini kapatır; Connect 4, Dama, Satranç ve Tavla'nın istemci hamle/skor yetkisi ile legacy oda izinleri hâlâ açık iştir. Yeni izin, anahtar, ücretli plan veya zamanlanmış görev oluşturulmadı.
+
 ## Doğrulama ve maliyet
 
 76 otomatik test, 42 emülatör senaryosu / beş üst testle 47 sonuç geçti. Sekiz yeni emülatör senaryosu kapalı bayrak/sahte alan, yinelenen istek/çoklu sekme, açık oda üyeliği/özel oda gizleme, oda süresi, geç heartbeat, sekme/hız sınırı, kapasite/budama ve gerçek Auth kurallarını kapsar. Önceki XOX, Amiral ve Okey regresyonları birlikte geçti.
