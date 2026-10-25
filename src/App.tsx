@@ -8,7 +8,7 @@ import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, 
 import { auth, db, appId } from './firebase/config.js';
 import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
 import { roomRecoveryUpdate } from './utils/roomRecovery.js';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_PRESENCE_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_PRESENCE_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence from './hooks/usePresence.js';
@@ -228,7 +228,7 @@ export default function App() {
       savedCode = sessionRoomStorage.get();
       savedCode = normalizeRoomCode(savedCode);
       if (savedCode && currentUser) {
-        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED && !SERVER_OKEY_ENABLED && !SERVER_CONNECT4_ENABLED) sessionRoomStorage.remove();
+        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED && !SERVER_OKEY_ENABLED && !SERVER_CONNECT4_ENABLED && !SERVER_CHECKERS_ENABLED) sessionRoomStorage.remove();
         else { setIsServerRoom(sessionRoomStorage.isServer()); restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
       }
 
@@ -926,7 +926,7 @@ export default function App() {
     if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
     try {
       serverSpectateRef.current = false;
-      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED || SERVER_OKEY_ENABLED || SERVER_CONNECT4_ENABLED) {
+      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED || SERVER_OKEY_ENABLED || SERVER_CONNECT4_ENABLED || SERVER_CHECKERS_ENABLED) {
         try {
           const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
           enterServerRoom(result); return;
@@ -1343,7 +1343,7 @@ export default function App() {
                    {roomData?.gameId === 'xox' && <TicTacToeGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
-                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} />}
+                   {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'okey101' && (isServerRoom
                      ? <ServerOkey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={sendXoxAction} />
                      : <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />)}

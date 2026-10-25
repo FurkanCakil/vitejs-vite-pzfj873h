@@ -6,8 +6,9 @@ import { BOT_UID, DIFFICULTY_LABELS, getBotTurn } from './bot.js';
 import { Crown, Loader2, Check, X, Bot } from 'lucide-react';
 import useViewport from '../../hooks/useViewport.js';
 import useBoardScale from '../../hooks/useBoardScale.js';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 
-export default function CheckersGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+export default function CheckersGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
@@ -39,8 +40,23 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const submittingRef = useRef(false);
+  const previousWinner = useRef(roomData.winner);
+  useEffect(() => {
+    if (sendAction && roomData.winner && !previousWinner.current) playSound('win');
+    previousWinner.current = roomData.winner;
+  }, [roomData.winner, sendAction]);
+  const submitServer = async (type, fields = {}) => {
+    if (submittingRef.current) return false;
+    submittingRef.current = true; setIsSubmitting(true); setActionError('');
+    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }); return true; }
+    catch (error) { setActionError(gameErrorMessage(error)); return false; }
+    finally { submittingRef.current = false; setIsSubmitting(false); }
+  };
 
   const updateRoom = async (patch) => {
+    if (roomData.schemaVersion === 2) throw new Error('Server room requires a verified action');
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
@@ -73,6 +89,15 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   // geçer — böylece iki etkileşim biçimi arasında kural farkı oluşamaz
   // (taç, zincirleme yeme, blokaj, skor, kazanan tespiti hepsi burada).
   const applyMove = async (fromIndex, move) => {
+    if (!canPlayFrom(fromIndex) || submittingRef.current) return;
+    move = getValidCheckersMoves(board, fromIndex, roomData.multiJumpIdx ?? null).find(item => item.to === move.to);
+    if (!move) return;
+    if (sendAction) {
+      if (await submitServer('checkers.move', { from: fromIndex, to: move.to })) {
+        playSound(move.isJump ? 'capture' : 'move'); setSelectedSquare(null);
+      }
+      return;
+    }
     const index = move.to;
     setIsSubmitting(true);
       try {
@@ -140,7 +165,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
           multiJumpIdx: newMultiJumpIdx
         });
         setSelectedSquare(null);
-      } catch (err) { console.error(err); }
+      } catch (err) { setActionError(gameErrorMessage(err)); }
       finally { setIsSubmitting(false); }
   };
 
@@ -148,7 +173,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   // zincirleme yeme sürüyorsa doğru taş mı, geçerli hamlesi var mı).
   // Sürükleme SADECE bu koşulları sağlayan taşlarda başlar.
   const canPlayFrom = (index) => {
-    if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return false;
+    if (!isMyTurn || isSpectator || roomData.winner || roomData.status !== 'playing' || isSubmitting) return false;
     const piece = board[index];
     if (!piece || piece.color !== myColor) return false;
     const chain = roomData.multiJumpIdx ?? null;
@@ -240,6 +265,22 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     setHoverSquare(null);
   };
 
+  useEffect(() => {
+    const cancel = () => { dragRef.current = null; setDragVisual(null); setHoverSquare(null); };
+    cancel(); setSelectedSquare(null);
+    const hidden = () => { if (document.visibilityState !== 'visible') cancel(); };
+    window.addEventListener('blur', cancel);
+    window.addEventListener('pointerup', cancel);
+    window.addEventListener('pointercancel', cancel);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('blur', cancel);
+      window.removeEventListener('pointerup', cancel);
+      window.removeEventListener('pointercancel', cancel);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, [board, roomData.turn, roomData.status, roomData.winner]);
+
   const onSquarePointerDown = (index, e) => {
     // Önceki etkileşimden kalmış olabilecek bayrağı temizle.
     suppressClickRef.current = false;
@@ -248,6 +289,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     const moves = getValidCheckersMoves(board, index, roomData.multiJumpIdx ?? null);
     dragRef.current = {
       from: index, pointerId: e.pointerId, moved: false,
+      board, turn: roomData.turn,
       startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY,
       hover: null, moves,
     };
@@ -287,6 +329,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
     // Sürüklemenin ardından tarayıcı bir `click` daha üretir; o, taşın
     // seçimini kapatıp kullanıcıyı şaşırtmasın diye yutulur.
     suppressClickRef.current = true;
+    if (d.board !== board || d.turn !== roomData.turn || !canPlayFrom(d.from)) return;
     const target = squareFromPoint(e.clientX, e.clientY);
     if (target === null || target === d.from) return; // tahta dışı / yerine bırakma
     const move = d.moves.find((m) => m.to === target);
@@ -344,6 +387,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('checkers.rematch.request');
     const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     if (isBot) {
@@ -354,6 +398,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   };
   const acceptRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('checkers.rematch.accept');
     const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     await updateRoom({
@@ -363,6 +408,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('checkers.rematch.reject');
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
@@ -390,6 +436,7 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
 
   return (
     <div className={`relative flex flex-col items-center w-full ${desktopFullscreenBoost ? '' : 'max-w-xl'} ${cardClass}`}>
+      {actionError && <div role="alert" className="w-full mb-3 p-3 rounded-lg bg-red-950/80 text-red-200 text-sm">{actionError}</div>}
       {isBot && !isSpectator && !boardFit && <div className="text-center text-xs text-slate-300 font-bold mb-3 tracking-widest uppercase flex items-center justify-center gap-1"><Bot className="w-4 h-4" /> BOTA KARŞI ({DIFFICULTY_LABELS[botDifficulty] || botDifficulty})</div>}
       {/* Telefon YATAY tam ekranda skor tablosu + durum yazısı TEK SATIRDA
           birleşir; artan alanın tamamı tahtaya gider (bkz. useBoardScale). */}
@@ -450,11 +497,18 @@ export default function CheckersGame({ roomData, roomCode, user, db, appId, leav
             return (
               <div
                 key={i}
+                data-checkers-cell={i}
+                role="button"
+                aria-label={`${i + 1}. kare${cell ? cell.color === 'w' ? ', beyaz taş' : ', siyah taş' : ', boş'}`}
+                aria-disabled={!draggableHere && !isValidMove}
+                tabIndex={draggableHere || isValidMove ? 0 : -1}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleSquareClickGuarded(i); } }}
                 onClick={() => handleSquareClickGuarded(i)}
                 onPointerDown={(e) => onSquarePointerDown(i, e)}
                 onPointerMove={onSquarePointerMove}
                 onPointerUp={onSquarePointerUp}
                 onPointerCancel={onSquarePointerCancel}
+                onLostPointerCapture={onSquarePointerCancel}
                 // Sürüklenebilir karelerde dokunmatik kaydırma kapatılır; aksi
                 // halde telefonda taşı sürüklemek sayfayı kaydırıyordu.
                 style={draggableHere ? { touchAction: 'none' } : undefined}
