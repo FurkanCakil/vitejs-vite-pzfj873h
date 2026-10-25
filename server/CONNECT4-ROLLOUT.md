@@ -1,6 +1,6 @@
 # Connect 4 sunucu geçişi
 
-25 Ekim 2026. Genel denetimin Connect 4 aşaması. Hazırlık ve yerel kabul testleri tamamlandı; canlı ayarlar açılıp gerçek üretim testleri geçmeden canlı güvenlik geçişi tamamlanmış sayılmaz.
+25–26 Ekim 2026. Genel denetimin Connect 4 aşaması. Hazırlık ve yerel kabul testleri tamamlandı; canlı ayarlar açılıp gerçek üretim testleri geçmeden canlı güvenlik geçişi tamamlanmış sayılmaz.
 
 ## Bulgular ve değişikliklerin nedeni
 
@@ -22,6 +22,10 @@ Mevcut iki kişilik oda yaşam döngüsü kullanılır: oluşturma, atomik eşle
 4. Eski Connect 4 odaları devralınmaz; yeni oda açılmalıdır. Güvensiz eski yola otomatik dönüş yapılmaz.
 
 Yeni IAM, kalıcı anahtar, ücretli plan, cron veya ayrı API işlevi gerekmez. Mevcut Production OIDC kimliği ve `/api/room-action` kullanılır. Preview erişimi genişletilmez.
+
+`f805bc9` ana dala gönderildi ve [kapalı ayarlı Production sürümü](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/68SvDKEQ6j43MY1GYQ2LxGieSMer) Ready oldu. Gerçek anonim kimliklerle Connect 4 oluşturma `server_not_enabled` döndü; mevcut XOX, Amiral ve Okey özel oda oluşturma/katılma/ayrılma ile yeni sayaç heartbeat/ayrılma geçti. Yalnız yeni özel test odaları kullanıldı ve normal ayrılmayla kapatıldı.
+
+26 Ekim: Yeni kural Firebase düzenleyicisinde taslak halinde; yayımlanmadı. İki yeni Connect 4 Production ayarı kaydedilmedi. Bu canlı geçişe özel açık kullanıcı onayı bekleniyor. Diğer oyunların canlı izinleri ve sayaç yazma yasağı değişmedi; hazırlık sürümü eski Connect 4 yolunu kullanmaya devam ediyor. Yerel testlerin geçmesi canlı hile riskinin kapandığı anlamına gelmez.
 
 ## Doğrulama
 
