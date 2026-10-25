@@ -9,6 +9,7 @@ import {
 import { BOT_UID, getBotColumn, DIFFICULTY_LABELS } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
 import useBoardScale from '../../hooks/useBoardScale.js';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 
 // Kullanıcı isteği: klasik sarı/kırmızı yerine KIRMIZI ve MAVİ oyuncu.
 // `connect4-disc-*` sınıfları .connect4-drop animasyonunun YANINDA aşağıdaki
@@ -22,7 +23,7 @@ export default function Connect4Game(props) {
   return <Connect4Board {...props} />;
 }
 
-function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
   // koşulsuz çağrılmalı.
   const { isPhone, isCompact } = useViewport();
@@ -47,9 +48,24 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
   const myColor = isPlayer1 ? 'red' : (isPlayer2 ? 'blue' : null);
   const isMyTurn = roomData.turn === user.uid && !isSpectator;
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const submittingRef = useRef(false);
+  const previousWinner = useRef(roomData.winner);
+  useEffect(() => {
+    if (sendAction && roomData.winner && !previousWinner.current && roomData.winner !== 'Draw') playSound('win');
+    previousWinner.current = roomData.winner;
+  }, [roomData.winner, sendAction]);
+  const submitServer = async (type, fields = {}) => {
+    if (submittingRef.current) return false;
+    submittingRef.current = true; setIsSubmitting(true); setActionError('');
+    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }); return true; }
+    catch (error) { setActionError(gameErrorMessage(error)); return false; }
+    finally { submittingRef.current = false; setIsSubmitting(false); }
+  };
   const [hoveredCol, setHoveredCol] = useState(null);
 
   const updateRoom = async (patch) => {
+    if (roomData.schemaVersion === 2) throw new Error('Server room requires a verified action');
     if (isBot) { setLocalRoomData((prev) => ({ ...prev, ...patch })); return; }
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
@@ -68,6 +84,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
     if (!isMyTurn || isSpectator || roomData.winner || roomData.status === 'abandoned' || isSubmitting) return;
     const row = findDropRow(board, col);
     if (row === null) { playSound('error'); return; } // sütun dolu
+    if (sendAction) { if (await submitServer('connect4.move', { column: col })) playSound('move'); return; }
 
     setIsSubmitting(true);
     try {
@@ -94,7 +111,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
         update.scores = { ...roomData.scores, [winnerUid]: (roomData.scores?.[winnerUid] || 0) + 1 };
       }
       await updateRoom(update);
-    } catch (err) { console.error(err); }
+    } catch (err) { setActionError(gameErrorMessage(err)); }
     finally { setIsSubmitting(false); }
   };
 
@@ -136,6 +153,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
 
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('connect4.rematch.request');
     if (isBot) {
       const nextStarter = roomData.startingPlayer === user.uid ? BOT_UID : user.uid;
       await updateRoom({
@@ -148,6 +166,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
   };
   const acceptRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('connect4.rematch.accept');
     const nextStarter = roomData.players.find((id) => id !== roomData.startingPlayer) || roomData.players[0];
     await updateRoom({
       board: createInitialConnect4Board(), turn: nextStarter, startingPlayer: nextStarter,
@@ -156,6 +175,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
   };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) return submitServer('connect4.rematch.reject');
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
@@ -174,7 +194,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
     else { statusMsg = isMyTurn ? 'Senin Sıran!' : 'Rakibin Sırası...'; statusColor = isMyTurn ? TEXT_CLASS[myColor] || 'text-indigo-400' : 'text-slate-400'; }
   }
 
-  const canDropInHover = isMyTurn && !roomData.winner && hoveredCol !== null && !isColumnFull(board, hoveredCol);
+  const canDropInHover = isMyTurn && roomData.status === 'playing' && !isSubmitting && !roomData.winner && hoveredCol !== null && !isColumnFull(board, hoveredCol);
 
   // Madde 4 (kullanıcı isteği): kazanan 4'lü dizinin üzerinden geçen görsel
   // bir bağlama çizgisi. Tahta responsive (sm/md/lg breakpoint'lerine göre
@@ -289,6 +309,7 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
       `}</style>
 
       {!boardFit && <h2 className="text-2xl font-bold mb-6 text-slate-200 z-10 tracking-widest drop-shadow-md">Connect 4</h2>}
+      {actionError && <div role="alert" className="w-full mb-3 p-3 rounded-lg bg-red-950/80 text-red-200 text-sm z-10">{actionError}</div>}
 
       <div className="w-full flex flex-col items-center z-10">
         {tightHeader ? (
@@ -332,10 +353,15 @@ function Connect4Board({ roomData, roomCode, user, db, appId, leaveRoom, isBot =
         <div ref={(el) => { boardRef.current = el; scaleBoardRef.current = el; }} style={boardStyle} className="connect4-board relative flex w-fit gap-0.5 sm:gap-1.5 md:gap-2 lg:gap-2.5 p-1.5 sm:p-3 md:p-4 rounded-2xl mx-auto z-10 max-w-full">
           {Array.from({ length: CONNECT4_COLS }, (_, col) => {
             const colFull = isColumnFull(board, col);
-            const clickable = isMyTurn && !roomData.winner && !colFull;
+            const clickable = isMyTurn && roomData.status === 'playing' && !isSubmitting && !roomData.winner && !colFull;
             return (
               <div
                 key={col}
+                role="button"
+                tabIndex={clickable ? 0 : -1}
+                aria-label={`${col + 1}. sütuna taş bırak`}
+                aria-disabled={!clickable}
+                onKeyDown={event => { if (clickable && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleColumnClick(col); } }}
                 onClick={() => handleColumnClick(col)}
                 onMouseEnter={() => setHoveredCol(col)}
                 onMouseLeave={() => setHoveredCol((c) => (c === col ? null : c))}

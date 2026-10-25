@@ -1,5 +1,7 @@
 # Sunucu güvenliği: XOX, Amiral Battı ve Okey geçişi
 
+25 Ekim 2026: Connect 4 sunucu/istemci hazırlığı kapalı iki ayrı ayarla eklendi. Yerelde 84 otomatik test ve 51 emülatör senaryosu / 57 sonuç geçti; canlı geçiş henüz doğrulanmadı. Kapsam, yayın sırası, performans etkisi ve kalan işler [CONNECT4-ROLLOUT.md](CONNECT4-ROLLOUT.md) içindedir.
+
 23 Ekim 2026: Sayaç doğrulanmış UID/zaman ve sabit 16 parçalı sunucu özetine canlıda geçti. `PRESENCE_API_ENABLED=true` ve `VITE_SERVER_PRESENCE_ENABLED=true` yalnız Production'da açık. Kullanıcının açık onayıyla eski `serverStatus` yazması da kapatıldı; gerçek anonim kimlikle 403 doğrulandı. Eski açık sekmeler yenilenmelidir. Yayın sırası, doğrulamalar, kota etkisi ve kalan sınırlar [PRESENCE-ROLLOUT.md](PRESENCE-ROLLOUT.md) içindedir. Güncel toplam 76 otomatik test ve 42 emülatör senaryosu / beş üst testle 47 sonuç geçti; aşağıdaki eski sayılar ilgili geçişin tarihsel sonucudur.
 
 23 Ekim 2026. Kullanıcının yetkisiyle `firestore.rollout.rules` canlıya yayımlandı; XOX ve Amiral Battı'nın önceki ayarlarına ek `OKEY_API_ENABLED=true` ve `VITE_SERVER_OKEY_ENABLED=true` yalnız Vercel Production ortamında açık. XOX `26a9f06`, Amiral Battı `5096257`, Okey `cb0e06f` ile sunucu akışına geçti; üç oyunun gerçek sunucu akışları doğrulandı. Okey için yeni IAM, kalıcı anahtar veya ücretli plan gerekmedi. Preview sunucusu üretim erişimini kullanamaz. Diğer oyunların ve eski odaların geniş izinleri bu aşamada korunuyor; tüm sitenin güvenlik geçişi tamamlanmış değildir.

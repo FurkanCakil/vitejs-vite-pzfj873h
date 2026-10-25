@@ -1,6 +1,7 @@
 import { createHash, randomInt, randomBytes } from 'node:crypto';
 import { requireAction } from './errors.js';
 import { applyXoxMove } from './games/xox.js';
+import { applyConnect4Move, freshConnect4 } from './games/connect4.js';
 import { freshBattle, validateFleet, applyBattleShot } from './games/battleship.js';
 import { validateAction } from './room-schema.js';
 import { executeOkeyTransaction } from './okey-rooms.js';
@@ -12,7 +13,8 @@ const live = (time, now) => Number.isFinite(time) && time <= now && now - time <
 const pair = players => createHash('sha256').update(JSON.stringify([...players].sort())).digest('hex');
 const matchFields = ['players', 'board', 'turn', 'startingPlayer', 'winner', 'winningLine', 'scores', 'rematchRequestedBy'];
 const battleFields = ['players', 'setupPhase', 'roundId', 'readyPlayers', 'shots', 'revealedShips', 'turn', 'startingPlayer', 'winner', 'scores', 'rematchRequestedBy'];
-const matchState = data => Object.fromEntries((data.gameType === 'amiralbatti' ? battleFields : matchFields).map(key => [key, data[key] ?? null]));
+const matchState = data => Object.fromEntries((data.gameType === 'amiralbatti' ? battleFields
+  : data.gameType === 'connect4' ? [...matchFields, 'lastMove'] : matchFields).map(key => [key, data[key] ?? null]));
 
 function pruneConnections(connections, now) {
   return Object.fromEntries(Object.entries(connections ?? {}).map(([uid, sessions]) => [uid,
@@ -22,6 +24,7 @@ function pruneConnections(connections, now) {
 function connected(connections, uid) { return Object.keys(connections[uid] ?? {}).length > 0; }
 function freshGame(players, scores, starter = players[0], game = 'xox', roundId) {
   if (game === 'amiralbatti') return freshBattle(players, scores, starter, roundId);
+  if (game === 'connect4') return freshConnect4(players, scores, starter);
   return { board: Array(9).fill(null), turn: starter, startingPlayer: starter, winner: null, winningLine: null,
     scores: Object.fromEntries(players.map(uid => [uid, scores?.[uid] ?? 0])), rematchRequestedBy: null };
 }
@@ -29,7 +32,8 @@ function freshGame(players, scores, starter = players[0], game = 'xox', roundId)
 // All public game data and server-only connection/receipt records are committed
 // together. No client-supplied identity, board, result or score is accepted.
 export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode,
-  { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true', okeyEnabled = process.env.OKEY_API_ENABLED === 'true' } = {}) {
+  { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true', okeyEnabled = process.env.OKEY_API_ENABLED === 'true',
+    connect4Enabled = process.env.CONNECT4_API_ENABLED === 'true' } = {}) {
   const action = validateAction(input);
   requireAction(typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid), 401, 'invalid_identity');
   const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -38,8 +42,8 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const actorRef = db.doc(`${root}/serverRoomActors/${uid}`);
   const rateRef = db.doc(`${root}/serverRateLimits/${uid}`);
-  const createAction = ['room.create', 'battleship.create', 'okey.create'].includes(action.type);
-  const matchAction = ['room.match', 'battleship.match', 'okey.match'].includes(action.type);
+  const createAction = ['room.create', 'battleship.create', 'okey.create', 'connect4.create'].includes(action.type);
+  const matchAction = ['room.match', 'battleship.match', 'okey.match', 'connect4.match'].includes(action.type);
   const candidateCode = createAction || matchAction ? codeSupplier() : null;
   const nextRoundId = randomBytes(12).toString('hex');
   if (candidateCode) requireAction(/^[A-Z0-9]{6}$/.test(candidateCode), 500, 'invalid_generated_code');
@@ -61,7 +65,8 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     let data;
     let connections;
     let creating = false;
-    let game = action.type.startsWith('okey.') ? 'okey101' : action.type.startsWith('battleship.') ? 'amiralbatti' : 'xox';
+    let game = action.type.startsWith('okey.') ? 'okey101' : action.type.startsWith('battleship.') ? 'amiralbatti'
+      : action.type.startsWith('connect4.') ? 'connect4' : 'xox';
     if (!createAction && !matchAction) {
       const [saved, presence] = await tx.getAll(roomRef(id), presenceRef(id));
       requireAction(saved.exists, 404, 'room_not_found');
@@ -75,11 +80,13 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       tx.set(rateRef, { windowStart: sameWindow ? rate.windowStart : now, count: count + 1 });
       return result;
     }
-    requireAction(['xox', 'amiralbatti'].includes(game) && !action.type.startsWith('okey.'), 409, 'unsupported_room');
+    requireAction(['xox', 'amiralbatti', 'connect4'].includes(game) && !action.type.startsWith('okey.'), 409, 'unsupported_room');
     requireAction(game !== 'amiralbatti' || battleshipEnabled, 503, 'server_not_enabled');
+    requireAction(game !== 'connect4' || connect4Enabled, 503, 'server_not_enabled');
     if (action.type.startsWith('xox.')) requireAction(game === 'xox', 409, 'unsupported_room');
     if (action.type.startsWith('battleship.')) requireAction(game === 'amiralbatti', 409, 'unsupported_room');
-    const queueRef = db.doc(`${root}/public/data/${game === 'xox' ? 'xoxLobby' : 'battleshipLobby'}/queue`);
+    if (action.type.startsWith('connect4.')) requireAction(game === 'connect4', 409, 'unsupported_room');
+    const queueRef = db.doc(`${root}/public/data/${{ xox: 'xoxLobby', amiralbatti: 'battleshipLobby', connect4: 'connect4Lobby' }[game]}/queue`);
     const touchesQueue = action.type.startsWith('room.') || createAction || matchAction;
     const queue = touchesQueue ? ((await tx.get(queueRef)).data()?.entries ?? []) : [];
     let entries = queue.filter(entry => live(entry.updatedAt, now));
@@ -199,7 +206,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       requireAction(data.abandonReason === 'left' || !connected(connections, data.abandonedBy), 409, 'player_reconnected');
       data.status = 'closed'; data.closedBy = uid; changed = true;
     }
-    if (action.type.startsWith('xox.') || (action.type.startsWith('battleship.') && !createAction && !matchAction)) {
+    if (action.type.startsWith('xox.') || ((action.type.startsWith('battleship.') || action.type.startsWith('connect4.')) && !createAction && !matchAction)) {
       requireAction(player, 403, 'not_a_player');
       // Closed tabs or deliberately departed seats cannot continue sending
       // moves using a still-valid Firebase token.
@@ -207,6 +214,9 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     }
     if (action.type === 'xox.move') {
       Object.assign(data, applyXoxMove(data, uid, action.cell)); changed = true;
+    }
+    if (action.type === 'connect4.move') {
+      Object.assign(data, applyConnect4Move(data, uid, action.column)); changed = true;
     }
     if (action.type === 'battleship.ready') {
       requireAction(data.status === 'playing' && data.setupPhase && !data.readyPlayers[uid], 409, 'setup_locked');

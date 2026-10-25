@@ -1,5 +1,7 @@
 # Oyun Portalı: güvenlik geçiş planı
 
+25 Ekim 2026 — Connect 4 hazırlığı: İstemciden tahta/sonuç/puan yazılması yerine yalnız sütun alanını kabul eden sunucu hamlesi ve mevcut güvenli oda akışına istemci bağlantısı eklendi. Ayarlar varsayılan kapalı; canlı geçiş henüz tamamlanmadı. 84 otomatik test ve 51 emülatör senaryosu / 57 sonuç geçti. Yayın sırası ve kalan sınırlar `server/CONNECT4-ROLLOUT.md` içindedir.
+
 Güncel durum — 23 Ekim 2026: Yeni XOX, Amiral Battı ve Okey odaları ile ortak oyuncu sayacı sunucu doğrulamasına geçti. Sayaç geçişi `0c56996` ile Production Ready oldu; iki ayar yalnız Production'da açıldı ve kullanıcının açık onayıyla eski `serverStatus` yazması kapatıldı. Gerçek anonim kimliklerle eski/yeni sayaç yazma reddi, özel kayıt gizliliği, çoklu sekme ve geç heartbeat kontrolü geçti. Güncel toplam 76 otomatik test, 42 emülatör senaryosu / 47 sonuçtur. Sayaç aşamasının kanonik kaydı `server/PRESENCE-ROLLOUT.md` içindedir. Aşağıdaki aşama kayıtları tarihsel sonuçları korur. Connect 4, Dama, Satranç, Tavla ve legacy oda izinleri nedeniyle tüm sitenin güvenlik geçişi tamamlanmadı.
 
 22 Ekim 2026. Kullanıcının açık onayıyla XOX ve Amiral Battı için aşamalı canlı Firebase kuralları ve Production geçiş ayarları açıldı. Yeni odalar sunucuda doğrulanıyor; gerçek canlı kimliklerle hamle, skor, rövanş, özel filo gizliliği ve yetkisiz erişim kontrolleri geçti. Diğer oyunların ve eski odaların geniş izinleri korunuyor. Uygulanan kısmın ve eksiklerin ayrıntısı `server/README.md` içindedir.
