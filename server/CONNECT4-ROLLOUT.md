@@ -1,6 +1,6 @@
 # Connect 4 sunucu geçişi
 
-25–26 Ekim 2026. Genel denetimin Connect 4 aşaması. Hazırlık ve yerel kabul testleri tamamlandı; canlı ayarlar açılıp gerçek üretim testleri geçmeden canlı güvenlik geçişi tamamlanmış sayılmaz.
+25–26 Ekim 2026. Genel denetimin Connect 4 aşaması kullanıcının açık onayıyla canlıya açıldı; yeni odaların sunucu hamle/skor doğrulaması ve gerçek üretim kabul testleri tamamlandı. Legacy odalar ve kalan oyunlar bu aşamayla güvenli sayılmaz.
 
 ## Bulgular ve değişikliklerin nedeni
 
@@ -25,7 +25,13 @@ Yeni IAM, kalıcı anahtar, ücretli plan, cron veya ayrı API işlevi gerekmez.
 
 `f805bc9` ana dala gönderildi ve [kapalı ayarlı Production sürümü](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/68SvDKEQ6j43MY1GYQ2LxGieSMer) Ready oldu. Gerçek anonim kimliklerle Connect 4 oluşturma `server_not_enabled` döndü; mevcut XOX, Amiral ve Okey özel oda oluşturma/katılma/ayrılma ile yeni sayaç heartbeat/ayrılma geçti. Yalnız yeni özel test odaları kullanıldı ve normal ayrılmayla kapatıldı.
 
-26 Ekim: Yeni kural Firebase düzenleyicisinde taslak halinde; yayımlanmadı. İki yeni Connect 4 Production ayarı kaydedilmedi. Bu canlı geçişe özel açık kullanıcı onayı bekleniyor. Diğer oyunların canlı izinleri ve sayaç yazma yasağı değişmedi; hazırlık sürümü eski Connect 4 yolunu kullanmaya devam ediyor. Yerel testlerin geçmesi canlı hile riskinin kapandığı anlamına gelmez.
+26 Ekim: Kullanıcı Connect 4 geçişini canlıya açmayı açıkça onayladı. Yalnız salt okunur yeni kuyruk kuralı 00:04'te yayımlandı; `CONNECT4_API_ENABLED=true` ve `VITE_SERVER_CONNECT4_ENABLED=true` yalnız Production ortamında Config olarak kaydedildi (Preview/Development seçilmedi). Son kaynak güncel ayarlarla yeniden derlendi ve [açık Production sürümü](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/14Py8TQY9XDBnq4W2CNVCpZsRqYi) Ready oldu. Diğer oyunların canlı izinleri ve sayaç yazma yasağı korundu. Eski Connect 4 odaları yerine yeni oda açılmalıdır.
+
+## Canlı kabul sonucu — 26 Ekim 2026
+
+Canlı ana uygulama dosyasının SHA-256 özeti yerel açık üretim çıktısıyla eşleşti. Gerçek anonim kimliklerle aynı oluşturma isteği aynı odayı döndürdü; sahte skor, sıra dışı ve seyirci hamleleri reddedildi. Aynı kazandıran isteğin eşzamanlı tekrarı yedi taş ve yalnız bir puan üretti. Rövanş kendi isteğini kendisinin kabul etmesini reddetti; rakip onayı puanı koruyarak boş tahta ve mavi başlangıç verdi. Oturumsuz/üye olmayan oda okuma, oda listeleme, sunucu işlem/bağlantı kayıtlarını okuma ve doğrudan oda/kuyruk yazma 403 döndü. Kimlikli kuyruk okuması yetkisi geçti (kuyruk henüz oluşturulmadığında 404; bu izin hatası değildir).
+
+Gerçek canlı tarayıcı ikinci özel test oyuncusuna katıldı, karşılıklı hamle yaptı ve yenilemeyle aynı iki taşa döndü. Maç 1:0 bitti; arayüzden rövanş isteme/rakip onayı sonrası boş tahta, korunmuş skor ve mavi oyuncunun ilk hamlesi doğrulandı. Gözlenen konsolda hata/uyarı yoktu. Yalnız kendi yeni özel test odaları kullanıldı; tarayıcı ve sunucu test oyuncuları normal ayrılmayla çıkınca her test odasının kapalı durumu doğrulandı. Geçici yerel geliştirme sunucusu ve test sekmeleri kapatıldı.
 
 ## Doğrulama
 
@@ -41,4 +47,4 @@ Yeni IAM, kalıcı anahtar, ücretli plan, cron veya ayrı API işlevi gerekmez.
 2. **Düşük:** Oyun paketi ayrı yüklenmeye devam eder; yeni açık ana paket 178,14 KB gzip, önceki sayaç sürümü 178,04 KB idi. Tahta en çok 42 hücreyle sınırlıdır; büyük arama/yeniden yazım eklenmedi.
 3. **Ek maliyet:** Her hamle token doğrulama ve sunucu transaction'ı gerektirir; eski doğrudan istemci yazmasına göre ek okuma/çağrı vardır. Toplam kota azalması iddia edilmez.
 
-Canlı sonuç henüz bekliyor. Dama, Satranç, Tavla ve legacy oda izinleri, anonim hesap yenileyerek hız sınırını aşma, ek token iptal kontrolü, bağımlılık uyarıları ve gerçek cihaz/yük testleri genel denetimde açıktır.
+Yeni Connect 4 odalarının canlı geçişi tamamlandı. Dama, Satranç, Tavla ve legacy oda izinleri, anonim hesap yenileyerek hız sınırını aşma, ek token iptal kontrolü, bağımlılık uyarıları ve gerçek cihaz/yük testleri genel denetimde açıktır.
