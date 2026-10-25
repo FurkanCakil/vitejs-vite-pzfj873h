@@ -1,6 +1,6 @@
-# Sunucu güvenliği: XOX, Amiral Battı ve Okey geçişi
+# Sunucu güvenliği ve oyun geçişleri
 
-26 Ekim 2026: Dama için sunucu/istemci hazırlığı varsayılan kapalı iki ayarla eklendi. 92 otomatik test, 60 emülatör senaryosu / 67 sonuç geçti; arayüzde tıklama/sürükleme, hazırlanmış taç/zincir konumu, yenileme, rövanş, eşleşme ve 320/390 ölçümleri doğrulandı. Canlı açılış henüz tamamlanmadı. Kapsam ve onay sonrası yayın sırası [CHECKERS-ROLLOUT.md](CHECKERS-ROLLOUT.md) içindedir.
+26 Ekim 2026: Dama için sunucu/istemci hazırlığı varsayılan kapalı iki ayarla eklendi. 92 otomatik test, 60 emülatör senaryosu / 67 sonuç geçti; arayüzde tıklama/sürükleme, hazırlanmış taç/zincir konumu, yenileme, rövanş, eşleşme ve 320/390 ölçümleri doğrulandı. `10fb997` kapalı ayarlarla Production Ready oldu; mevcut dört oyun ve sayaç canlı temel akışları geçti. Dama canlı açılışı için özel kullanıcı onayı bekleniyor. Kapsam ve yayın sırası [CHECKERS-ROLLOUT.md](CHECKERS-ROLLOUT.md) içindedir.
 
 26 Ekim 2026: Kullanıcının açık onayıyla Connect 4 yeni odaları sunucu akışına geçti; salt okunur kuyruk kuralı ve iki ayar yalnız Production'da açıldı. Yerelde 84 otomatik test ve 51 emülatör senaryosu / 57 sonuç geçti. Kapalı hazırlıkta mevcut üç oyun/sayaç; açık sürümde gerçek kimliklerle hamle/tek puan/rövanş/erişim reddi ve canlı tarayıcıda yenileme/tam maç/rövanş doğrulandı. Eski Connect 4 odaları devralınmaz, yeni oda gerekir. Kapsam, yayın kanıtı, performans etkisi ve kalan işler [CONNECT4-ROLLOUT.md](CONNECT4-ROLLOUT.md) içindedir.
 

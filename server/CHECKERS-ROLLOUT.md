@@ -25,6 +25,12 @@ Mevcut güvenli iki kişilik oda yaşam döngüsü kullanılır: oluşturma/kat�
 
 Yeni IAM, kalıcı anahtar, ücretli plan, cron veya ayrı API işlevi gerekmez; mevcut Production OIDC kimliği ve `/api/room-action` kullanılır. Preview erişimi genişletilmez.
 
+## Canlı hazırlık kontrolü — 26 Ekim 2026
+
+`10fb997` ana dala gönderildi ve [kapalı ayarlı Production](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/5xDnGchjpfWR5jcHHwEEHkRjhNYP) Ready oldu. Gerçek yeni anonim test kimlikleriyle Dama oluşturma `server_not_enabled` döndü. Mevcut XOX, Amiral, Okey ve Connect 4 özel oda oluşturma/katılma/normal ayrılma ile sayaç heartbeat/ayrılma akışları geçti. Yalnız kendi yeni özel test odaları kullanıldı.
+
+Mevcut canlı kurallar kaynakla karşılaştırıldı; yalnız yeni `checkersLobby/queue` bloğu eklenen taslak Firebase düzenleyicisine kondu, yayımlanmadı. Vercel'de iki Dama ayarı mevcut değil; özellik varsayılan kapalı kalır. Canlı oda modelinin/kuyruk okuma izninin değişmesi ve eski Dama odalarının devralınmaması nedeniyle bu geçişe özel kullanıcı onayı bekleniyor. Yerel testlerin geçmesi mevcut canlı Dama hile riskinin kapandığı anlamına gelmez.
+
 ## Doğrulama
 
 - 92 otomatik test geçti; normal komutta emülatör gerektiren yedi üst test atlanır.
