@@ -48,6 +48,18 @@ const fields = {
   'chess.rematch.request': [...room, ...version],
   'chess.rematch.accept': [...room, ...version],
   'chess.rematch.reject': [...room, ...version],
+  'tavla.create': [...session, 'nickname', 'isPublic'],
+  'tavla.match': [...session, 'nickname'],
+  'tavla.roll': [...room, ...version],
+  'tavla.opening.reset': [...room, ...version],
+  'tavla.move': [...room, ...version, 'from', 'to', 'die'],
+  'tavla.undo': [...room, ...version],
+  'tavla.cube.request': [...room, ...version],
+  'tavla.cube.accept': [...room, ...version],
+  'tavla.cube.reject': [...room, ...version],
+  'tavla.rematch.request': [...room, ...version],
+  'tavla.rematch.accept': [...room, ...version],
+  'tavla.rematch.reject': [...room, ...version],
   'battleship.create': [...session, 'nickname', 'isPublic'],
   'battleship.match': [...session, 'nickname'],
   'battleship.ready': [...room, 'roundId', 'fleet'],
@@ -70,7 +82,9 @@ export function validateAction(input) {
   if (keys.includes('expectedVersion')) requireAction(Number.isSafeInteger(input.expectedVersion) && input.expectedVersion >= 0 && input.expectedVersion < Number.MAX_SAFE_INTEGER, 400, 'invalid_version');
   if (keys.includes('cell')) requireAction(Number.isInteger(input.cell) && input.cell >= 0 && input.cell < 9, 400, 'invalid_cell');
   if (keys.includes('column')) requireAction(Number.isInteger(input.column) && input.column >= 0 && input.column < 7, 400, 'invalid_column');
-  for (const key of ['from', 'to']) if (keys.includes(key)) requireAction(Number.isInteger(input[key]) && input[key] >= 0 && input[key] < 64, 400, 'invalid_cell');
+  for (const key of ['from', 'to']) if (keys.includes(key)) requireAction(Number.isInteger(input[key])
+    && (input.type === 'tavla.move' ? input[key] >= -1 && input[key] <= (key === 'from' ? 23 : 24) : input[key] >= 0 && input[key] < 64), 400, 'invalid_cell');
+  if (keys.includes('die')) requireAction(Number.isInteger(input.die) && input.die >= 1 && input.die <= 6, 400, 'invalid_dice');
   if (keys.includes('promotion')) requireAction(input.promotion === null || ['q', 'r', 'b', 'n'].includes(input.promotion), 400, 'invalid_promotion');
   if (keys.includes('nickname')) requireAction(typeof input.nickname === 'string' && input.nickname.trim().length >= 1 && input.nickname.length <= 15 && [...input.nickname].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 400, 'invalid_nickname');
   if (keys.includes('isPublic')) requireAction(typeof input.isPublic === 'boolean', 400, 'invalid_visibility');

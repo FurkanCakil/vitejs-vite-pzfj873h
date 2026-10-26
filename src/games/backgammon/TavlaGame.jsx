@@ -3,12 +3,16 @@ import { Users, Loader2, X, Check, Crown, ArrowUpDown, Undo2, Bot } from 'lucide
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { rollDie, createInitialBoard, applyMove, getStrictValidMoves } from './logic.js';
+import { remainingTavlaDice, tavlaWinPoints } from './state.js';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 import { BOT_UID, DIFFICULTY_LABELS, shouldOfferDouble, shouldAcceptDouble } from './bot.js';
 import { useBackgammonBot } from './backgammonEngine.js';
 import useViewport from '../../hooks/useViewport.js';
 import useBoardScale from '../../hooks/useBoardScale.js';
 
-export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+const EMPTY_DICE = Object.freeze([]);
+
+export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
@@ -33,12 +37,14 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
 
   const updateRoom = async (patch) => {
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
+    if (roomData.schemaVersion === 2) throw new Error('Server room requires a verified action');
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
 
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [gameToast, setGameToast] = useState(null); 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const pendingRef = useRef(false);
   const [spectatorFlipped, setSpectatorFlipped] = useState(false);
   
   const toastTimeoutRef = useRef(null);
@@ -49,33 +55,36 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   };
   useEffect(() => { return () => { if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current); }; }, []);
 
+  const submitServer = async (type, fields = {}) => {
+    if (!sendAction || pendingRef.current || isSpectator) return false;
+    pendingRef.current = true; setIsSubmitting(true);
+    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }); return true; }
+    catch (error) { showToast(gameErrorMessage(error)); return false; }
+    finally { pendingRef.current = false; setIsSubmitting(false); }
+  };
+  const lastWinnerRef = useRef(roomData.winner);
+  useEffect(() => {
+    if (sendAction && roomData.winner && !lastWinnerRef.current) playSound('win');
+    lastWinnerRef.current = roomData.winner;
+  }, [roomData.winner, sendAction]);
+  useEffect(() => { setSelectedPoint(null); }, [roomData.turn, roomData.phase, roomData.board, roomData.status]);
+
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
   const p1Score = roomData.scores?.[p1Uid] || 0; const p2Score = roomData.scores?.[p2Uid] || 0;
   const p1Color = roomData.playerColors?.[p1Uid] || 'white'; const p2Color = roomData.playerColors?.[p2Uid] || 'black';
 
   const board = useMemo(() => {
-    // Tavla tahtası iç içe dizilerden oluştuğu için derin kopyalama (Deep Copy) zorunludur.
-    if (!roomData.board || !Array.isArray(roomData.board) || roomData.board.length !== 24) {
-        return createInitialBoard();
-    }
-    // Sadece destekleyen modern tarayıcılarda structuredClone, yoksa klasik JSON kopyalama
-    try {
-        return structuredClone(roomData.board);
-    } catch (e) {
-        return JSON.parse(JSON.stringify(roomData.board));
-    }
+    // applyMove returns a new board; rendering never mutates the snapshot.
+    return Array.isArray(roomData.board) && roomData.board.length === 24 ? roomData.board : createInitialBoard();
  }, [roomData.board]);
   
-  const dice = roomData.dice || []; const usedDice = roomData.usedDice || [];
+  const dice = roomData.dice || EMPTY_DICE; const usedDice = roomData.usedDice || EMPTY_DICE;
   const barW = roomData.bar?.white || 0; const barB = roomData.bar?.black || 0;
   const borneW = roomData.borneOff?.white || 0; const borneB = roomData.borneOff?.black || 0;
   
-  const diceStr = dice.join(','); const usedDiceStr = usedDice.join(',');
   const remainingDice = useMemo(() => {
-    const d = [...dice]; const u = [...usedDice];
-    for (const v of u) { const i = d.indexOf(v); if (i !== -1) d.splice(i, 1); }
-    return d;
-  }, [diceStr, usedDiceStr]);
+    return remainingTavlaDice(dice, usedDice);
+  }, [dice, usedDice]);
 
   const remainingDiceStr = remainingDice.join(',');
   const validMoves = useMemo(() => {
@@ -83,7 +92,7 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
       return getStrictValidMoves(board, myColor, remainingDice, {white: barW, black: barB}, {white: borneW, black: borneB});
     }
     return [];
-  }, [isMyTurn, myPhase, remainingDiceStr, board, myColor, barW, barB, borneW, borneB]);
+  }, [isMyTurn, myPhase, remainingDice, board, myColor, barW, barB, borneW, borneB]);
 
   const validFromPoints = new Set(validMoves.map(m => m.from));
   const validToPoints = selectedPoint !== null ? new Set(validMoves.filter(m => m.from === selectedPoint).map(m => m.to)) : new Set();
@@ -91,7 +100,9 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   const canBearOff = validToPoints.has(myColor === 'white' ? 24 : -1);
 
   const handleRollDice = async () => {
-    if (isSubmitting || isSpectator || roomData.winner) return;
+    if (pendingRef.current || isSubmitting || isSpectator || roomData.winner || roomData.status !== 'playing' || roomData.cubeOfferBy) return;
+    if (sendAction) { if (await submitServer('tavla.roll')) playSound('dice'); return; }
+    pendingRef.current = true;
     setIsSubmitting(true); playSound('dice');
     try {
       if (myPhase === 'opening') {
@@ -162,7 +173,7 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
         });
       }
     } catch (err) { showToast("Ağ hatası: Zar atılamadı."); }
-    finally { setIsSubmitting(false); }
+    finally { pendingRef.current = false; setIsSubmitting(false); }
   };
 
   // Açılış zarları EŞİT çıkarsa sıfırlanıp yeniden atılır.
@@ -182,11 +193,13 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
      if (myPhase === 'opening' && roomData.openingRolls?.p1 && roomData.openingRolls?.p2 && roomData.openingRolls.p1 === roomData.openingRolls.p2) {
          showToast("Zarlar eşit! Tekrar atılacak.");
          const timer = setTimeout(() => {
+             if (isSpectator) return;
+             if (sendAction) { void submitServer('tavla.opening.reset'); return; }
              updateRoom({ openingRolls: { p1: null, p2: null } }).catch(()=>{});
          }, isRoomHost ? 1500 : 3000);
          return () => clearTimeout(timer);
      }
-  }, [roomData.openingRolls?.p1, roomData.openingRolls?.p2, myPhase, roomCode, appId, db, isRoomHost]);
+  }, [roomData.openingRolls?.p1, roomData.openingRolls?.p2, myPhase, roomCode, appId, db, isRoomHost, isSpectator, sendAction, roomData.version]);
 
   // ============================================================
   // BOT OTOMASYONU (yalnızca isBot=true iken çalışır)
@@ -296,22 +309,12 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
 
         if (curBorneOff[botColor] >= 15) {
           playSound('win');
-          const oppColor = botColor === 'white' ? 'black' : 'white';
-          let pointsWon = 1;
-          if (curBorneOff[oppColor] === 0) {
-            let hasBackgammon = curBar[oppColor] > 0;
-            if (!hasBackgammon) {
-              const mS = botColor === 'white' ? 18 : 0; const mE = botColor === 'white' ? 23 : 5;
-              for (let i = mS; i <= mE; i++) { if (curBoard[i]?.color === oppColor) hasBackgammon = true; }
-            }
-            pointsWon = hasBackgammon ? 3 : 2;
-          }
-          const finalScore = (roomData.scores?.[BOT_UID] || 0) + (pointsWon * (roomData.cubeValue || 1));
+          const finalScore = (roomData.scores?.[BOT_UID] || 0) + tavlaWinPoints(curBoard, curBar, curBorneOff, botColor, roomData.cubeValue || 1);
           await updateRoom({ board: curBoard, bar: curBar, borneOff: curBorneOff, dice, usedDice: newUsedDice, winner: BOT_UID, scores: { ...roomData.scores, [BOT_UID]: finalScore }, phase: 'rolling', turn: null, cubeOfferBy: null });
           return;
         }
 
-        const remaining = (() => { const d = [...dice]; for (const v of newUsedDice) { const i = d.indexOf(v); if (i !== -1) d.splice(i, 1); } return d; })();
+        const remaining = remainingTavlaDice(dice, newUsedDice);
         const nextTurnUid = roomData.players.find(id => id !== BOT_UID) || null;
         if (remaining.length === 0) {
           await updateRoom({ board: curBoard, bar: curBar, borneOff: curBorneOff, dice, usedDice: newUsedDice, phase: 'rolling', turn: nextTurnUid });
@@ -352,7 +355,7 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   }, [isBot, roomData.cubeOfferBy, roomData.winner]);
 
   const handlePointClick = async (pointIdx) => {
-    if (!isMyTurn || myPhase !== 'moving' || isSubmitting) return;
+    if (!isMyTurn || myPhase !== 'moving' || pendingRef.current || isSubmitting || roomData.winner || roomData.status !== 'playing' || roomData.cubeOfferBy) return;
 
     if (selectedPoint === null) {
       const myBarCount = myColor === 'white' ? barW : barB;
@@ -365,29 +368,26 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
       if (movesForFrom.length === 0) {
         if (validFromPoints.has(pointIdx)) setSelectedPoint(pointIdx); else setSelectedPoint(null); return;
       }
-      setIsSubmitting(true);
+      const move = movesForFrom.sort((a, b) => a.die - b.die)[0];
+      if (sendAction) {
+        const from = selectedPoint; setSelectedPoint(null);
+        if (await submitServer('tavla.move', { from, to: targetIdx, die: move.die })) {
+          playSound((board[targetIdx]?.color && board[targetIdx].color !== myColor) ? 'capture' : 'move');
+        }
+        return;
+      }
+      pendingRef.current = true; setIsSubmitting(true);
       try {
-        const move = movesForFrom.sort((a, b) => a.die - b.die)[0];
         const { board: newBoard, bar: newBar, borneOff: newBorneOff } = applyMove(board, {white: barW, black: barB}, {white: borneW, black: borneB}, myColor, selectedPoint, targetIdx);
         playSound((board[targetIdx] && board[targetIdx].color !== null && board[targetIdx].color !== myColor) ? 'capture' : 'move');
 
         const newUsedDice = [...usedDice, move.die];
-        const newRemainingDice = (() => { const d = [...dice]; const u = [...newUsedDice]; for (const v of u) { const i = d.indexOf(v); if (i !== -1) d.splice(i, 1); } return d; })();
+        const newRemainingDice = remainingTavlaDice(dice, newUsedDice);
         setSelectedPoint(null);
 
         if (newBorneOff[myColor] >= 15) {
           playSound('win');
-          const oppColor = myColor === 'white' ? 'black' : 'white';
-          let pointsWon = 1;
-          if (newBorneOff[oppColor] === 0) {
-             let hasBackgammon = newBar[oppColor] > 0;
-             if (!hasBackgammon) {
-                 const mS = myColor === 'white' ? 18 : 0; const mE = myColor === 'white' ? 23 : 5;
-                 for(let i=mS; i<=mE; i++) { if (newBoard[i]?.color === oppColor) hasBackgammon = true; }
-             }
-             pointsWon = hasBackgammon ? 3 : 2; 
-          }
-          const finalScore = (roomData.scores?.[user.uid] || 0) + (pointsWon * (roomData.cubeValue || 1));
+          const finalScore = (roomData.scores?.[user.uid] || 0) + tavlaWinPoints(newBoard, newBar, newBorneOff, myColor, roomData.cubeValue || 1);
           await updateRoom({ board: newBoard, bar: newBar, borneOff: newBorneOff, dice, usedDice: newUsedDice, winner: user.uid, scores: { ...roomData.scores, [user.uid]: finalScore }, phase: 'rolling', turn: null, cubeOfferBy: null });
           return;
         }
@@ -405,13 +405,14 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
             await updateRoom({ board: newBoard, bar: newBar, borneOff: newBorneOff, dice, usedDice: newUsedDice, phase: 'moving', turn: user.uid });
           }
         }
-      } catch(err) { showToast("Hamle yapılamadı."); } finally { setIsSubmitting(false); }
+      } catch(err) { showToast("Hamle yapılamadı."); } finally { pendingRef.current = false; setIsSubmitting(false); }
     }
   };
 
   const handleUndoMove = async () => {
-    if (!isMyTurn || myPhase !== 'moving' || isSubmitting || !roomData.initialTurnState) return;
-    setIsSubmitting(true);
+    if (!isMyTurn || myPhase !== 'moving' || pendingRef.current || isSubmitting || !roomData.initialTurnState || !usedDice.length || roomData.winner || roomData.status !== 'playing' || roomData.cubeOfferBy) return;
+    if (sendAction) { if (await submitServer('tavla.undo')) setSelectedPoint(null); return; }
+    pendingRef.current = true; setIsSubmitting(true);
     try {
         await updateRoom({
             board: roomData.initialTurnState.board,
@@ -421,27 +422,29 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
         });
         setSelectedPoint(null);
     } catch(e) { showToast("Geri alınamadı."); }
-    finally { setIsSubmitting(false); }
+    finally { pendingRef.current = false; setIsSubmitting(false); }
   };
 
   const handleCubeOffer = async () => {
-     if (!isMyTurn || myPhase !== 'rolling' || roomData.winner || isSubmitting) return;
+     if (!isMyTurn || myPhase !== 'rolling' || roomData.winner || pendingRef.current || isSubmitting || roomData.cubeOfferBy || roomData.status !== 'playing') return;
+     if (sendAction) { await submitServer('tavla.cube.request'); return; }
      if (roomData.cubeOwner !== null && roomData.cubeOwner !== user.uid) { showToast("Küp rakipte!"); return; }
-     setIsSubmitting(true);
+     pendingRef.current = true; setIsSubmitting(true);
      try { await updateRoom({ cubeOfferBy: user.uid }); }
-     catch(err) { showToast("Küp teklif edilemedi."); } finally { setIsSubmitting(false); }
+     catch(err) { showToast("Küp teklif edilemedi."); } finally { pendingRef.current = false; setIsSubmitting(false); }
   };
 
   const answerCube = async (accept) => {
-     if (isSpectator || roomData.cubeOfferBy === user.uid) return;
-     setIsSubmitting(true);
+     if (isSpectator || pendingRef.current || isSubmitting || !roomData.cubeOfferBy || roomData.cubeOfferBy === user.uid || roomData.winner || roomData.status !== 'playing') return;
+     if (sendAction) { await submitServer(accept ? 'tavla.cube.accept' : 'tavla.cube.reject'); return; }
+     pendingRef.current = true; setIsSubmitting(true);
      try {
        if (accept) { await updateRoom({ cubeValue: (roomData.cubeValue || 1) * 2, cubeOwner: user.uid, cubeOfferBy: null }); }
        else {
          playSound('win'); const oppUid = roomData.cubeOfferBy; const finalScore = (roomData.scores?.[oppUid] || 0) + (roomData.cubeValue || 1);
          await updateRoom({ winner: oppUid, scores: { ...roomData.scores, [oppUid]: finalScore }, cubeOfferBy: null, turn: null });
        }
-     } catch(err) { showToast("Hata oluştu."); } finally { setIsSubmitting(false); }
+     } catch(err) { showToast("Hata oluştu."); } finally { pendingRef.current = false; setIsSubmitting(false); }
   };
   
   const handleBearOffClick = async () => { if (!isMyTurn || myPhase !== 'moving' || selectedPoint === null) return; await handlePointClick(myColor === 'white' ? 24 : -1); };
@@ -453,12 +456,14 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
   };
   const requestRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) { await submitServer('tavla.rematch.request'); return; }
     if (isBot) { await performRematchReset(); return; }
     await updateRoom({ rematchRequestedBy: user.uid });
   };
-  const acceptRematch = async () => { if (isSpectator) return; await performRematchReset(); };
+  const acceptRematch = async () => { if (isSpectator) return; if (sendAction) { await submitServer('tavla.rematch.accept'); return; } await performRematchReset(); };
   const rejectRematch = async () => {
     if (isSpectator) return;
+    if (sendAction) { await submitServer('tavla.rematch.reject'); return; }
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
   };
@@ -490,7 +495,11 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
     const isDark = (isTop ? topPoints.indexOf(pointIdx) : bottomPoints.indexOf(pointIdx)) % 2 === 0;
     const clickable = isMyTurn && myPhase === 'moving' && (!((myColor === 'white' ? barW : barB) > 0) || selectedPoint === -1);
     return (
-      <div key={pointIdx} onClick={() => clickable && handlePointClick(pointIdx)} className={`relative flex-1 flex flex-col items-center h-full group ${isValidFrom || isValidTo ? 'cursor-pointer' : 'cursor-default'}`}>
+      <div key={pointIdx} role="button" tabIndex={clickable ? 0 : -1}
+        aria-label={`Nokta ${pointIdx + 1}: ${pt.count ? `${pt.count} ${pt.color === 'white' ? 'beyaz' : 'siyah'} pul` : 'boş'}`}
+        aria-disabled={!clickable} aria-pressed={selectedPoint === pointIdx}
+        onKeyDown={event => { if (clickable && ['Enter', ' '].includes(event.key)) { event.preventDefault(); void handlePointClick(pointIdx); } }}
+        onClick={() => clickable && handlePointClick(pointIdx)} className={`relative flex-1 flex flex-col items-center h-full group ${isValidFrom || isValidTo ? 'cursor-pointer' : 'cursor-default'}`}>
         <svg preserveAspectRatio="none" viewBox="0 0 100 100" className={`absolute inset-0 w-full h-full transition-all ${selectedPoint === pointIdx ? 'opacity-80' : 'opacity-60'} ${isValidTo ? 'drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]' : ''}`}>
           <polygon points={isTop ? "0,0 100,0 50,100" : "0,100 100,100 50,0"} fill={isValidTo ? '#10b981' : (isDark ? '#7f1d1d' : '#475569')} />
         </svg>
@@ -595,11 +604,11 @@ export default function TavlaGame({ roomData, roomCode, user, db, appId, leaveRo
       <div ref={boardRef} style={boardStyle} className="w-full flex flex-col items-center gap-2">
       <div className="flex flex-wrap items-center justify-center gap-4 bg-slate-900/80 rounded-xl px-4 sm:px-6 py-3 border border-slate-700 shadow-inner min-h-[64px]">
         {myPhase === 'opening' ? (
-           <div className="flex gap-8 items-center text-center">
-              <div><div className="text-xs text-slate-400 mb-1">{whiteName}</div>{renderDie(roomData.openingRolls?.p1)}</div>
+           <div className="flex w-full flex-wrap gap-3 sm:gap-8 items-center justify-center text-center">
+              <div className="min-w-0 max-w-[90px]"><div className="text-xs text-slate-400 mb-1 break-words">{whiteName}</div>{renderDie(roomData.openingRolls?.p1)}</div>
               <div className="text-slate-500 font-bold text-sm">VS</div>
-              <div><div className="text-xs text-slate-400 mb-1">{blackName}</div>{renderDie(roomData.openingRolls?.p2)}</div>
-              {!isSpectator && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'] && ( <button onClick={handleRollDice} disabled={isSubmitting} className="ml-4 bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded-lg font-bold text-sm transition-colors shadow-lg text-white disabled:opacity-50">Zar At</button> )}
+              <div className="min-w-0 max-w-[90px]"><div className="text-xs text-slate-400 mb-1 break-words">{blackName}</div>{renderDie(roomData.openingRolls?.p2)}</div>
+              {!isSpectator && !roomData.openingRolls?.[myColor==='white'?'p1':'p2'] && ( <button onClick={handleRollDice} disabled={isSubmitting} className="sm:ml-4 bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded-lg font-bold text-sm whitespace-nowrap transition-colors shadow-lg text-white disabled:opacity-50">Zar At</button> )}
            </div>
         ) : (
            <>

@@ -4,6 +4,7 @@ import { applyXoxMove } from './games/xox.js';
 import { applyConnect4Move, freshConnect4 } from './games/connect4.js';
 import { applyCheckersMove, freshCheckers } from './games/checkers.js';
 import { applyChessMove, freshChess, applyChessOffer, resignChess } from './games/chess.js';
+import { freshTavla, rollTavla, resetTavlaOpening, moveTavla, undoTavla, cubeTavla } from './games/tavla.js';
 import { freshBattle, validateFleet, applyBattleShot } from './games/battleship.js';
 import { validateAction } from './room-schema.js';
 import { executeOkeyTransaction } from './okey-rooms.js';
@@ -17,7 +18,10 @@ const matchFields = ['players', 'board', 'turn', 'startingPlayer', 'winner', 'wi
 const battleFields = ['players', 'setupPhase', 'roundId', 'readyPlayers', 'shots', 'revealedShips', 'turn', 'startingPlayer', 'winner', 'scores', 'rematchRequestedBy'];
 const chessFields = [...matchFields, 'playerColors', 'captured', 'halfmoveClock', 'positionHistory', 'enPassantTarget',
   'lastMove', 'previousState', 'chessMoves', 'notationStartFen', 'drawReason', 'winReason', 'drawOffer', 'takebackOffer'];
+const tavlaFields = [...matchFields, 'playerColors', 'bar', 'borneOff', 'dice', 'usedDice', 'phase', 'openingRolls',
+  'cubeValue', 'cubeOwner', 'cubeOfferBy', 'initialTurnState'];
 const matchState = data => Object.fromEntries((data.gameType === 'amiralbatti' ? battleFields
+  : data.gameType === 'tavla' ? tavlaFields
   : data.gameType === 'satranc' ? chessFields
   : data.gameType === 'connect4' ? [...matchFields, 'lastMove']
     : data.gameType === 'dama' ? [...matchFields, 'playerColors', 'multiJumpIdx'] : matchFields).map(key => [key, data[key] ?? null]));
@@ -29,6 +33,11 @@ function pruneConnections(connections, now) {
 }
 function connected(connections, uid) { return Object.keys(connections[uid] ?? {}).length > 0; }
 function freshGame(players, scores, starter = players[0], game = 'xox', roundId, playerColors) {
+  if (game === 'tavla') {
+    const white = playerColors ? players.find(uid => ['w', 'white'].includes(playerColors[uid]))
+      ?? players.find(uid => uid !== players[0]) : starter;
+    return freshTavla(players, scores, white);
+  }
   if (game === 'amiralbatti') return freshBattle(players, scores, starter, roundId);
   if (game === 'connect4') return freshConnect4(players, scores, starter);
   if (game === 'dama' || game === 'satranc') {
@@ -45,7 +54,7 @@ function freshGame(players, scores, starter = players[0], game = 'xox', roundId,
 export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode,
   { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true', okeyEnabled = process.env.OKEY_API_ENABLED === 'true',
     connect4Enabled = process.env.CONNECT4_API_ENABLED === 'true', checkersEnabled = process.env.CHECKERS_API_ENABLED === 'true',
-    chessEnabled = process.env.CHESS_API_ENABLED === 'true' } = {}) {
+    chessEnabled = process.env.CHESS_API_ENABLED === 'true', tavlaEnabled = process.env.TAVLA_API_ENABLED === 'true' } = {}) {
   const action = validateAction(input);
   requireAction(typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid), 401, 'invalid_identity');
   const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -54,11 +63,14 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const actorRef = db.doc(`${root}/serverRoomActors/${uid}`);
   const rateRef = db.doc(`${root}/serverRateLimits/${uid}`);
-  const createAction = ['room.create', 'battleship.create', 'okey.create', 'connect4.create', 'checkers.create', 'chess.create'].includes(action.type);
-  const matchAction = ['room.match', 'battleship.match', 'okey.match', 'connect4.match', 'checkers.match', 'chess.match'].includes(action.type);
+  const createAction = ['room.create', 'battleship.create', 'okey.create', 'connect4.create', 'checkers.create', 'chess.create', 'tavla.create'].includes(action.type);
+  const matchAction = ['room.match', 'battleship.match', 'okey.match', 'connect4.match', 'checkers.match', 'chess.match', 'tavla.match'].includes(action.type);
   const candidateCode = createAction || matchAction ? codeSupplier() : null;
   const nextRoundId = randomBytes(12).toString('hex');
   const checkersHostColor = randomInt(2) === 0 ? 'w' : 'b';
+  // Sample once per request, outside the transaction callback. Transaction
+  // retries and saved action receipts cannot become free dice rerolls.
+  const tavlaRolls = action.type === 'tavla.roll' ? [randomInt(1, 7), randomInt(1, 7)] : null;
   if (candidateCode) requireAction(/^[A-Z0-9]{6}$/.test(candidateCode), 500, 'invalid_generated_code');
 
   return db.runTransaction(async tx => {
@@ -79,7 +91,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     let connections;
     let creating = false;
     let game = action.type.startsWith('okey.') ? 'okey101' : action.type.startsWith('battleship.') ? 'amiralbatti'
-      : action.type.startsWith('connect4.') ? 'connect4' : action.type.startsWith('checkers.') ? 'dama' : action.type.startsWith('chess.') ? 'satranc' : 'xox';
+      : action.type.startsWith('connect4.') ? 'connect4' : action.type.startsWith('checkers.') ? 'dama' : action.type.startsWith('chess.') ? 'satranc' : action.type.startsWith('tavla.') ? 'tavla' : 'xox';
     if (!createAction && !matchAction) {
       const [saved, presence] = await tx.getAll(roomRef(id), presenceRef(id));
       requireAction(saved.exists, 404, 'room_not_found');
@@ -93,17 +105,19 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       tx.set(rateRef, { windowStart: sameWindow ? rate.windowStart : now, count: count + 1 });
       return result;
     }
-    requireAction(['xox', 'amiralbatti', 'connect4', 'dama', 'satranc'].includes(game) && !action.type.startsWith('okey.'), 409, 'unsupported_room');
+    requireAction(['xox', 'amiralbatti', 'connect4', 'dama', 'satranc', 'tavla'].includes(game) && !action.type.startsWith('okey.'), 409, 'unsupported_room');
     requireAction(game !== 'amiralbatti' || battleshipEnabled, 503, 'server_not_enabled');
     requireAction(game !== 'connect4' || connect4Enabled, 503, 'server_not_enabled');
     requireAction(game !== 'dama' || checkersEnabled, 503, 'server_not_enabled');
     requireAction(game !== 'satranc' || chessEnabled, 503, 'server_not_enabled');
+    requireAction(game !== 'tavla' || tavlaEnabled, 503, 'server_not_enabled');
     if (action.type.startsWith('xox.')) requireAction(game === 'xox', 409, 'unsupported_room');
     if (action.type.startsWith('battleship.')) requireAction(game === 'amiralbatti', 409, 'unsupported_room');
     if (action.type.startsWith('connect4.')) requireAction(game === 'connect4', 409, 'unsupported_room');
     if (action.type.startsWith('checkers.')) requireAction(game === 'dama', 409, 'unsupported_room');
     if (action.type.startsWith('chess.')) requireAction(game === 'satranc', 409, 'unsupported_room');
-    const queueRef = db.doc(`${root}/public/data/${{ xox: 'xoxLobby', amiralbatti: 'battleshipLobby', connect4: 'connect4Lobby', dama: 'checkersLobby', satranc: 'chessLobby' }[game]}/queue`);
+    if (action.type.startsWith('tavla.')) requireAction(game === 'tavla', 409, 'unsupported_room');
+    const queueRef = db.doc(`${root}/public/data/${{ xox: 'xoxLobby', amiralbatti: 'battleshipLobby', connect4: 'connect4Lobby', dama: 'checkersLobby', satranc: 'chessLobby', tavla: 'tavlaLobby' }[game]}/queue`);
     const touchesQueue = action.type.startsWith('room.') || createAction || matchAction;
     const queue = touchesQueue ? ((await tx.get(queueRef)).data()?.entries ?? []) : [];
     let entries = queue.filter(entry => live(entry.updatedAt, now));
@@ -235,7 +249,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       requireAction(data.abandonReason === 'left' || !connected(connections, data.abandonedBy), 409, 'player_reconnected');
       data.status = 'closed'; data.closedBy = uid; changed = true;
     }
-    if (action.type.startsWith('xox.') || ((action.type.startsWith('battleship.') || action.type.startsWith('connect4.') || action.type.startsWith('checkers.') || action.type.startsWith('chess.')) && !createAction && !matchAction)) {
+    if (action.type.startsWith('xox.') || ((action.type.startsWith('battleship.') || action.type.startsWith('connect4.') || action.type.startsWith('checkers.') || action.type.startsWith('chess.') || action.type.startsWith('tavla.')) && !createAction && !matchAction)) {
       requireAction(player, 403, 'not_a_player');
       // Closed tabs or deliberately departed seats cannot continue sending
       // moves using a still-valid Firebase token.
@@ -254,6 +268,11 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       Object.assign(data, applyChessMove(data, uid, action.from, action.to, action.promotion)); changed = true;
     }
     if (action.type === 'chess.resign') { Object.assign(data, resignChess(data, uid)); changed = true; }
+    if (action.type === 'tavla.roll') { Object.assign(data, rollTavla(data, uid, tavlaRolls)); changed = true; }
+    if (action.type === 'tavla.opening.reset') { Object.assign(data, resetTavlaOpening(data, uid)); changed = true; }
+    if (action.type === 'tavla.move') { Object.assign(data, moveTavla(data, uid, action.from, action.to, action.die)); changed = true; }
+    if (action.type === 'tavla.undo') { Object.assign(data, undoTavla(data, uid)); changed = true; }
+    if (action.type.startsWith('tavla.cube.')) { Object.assign(data, cubeTavla(data, uid, action.type.split('.')[2])); changed = true; }
     if (action.type.startsWith('chess.draw.') || action.type.startsWith('chess.takeback.')) {
       const [, kind, decision] = action.type.split('.');
       Object.assign(data, applyChessOffer(data, uid, kind, decision)); changed = true;
@@ -286,7 +305,8 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
         requireAction(data.rematchRequestedBy && data.rematchRequestedBy !== uid, 409, 'invalid_rematch');
         if (action.type.endsWith('.accept')) {
           const starter = data.players.find(id => id !== data.startingPlayer);
-          Object.assign(data, freshGame(data.players, data.scores, starter, game, nextRoundId));
+          const colors = game === 'tavla' ? Object.fromEntries(data.players.map(id => [id, data.playerColors[id] === 'white' ? 'black' : 'white'])) : undefined;
+          Object.assign(data, freshGame(data.players, data.scores, starter, game, nextRoundId, colors));
           if (battle) { secret.fleets = {}; fleetChanged = true; }
         } else { data.status = 'closed'; data.closedBy = uid; }
       }

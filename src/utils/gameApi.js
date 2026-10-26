@@ -4,12 +4,14 @@ export const SERVER_OKEY_ENABLED = import.meta.env?.VITE_SERVER_OKEY_ENABLED ===
 export const SERVER_CONNECT4_ENABLED = import.meta.env?.VITE_SERVER_CONNECT4_ENABLED === 'true';
 export const SERVER_CHECKERS_ENABLED = import.meta.env?.VITE_SERVER_CHECKERS_ENABLED === 'true';
 export const SERVER_CHESS_ENABLED = import.meta.env?.VITE_SERVER_CHESS_ENABLED === 'true';
+export const SERVER_TAVLA_ENABLED = import.meta.env?.VITE_SERVER_TAVLA_ENABLED === 'true';
 export const SERVER_PRESENCE_ENABLED = import.meta.env?.VITE_SERVER_PRESENCE_ENABLED === 'true';
 export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
   || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED) || (game === 'okey101' && SERVER_OKEY_ENABLED)
-  || (game === 'connect4' && SERVER_CONNECT4_ENABLED) || (game === 'dama' && SERVER_CHECKERS_ENABLED) || (game === 'satranc' && SERVER_CHESS_ENABLED);
-export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create', connect4: 'connect4.create', dama: 'checkers.create', satranc: 'chess.create' })[game];
-export const serverMatchType = game => ({ xox: 'room.match', amiralbatti: 'battleship.match', okey101: 'okey.match', connect4: 'connect4.match', dama: 'checkers.match', satranc: 'chess.match' })[game];
+  || (game === 'connect4' && SERVER_CONNECT4_ENABLED) || (game === 'dama' && SERVER_CHECKERS_ENABLED) || (game === 'satranc' && SERVER_CHESS_ENABLED)
+  || (game === 'tavla' && SERVER_TAVLA_ENABLED);
+export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create', connect4: 'connect4.create', dama: 'checkers.create', satranc: 'chess.create', tavla: 'tavla.create' })[game];
+export const serverMatchType = game => ({ xox: 'room.match', amiralbatti: 'battleship.match', okey101: 'okey.match', connect4: 'connect4.match', dama: 'checkers.match', satranc: 'chess.match', tavla: 'tavla.match' })[game];
 
 export class GameApiError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -60,6 +62,11 @@ export function gameErrorMessage(error) {
     offer_pending: 'Bekleyen teklife yanıt verilmesi gerekiyor.',
     invalid_offer: 'Bu teklif artık geçerli değil. Güncel durumu kontrol et.',
     invalid_takeback: 'Yalnız son hamleni, rakibin yanıtından önce geri alabilirsin.',
+    invalid_undo: 'Bu sıradaki hamleler artık geri alınamaz.',
+    already_rolled: 'Açılış zarını zaten attın. Rakibin bekleniyor.',
+    invalid_phase: 'Oyun aşaması değişti. Güncel durumu kontrol et.',
+    cube_not_owned: 'Çiftleme küpü rakibinde.',
+    score_limit: 'Bu işlem puan sınırını aşıyor.',
     game_not_playing: 'Oyun şu anda hamle kabul etmiyor.',
     already_shot: 'Bu hücreye zaten ateş ettin.', invalid_fleet: 'Gemilerin yerleşimi geçerli değil. Filonu kontrol et.',
     setup_locked: 'Yerleştirme aşaması değişti. Son durumu kontrol et.',

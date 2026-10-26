@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, serverGameEnabled } from '../utils/gameApi.js';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, SERVER_TAVLA_ENABLED, serverGameEnabled } from '../utils/gameApi.js';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
 import { subscribePresenceSessions } from '../hooks/presenceStore.js';
@@ -78,6 +78,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   const [connect4Queue, setConnect4Queue] = useState([]);
   const [checkersQueue, setCheckersQueue] = useState([]);
   const [chessQueue, setChessQueue] = useState([]);
+  const [tavlaQueue, setTavlaQueue] = useState([]);
   const waitingCounts = useMemo(() => {
     const counts = {};
     const liveRooms = livePlayersByRoom(sessions, nowTick);
@@ -96,11 +97,19 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
     if (SERVER_CHESS_ENABLED) counts.satranc = chessQueue.filter(entry => entry.host !== userId &&
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
+    if (SERVER_TAVLA_ENABLED) counts.tavla = tavlaQueue.filter(entry => entry.host !== userId &&
+      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
     if (SERVER_OKEY_ENABLED) counts.okey101 = okeyQueue.filter(entry => entry.host !== userId &&
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000)
       .reduce((total, entry) => total + (entry.players ?? 1), 0);
     return counts;
-  }, [waitingRooms, sessions, userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue]);
+  }, [waitingRooms, sessions, userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue]);
+  useEffect(() => {
+    if (!SERVER_TAVLA_ENABLED || !pickerOpen || !userId) return undefined;
+    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'tavlaLobby', 'queue'), snapshot => {
+      setTavlaQueue(snapshot.data()?.entries ?? []);
+    }, () => setTavlaQueue([]));
+  }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_CHESS_ENABLED || !pickerOpen || !userId) return undefined;
     return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'chessLobby', 'queue'), snapshot => {
