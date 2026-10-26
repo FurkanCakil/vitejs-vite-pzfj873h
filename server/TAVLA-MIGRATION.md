@@ -6,6 +6,12 @@ Tavla'nın sunucu çekirdeği, oda/yaşam döngüsü ve istemci bağlantısı ha
 
 Canlıya açılınca eski Tavla odaları devralınmayacak; yeni oda gerekir. Legacy `rooms` koleksiyonunun geniş izinlerini kapatmak bu oyunun geçişinden sonraki ayrı kabul işidir. Genel site denetimi henüz bitmedi.
 
+## Kapalı canlı sürümün doğrulanması
+
+[7fb9f60 işlev değişikliği](https://github.com/FurkanCakil/vitejs-vite-pzfj873h/commit/7fb9f6029d4efe1a76edb9ed9298873625feb8ad) ana dala gönderildi; [Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/39hd73CDYQLL6WUWZnbfmPkQzLyA) 27 Ekim 2026 saat 02:10:19'da Ready oldu. Canlı ana uygulama SHA-256 özeti yerel kapalı üretim çıktısıyla aynıydı. Gerçek yeni anonim test kimliğiyle Tavla oluşturma 503/server_not_enabled döndü; yeni sistem kapalıdır. Yeni kuyruk kuralı henüz yayımlanmadı ve iki Production ayarı açılmadı.
+
+Mevcut XOX, Amiral Battı, Okey, Connect 4, Dama ve Satranç için yalnız yeni özel test odası oluşturma/katılma/normal ayrılma geçti; altı odanın son durumunun kapalı olduğu doğrulandı. Sayaç heartbeat/leave de başarılı. Başka kullanıcı odalarına dokunulmadı. Bu, yeni Tavla'nın canlı kabul testi değildir; o yalnız kural/ayarlar açıldıktan sonra yapılabilir. Yerel tarayıcı/emülatör/üretim derlemesi ile kapalı canlı kontrol birlikte hazırlık kabulünü oluşturur.
+
 ## Bulgular ve değişiklik nedenleri
 
 | Önem | Dosyalar | Neden |
@@ -38,7 +44,7 @@ Canlıya açılınca eski Tavla odaları devralınmayacak; yeni oda gerekir. Leg
 - Temiz `demo-oyun-portali` emülatöründe 80 senaryo ve dokuz üst testle 89 sonuç geçti; önceki altı oyunun ve sayacın regresyonları dahil. Yeni dokuz Tavla senaryosu kapalı ayar/oyun ayrımı, sunucu zarı/tekrar, yarışan hamle/geri alma, tie yarışı/kapalı giriş, küp/rövanş/tek puan, son pul/sahte alan/seyirci, çoklu sekme ve aynı UID geri dönüşü, atomik eşleşme/bayat host ve gerçek Auth erişim reddini kapsar. Tie ve bitiş konumları yalnız demo emülatöründe hazırlanmış fikstürlerdir; canlıya oyun durumu enjekte edilmedi.
 - Gerçek yerel uygulamada iki bağımsız origin/UID ile özel oda/davet, açılış, klavye ve tıklama hamlesi, geri alma, iki zarı tüketerek sıra devri, küp kabulü, yenilemede aynı tahta/zar/küp, sonraki küp reddinde 2:0 ve rakip onaylı renk değiştiren rövanş geçti. Yerel kolay bot açılıp kendi turunu oynadı ve sırayı insana bıraktı. Gözlenen konsollar hata/uyarı içermedi. Test odası normal ayrılmayla kapatıldı; geçici sekmeler ve viewport temizlendi.
 - 390 pikselde 276×368, 320 pikselde 206×274,67 tahta ve yatay taşmasız belge ölçüldü. 320 pikselde kesilen açılış düğmesi önce yeniden üretildi, düzenleme sonrası tamamı içeride görüldü. Yatay 844×390 tam ekran görünümünde yaklaşık 346,69×260,02 tahta gözlendi; otomasyon tam ekrandan kendiliğinden çıktığı için kalıcı native fullscreen doğrulaması sayılmaz. Gerçek telefon/Safari/Firefox/iOS testi yapılmadı.
-- TypeScript geçti; lint sıfır hata/38 mevcut uyarı. `App.tsx` dosyasındaki mevcut `@ts-nocheck` sınırı sürer. Tavla açık ve kapalı üretim derlemesi geçti; yerel kimlik kontrolü üretim ortamı olmadığı için beklenen şekilde atlanır, gerçek Vercel Ready ayrıca doğrulanmalıdır.
+- TypeScript geçti; lint sıfır hata/38 mevcut uyarı. `App.tsx` dosyasındaki mevcut `@ts-nocheck` sınırı sürer. Tavla açık ve kapalı üretim derlemesi geçti; yerel kimlik kontrolü üretim ortamı olmadığı için beklenen şekilde atlanır, kapalı gerçek Vercel Ready yukarıda ayrıca doğrulandı.
 
 ## Performans ve kalan kabul işi
 
