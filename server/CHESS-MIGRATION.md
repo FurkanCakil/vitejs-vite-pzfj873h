@@ -2,14 +2,24 @@
 
 ## Güncel durum — 26 Ekim 2026
 
-**Oda ve istemci bağlantısı hazır; canlı Satranç geçişi henüz açılmadı.** `CHESS_API_ENABLED` ve `VITE_SERVER_CHESS_ENABLED` varsayılan kapalıdır. Yerel demo bu ikisini açık kullanır. Hazır `chessLobby/queue` salt okunur kuralı canlıya yayımlanmadı; yeni IAM, anahtar, ücretli plan veya cron yok. Mevcut canlı Satranç legacy yolunda kaldığından hile riski bu hazırlıkla kapanmış sayılmaz.
+**Yeni Satranç odalarının canlı geçişi tamamlandı.** Kullanıcının bu oyuna özel açık onayıyla `chessLobby/queue` salt okunur kuralı 26 Ekim 2026 saat 21:18'de yayımlandı; `CHESS_API_ENABLED=true` ve `VITE_SERVER_CHESS_ENABLED=true` yalnız Production ortamında kaydedildi. Önizleme/geliştirme seçilmedi. Kaynakta varsayılanlar kapalı kalır. Yeni IAM, anahtar, ücretli plan veya cron yok. Eski Satranç odaları devralınmaz, yeni oda gerekir. Legacy geniş izinler ve Tavla nedeniyle genel denetim tamamlanmadı.
+
+Kapalı `61960df` sürümü önce [E43AecJJf](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/E43AecJJfzsxfND3QBcDmUASJdfR) ile Ready oldu; mevcut beş oyunun özel oda kurma/katılma/normal ayrılma ve sayaç kontrolleri geçti, Satranç 503 ile kapalı kaldı. Aynı kaynak son proje ayarlarıyla Production'a yeniden derlendi; [açık He9D119Nq yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/He9D119NqbDLCXLHhZZfYhcxDLkP) Ready oldu. Mevcut kural metni önce kaynak eksi yalnız Satranç bloğuyla, yayın sonrası da tam kaynakla karşılaştırıldı; başka izin değiştirilmedi.
+
+## Canlı kabul sonuçları — 26 Ekim 2026
+
+Yeni anonim test oyuncularıyla, yalnız kendi yeni özel odasında idempotent kurma/katılma/seyirci, f3 geri alma/rakip onayı ve önceki konumun tek kullanımı doğrulandı. Başlangıçtan dört yasal hamleyle mat, aynı son hamlenin eşzamanlı tekrarıyla tek puan, rövanşta kendi isteğini kabul edememe, rakip kabulüyle renklerin değişmesi ve skor/32 taş/boş notasyon kontrol edildi. Beraberlik ret/kabul ve kendi teklifini kabul edememe puanı değiştirmedi. Yeni rövanşta eşzamanlı aynı teslim isteği yalnız bir puan verdi. Bunlar otomatik, işbirlikçi test oyunlarıdır; doğal rekabetçi maç olarak sunulmaz.
+
+Canlıda seyirci hamlesi 403, sıra dışı ve yasa dışı hamle 409, sahte skor alanı 400 döndü. Oturumsuz/üye olmayan oda okuma, oda listesi, sunucu işlem/bağlantı/geçmiş kayıtları ve doğrudan oda/kuyruk yazma 403 döndü. Yazma reddi testi yalnız olmayan test alanını silen update mask kullandı; oyun durumunu değiştirecek bir belge değiştirme isteği gönderilmedi. Kimlikli kuyruk get geçti (belge yoksa 404 izin reddi değildir); oturumsuz get reddedildi. Canlı ana uygulama dosyası test edilen açık üretim çıktısıyla bayt düzeyinde aynıydı.
+
+Canlı tarayıcı bağımsız test rakibine katıldı; e4, sunucu rakibinin Na6 karşılığı, yenilemede aynı konum/SAN ve native Nf3 sürüklemesi geçti. Sürükleme kopyası sıfırdı. Kopyalanan PGN'nin panodaki gerçek metni `1. e4 Na6 2. Nf3` ile doğrulandı; önceki hazırlık turundaki pano gözlem sınırı bu canlı kontrolde çözüldü. Teslim sonucu 1:0 ve rakip onaylı rövanşta renk değişimi/32 taş/boş SAN/aynı skor görüldü. Sonraki a3/e5 turunda 390 pikselde 31,67×31,67 kare, viewport içinde belge ve doğru SAN doğrulandı. Gözlenen konsolda hata/uyarı yoktu. API ve tarayıcı test odalarının normal ayrılma sonrası kapalı durumu doğrulandı. Gerçek Safari/Firefox/iOS ve uzun yük testi yapılmadı.
 
 - 109 otomatik test geçti; normal `npm test` 117 sonuçtan sekiz emülatör üst testini atlar. Temiz demo emülatöründe 71 senaryo / sekiz üst testle 79 sonuç geçti. Bir önceki emülatör tekrar denemesi temiz olmayan sabit test oda kodlarına çarptı; yeniden başlatılan temiz ortamda tüm sonuçlar başarılı. Bu çakışma canlı oda hatası olarak yorumlanmaz.
 - Önceki beş oyun/sayaç regresyonlarıyla birlikte 11 yeni Satranç senaryosu: kapalı ayar/oyun ayrımı; renk/beyaz başlangıç/sahte alanlar; eşzamanlı hamle/idempotency; tam mat/tek puan/rövanş; beraberlik/teslim; geri alma/EP/SAN; kabul ile karşı hamlenin yarışı; çoklu sekme ve aynı UID çiftinin dönüşü; uzun notasyon/sekiz geçmiş sınırı; atomik eşleşme/bayat host; gerçek Auth erişim reddi.
 - İki bağımsız originle gerçek uygulamada davet, f3 geri alma/rakip kabulü, başlangıçtan dört yasal hamleyle mat ve 0:1; rövanşta renk değişimi ve skor koruma; beraberlik ret/kabul ve aynı skor; yeni rövanşta ön-hamleyle e4/e5, normal Nf3 ve native mobil sürüklemeyle Nf6 doğrulandı. Yenileme aynı tahta ve SAN'ı korudu. 390/320 pikselde kareler kare kaldı, belge viewport'u aşmadı, sürükleme kopyası sıfırdı. Tam ekran notasyonu gizledi. Gözlenen iki konsolda uyarı/hata yoktu. Bunlar yerel demo testleridir; canlı yeni Satranç kabulü veya gerçek iOS testi değildir.
 - Açık/kapalı üretim derlemeleri ve mevcut TypeScript kontrolü geçti. Lint: sıfır hata, 43 uyarı. App dosyasındaki mevcut `@ts-nocheck` sınırı sürer. Açık ana uygulama 575,46 KB / 178,50 KB gzip, kapalı 575,23 KB / 178,48 KB gzip; Satranç ayrı parçası 39,91 KB / 12,79 KB gzip. CSS 65,50 KB / 11,59 KB gzip, tahta/notasyon ölçü sınıfları ve bot seviyeleri değişmedi.
 
-## Bu aşamadaki dosyalar ve gerekçeleri
+## Hazırlık aşamasındaki dosyalar ve gerekçeleri
 
 | Dosya | Değişiklik nedeni |
 | --- | --- |
@@ -29,7 +39,7 @@ Arşiv `serverChessHistory/{roomId}/matches/{UID-pair-hash}` altında yalnız su
 
 19.999 adet 16 karakterli yapay SAN girdisiyle bir hamle sonrası 20.000 girdi ve önceki konumu içeren belge gerçek emülatör yazmasından geçti; ayrı arşive de kayıpsız yazıldı. Bu doğal oynanmış yasal uzun maç değildir, boyut stres fikstürüdür. Hamle listesi sessizce kesilmez. 20.000 hamle sınırı doğrulanır; mevcut otomatik 50 hamle beraberliği altında normal yasal oyunun ulaşacağı bir uzunluk değildir. Sürüm/işlem kimliği skor ve kabul işlemlerini atomik tutar; istemci önceki konum gönderemez.
 
-## Canlı açılışta kalan kabul adımı
+## Hazırlıkta belirlenen canlı kabul adımı (tamamlandı)
 
 Kapalı sürüm yayımlanıp mevcut oyunların temel canlı akışı ve Satranç oluşturmanın kapalı kaldığı doğrulanmalı. Sonra kullanıcıya yeni oda gereksinimi ve kural/iki Production ayarı bildirilerek açılış yapılmalı. Yalnız `chessLobby/queue` bloğu eklenmeli; diğer kurallar korunmalı. `CHESS_API_ENABLED=true` ve `VITE_SERVER_CHESS_ENABLED=true` yalnız Production'da açılıp yeniden dağıtılmalı. Gerçek anonim kimliklerle yeni Satranç hamle/sonuç/puan/teklif/rövanş/erişim reddi, tarayıcıda katılma/yenileme/PGN ve temel oyun sınanmalı. Eski Satranç odaları devralınmaz. Yeni ücret, anahtar veya IAM gerekmiyor. Bütün site denetimi, Tavla ve legacy geniş izinler nedeniyle açık kalır.
 
