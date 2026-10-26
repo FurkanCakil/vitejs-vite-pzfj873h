@@ -2,11 +2,29 @@
 
 ## Güncel durum — 27 Ekim 2026
 
-Tavla'nın sunucu çekirdeği, oda/yaşam döngüsü ve istemci bağlantısı hazırdır. `TAVLA_API_ENABLED` ve `VITE_SERVER_TAVLA_ENABLED` varsayılan kapalıdır. Yeni kuyruk kuralı kaynakta hazırlanmıştır; **bu belge canlı açılışın tamamlandığını göstermez**. Firebase/Vercel ayarları açılana kadar canlı Tavla legacy oda yolundadır. Önceki altı oyun ve sayaç geçişi korunur. Yeni IAM, kalıcı anahtar, ücretli plan veya zamanlanmış iş gerekmez.
+Kullanıcının bu oyuna özel açık onayıyla `tavlaLobby/queue` salt okunur kuralı 27 Ekim 2026 saat 02:16'da yayımlandı; `TAVLA_API_ENABLED=true` ve `VITE_SERVER_TAVLA_ENABLED=true` yalnız Vercel Production ortamında Config olarak kaydedildi. Preview/Development seçilmedi. [Açık yeniden dağıtım](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/ATDGTBTx4hWGdgdJpRChdGs2abHi) 02:18:12'de Ready oldu. **Yeni Tavla odalarının canlı geçişi tamamlandı.** Ortak bağlantı düzeltmesi sonrası uzun canlı kabul de geçti. Kaynakta varsayılanlar kapalı kalır. Diğer altı oyun ve sayaç korunur; yeni IAM, kalıcı anahtar, ücretli plan veya zamanlanmış iş yok.
 
-Canlıya açılınca eski Tavla odaları devralınmayacak; yeni oda gerekir. Legacy `rooms` koleksiyonunun geniş izinlerini kapatmak bu oyunun geçişinden sonraki ayrı kabul işidir. Genel site denetimi henüz bitmedi.
+Eski Tavla odaları devralınmaz; yeni oda gerekir. Canlı kural önce kaynak eksi yalnız Tavla bloğuyla, sonra tam kaynakla karşılaştırıldı; editörün eklediği boş satırlar karşılaştırmada normalize edildi, diğer izinler korundu. Legacy `rooms` koleksiyonunun geniş izinlerini kapatmak ayrı kabul işidir; genel site denetimi henüz bitmedi.
 
-## Kapalı canlı sürümün doğrulanması
+## Canlı kabulde bulunan ortak zaman sırası hatası
+
+İlk uzun canlı denemede bir tekrar isteği reddedildi; ilk çıktıda ayrıntılı kod tutulmadığından bunun tekil nedeni kesinleştirilmez. İkinci denemede `player_disconnected` görüldü. İki özel test odası da normal ayrılmayla kapatıldı. İnceleme, daha erken başlayıp daha geç tamamlanan isteğin yeni sunucu zaman damgasını gelecekte sanarak silmesini ortaya çıkardı.
+
+Eski kaynakla dört ayrı emülatör senaryosu önce başarısız oldu: canlı rakip yanlışlıkla abandoned oldu; yeni bekleyen host eşleşmede atlandı; bağlı Okey oyuncusunun koltuğu bota dönüştü; kapanmış sayaç oturumu eski heartbeat ile dirildi. `server/time.js` yalnız sunucunun yazabildiği zamanlar için en çok 60 saniyelik istek sırası farkını tanır, gerçek geçmiş süre dolumunu değiştirmez ve daha uzak/bozuk gelecek değerleri kabul etmez. Bağlantı/sayaç/oda zamanları geriye yazılmaz; kuyruk son host bağlantısından beslenir. Hız penceresi ve yakın oda açılışları da eski istekle sıfırlanmaz. İstemci hâlâ UID/zaman/zar/puan seçemez.
+
+Düzeltme sonrası altı zaman sırası regresyonu, tüm oyunlar/sayaçla birlikte temiz demo emülatöründe 86 senaryo ve 10 üst testle 96 sonuç verdi; hepsi geçti. 124 otomatik test başarılı (134 toplam, 10 emülatör üst testi burada atlanır). TypeScript ve lint başarılı; 38 uyarı ve App tür kontrolü sınırı sürer. [aedf696 düzeltmesi](https://github.com/FurkanCakil/vitejs-vite-pzfj873h/commit/aedf6963646d7d8f4244ca6e851da197e89fef14) [Production'da](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/3xQhx6Ugoi1bTPSNowcQyPtizPqE) 02:29:47'de Ready oldu. Bu, yeni erişim veya daha geniş IAM yetkisi eklemez.
+
+## Canlı kabul sonuçları — 27 Ekim 2026
+
+Düzeltmeden sonraki gerçek anonim test kimlikleriyle yalnız yeni özel odada kurma/aynı işlemle tekrar, katılma/seyirci, açılış zarı/aynı isteğin eşzamanlı tekrarı ve yeniden zar atma reddi geçti. İstemciden zar/puan gönderimi, seyirci, sıra dışı ve yasa dışı hamle reddedildi. Bir hamlenin iki eşzamanlı kopyası yalnız bir kez uygulandı; geri alma aynı server konumunu/dice tüketimini getirdi, tekrarı reddedildi. Küp kendi teklifini kabul ettirmedi; bekleyen teklifte zar reddedildi. Rakip kabulü küpü ikiye katlayıp sahipliği devretti, sonraki ret önceki iki puanı tek kez verdi. Rövanş kendi isteğini kendisinin kabul etmesini reddetti; rakip onayı renkleri değiştirip açılışa/merkez küpe döndü ve puanı korudu.
+
+Sonraki tam oyun ilk konumdan gerçek sunucu zarlarıyla 158 adımda tamamlandı ve bir puan verdi; her hareket isteği eşzamanlı iki kopyayla sınandı. Canlı testin tamamında (ön kontroller dahil) 111 hamle, beş kırma ve dört çift zar görüldü; bu sayılar yalnız son maçın hamle sayısı değildir. Test işbirlikçi bir otomatik oyundur; doğal insan rekabeti veya rastgele zarların istatistiksel adalet testi sayılmaz. Son pulun yinelenmesi ikinci puan vermedi. Önceki `player_disconnected` hatası tekrarlanmadı.
+
+Oturumsuz ve üye olmayan oda okuma, oda listeleme, sunucu işlem/bağlantı kayıtları, doğrudan oda/kuyruk yazma 403 döndü. Yazma denemeleri yalnız olmayan test alanını silen update mask kullandı; oyun verisi değiştirecek belge değiştirme isteği yapılmadı. Kimlikli kuyruk get izni geçti (henüz belge yoksa 404 izin reddi değildir), anonim get reddedildi. Canlı ana dosya yerel açık üretim çıktısıyla bayt düzeyinde aynıydı.
+
+Canlı tarayıcı bağımsız özel test rakibine katıldı; açılış, klavye/tıklama hamlesi, yenilemede aynı tahta/zar tüketimi, geri alma ve yeniden iki hamleyle sıra geçişi geçti. Sunucu rakibinin çift altı zarıyla dört karşı hamlesi, küp kabulü, sonraki küp reddinde 0:2 ve rakip onaylı renk değiştiren/puanı koruyan rövanş doğrulandı. Düzeltme dağıtımı sonrası yenilemede aynı skor ve temiz açılış geldi. 390 pikselde 276×368 tahta, 375 piksel belge genişliği ve temiz konsol görüldü. Test adı eski değerine getirildi, viewport sıfırlandı ve geçici sekme kapatıldı. Bütün API ve tarayıcı test odalarının normal ayrılmalardan sonra kapalı durumu doğrulandı; mevcut kullanıcı odaları kullanılmadı.
+
+## Kapalı hazırlığın tarihsel doğrulaması
 
 [7fb9f60 işlev değişikliği](https://github.com/FurkanCakil/vitejs-vite-pzfj873h/commit/7fb9f6029d4efe1a76edb9ed9298873625feb8ad) ana dala gönderildi; [Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/39hd73CDYQLL6WUWZnbfmPkQzLyA) 27 Ekim 2026 saat 02:10:19'da Ready oldu. Canlı ana uygulama SHA-256 özeti yerel kapalı üretim çıktısıyla aynıydı. Gerçek yeni anonim test kimliğiyle Tavla oluşturma 503/server_not_enabled döndü; yeni sistem kapalıdır. Yeni kuyruk kuralı henüz yayımlanmadı ve iki Production ayarı açılmadı.
 
@@ -16,13 +34,15 @@ Mevcut XOX, Amiral Battı, Okey, Connect 4, Dama ve Satranç için yalnız yeni 
 
 | Önem | Dosyalar | Neden |
 | --- | --- | --- |
-| Kritik, canlı açılış bekliyor | `server/games/tavla.js`, `server/xox-rooms.js` | Zar, yasal hamle, geri alma, küp ve puanı tarayıcıya güvenmeden sunucuda belirlemek; sürüm ve işlem kimliğiyle çift zar/puanı önlemek. |
-| Kritik, canlı açılış bekliyor | `server/room-schema.js`, `src/utils/gameApi.js`, `src/App.tsx` | Yalnız izinli eylemleri kabul etmek; UID, zar, tahta, puan veya geri alma konumu gönderilememesi ve yeni odaların doğru yola bağlanması için. |
+| Kritik, yeni odalarda kapatıldı | `server/games/tavla.js`, `server/xox-rooms.js` | Zar, yasal hamle, geri alma, küp ve puanı tarayıcıya güvenmeden sunucuda belirlemek; sürüm ve işlem kimliğiyle çift zar/puanı önlemek. |
+| Kritik, yeni odalarda kapatıldı | `server/room-schema.js`, `src/utils/gameApi.js`, `src/App.tsx` | Yalnız izinli eylemleri kabul etmek; UID, zar, tahta, puan veya geri alma konumu gönderilememesi ve yeni odaların doğru yola bağlanması için. |
 | Orta | `src/games/backgammon/TavlaGame.jsx` | Aynı anda gelen ikinci eylemi referans kilidiyle engellemek, bayat taş seçimini temizlemek, sunucu hatasını oyuncuya göstermek ve seyircinin eşit açılışı sıfırlamasını önlemek. |
 | Orta | `src/games/backgammon/TavlaGame.jsx` (açılış satırı) | 320 pikselde kesilen Zar At düğmesini sarılan satıra almak; tahta oranı/sınıflarını değiştirmeden düğmeyi erişilebilir tutmak. |
 | Düşük | `src/games/backgammon/state.js`, Tavla bileşeni | Zar tüketimi ve mars/katmerli mars hesabını ortaklaştırmak, değişmez tahta için gereksiz derin kopyayı kaldırmak ve mevcut noktalara klavye/etiket desteği eklemek. |
 | Orta, büyümede | `src/components/Lobby.jsx`, oda sunucusu | Eşleşmeyi en çok 30 girişli, 60 saniye geçerli sunucu kuyruğundan saymak; özel/oynanan veya bayat odaları bekleyen gibi göstermemek. |
 | Güvenlik hazırlığı | `firestore.rollout.rules`, `server/firestore-v2.rules` | Yeni `tavlaLobby/queue` için yalnız oturumlu get hazırlamak; liste ve doğrudan yazmayı kapalı tutmak. Referans `firestore-v2.rules` tek başına canlıya yayımlanmaz. |
+| Orta, ortak bağlantı | `server/time.js`, `server/xox-rooms.js`, `server/okey-rooms.js`, `server/presence.js` | Yeni sunucu zamanını eski istekle kaybetmemek; yanlış kopma/bot ataması, eşleşme atlama ve sayaç oturumunun dirilmesini önlemek. |
+| Doğrulama | `server/time.test.js`, `server/clock-order.integration.test.js` | Önce başarısız olan sıralama senaryolarını, gerçek süre dolumunu ve hız/oda sınırlarını birlikte korumak. |
 | Doğrulama | `server/tavla.test.js`, `server/tavla.integration.test.js`, `package.json`, `scripts/dev-xox.mjs` | Tavla'yı demo emülatörüne ve önceki oyunlarla birlikte regresyona eklemek; üretim kimliğini yerel teste taşımamak. |
 | Kayıt | Bu dosya, `server/README.md`, `SECURITY-MIGRATION.md` | Hazır kapalı sürümle tamamlanmış canlı geçişi ayırmak; açılış koşulları ve doğrulama sınırlarını korumak. |
 
@@ -38,7 +58,7 @@ Mevcut XOX, Amiral Battı, Okey, Connect 4, Dama ve Satranç için yalnız yeni 
 - Ayrılma/bekleme ve aynı UID çiftinin dönüşü tam sırayı, zarları, renkleri, küpü ve geri alma konumunu geri getirir; yeni rakip yeni oyun alır. Son sekiz dizilim sınırı korunur. Oda ve kuyruk istemciden yazılamaz; üyeler odalarını, kimlikliler yalnız eşleşme özetini okuyabilir.
 - Botlar mevcut yerel Worker yolunda ve mevcut zorluklarında kalır. Çok oyunculu oyun zarları sunucudadır; yerel bot modu hile korumalı rekabetçi sunucu oyunu değildir.
 
-## Doğrulama
+## Hazırlık doğrulamasının tarihsel sonuçları
 
 - 122 otomatik test geçti; `npm test` toplam 131 sonuçta dokuz emülatör üst testini ayrı çalıştırılmak üzere atlar. 13 yeni Tavla çekirdek testi açılış/tie, çift, kırık pul/yeme, maksimum zar/büyük zar, geri alma, üç puan türü, küp onayı/ret/üst sınır, bozuk girdi ve ilk konumdan tam oyunu kapsar. Sabit test zarlarıyla 107 yasal hamle, yeme ve dokuz çift içeren oyun tamamlandı; her adımda 15'er pul korunumu ve yalnız son anda puan doğrulandı. Bu, gerçek rastgele zarlara yönelik istatistiksel adalet testi veya insanlarca oynanmış maç değildir.
 - Temiz `demo-oyun-portali` emülatöründe 80 senaryo ve dokuz üst testle 89 sonuç geçti; önceki altı oyunun ve sayacın regresyonları dahil. Yeni dokuz Tavla senaryosu kapalı ayar/oyun ayrımı, sunucu zarı/tekrar, yarışan hamle/geri alma, tie yarışı/kapalı giriş, küp/rövanş/tek puan, son pul/sahte alan/seyirci, çoklu sekme ve aynı UID geri dönüşü, atomik eşleşme/bayat host ve gerçek Auth erişim reddini kapsar. Tie ve bitiş konumları yalnız demo emülatöründe hazırlanmış fikstürlerdir; canlıya oyun durumu enjekte edilmedi.
@@ -52,4 +72,4 @@ Tahmini **orta, büyümede:** sınırlı eşleşme kuyruğu yalnız seçici aç�
 
 Önceki altı oyun ve sayaç açıkken Tavla kapalı ana paket 575,90 KB / 178,64 KB gzip; Tavla açık 576,12 KB / 178,67 KB gzip. Tavla parçası 32,34 KB / 8,97 KB gzip; CSS 65,50 KB / 11,60 KB gzip. Bu küçük artış performans kazancı olarak sunulmaz.
 
-Canlı açılışta yalnız `tavlaLobby/queue` salt okunur bloğu yayımlanmalı, `TAVLA_API_ENABLED=true` / `VITE_SERVER_TAVLA_ENABLED=true` yalnız Production'da açılmalı, son ayarlarla yeniden derlenmeli. Gerçek yeni test kimlikleriyle zar/hamle/küp/puan/rövanş/erişim reddi ve canlı tarayıcı akışı ayrıca sınanmalı. Yeni IAM/anahtar/ücret gerekmez. Eski odalara sessiz geçiş yoktur. Daha sonra legacy geniş oda izinleri, 26 bağımlılık uyarısı, anonim UID yenileyerek sınır aşma, ek token iptal kontrolü ve gerçek cihaz/yük sınırları ele alınmalıdır.
+Hazırlıkta belirlenen canlı açılış adımı: yalnız `tavlaLobby/queue` salt okunur bloğu yayımlanmalı, `TAVLA_API_ENABLED=true` / `VITE_SERVER_TAVLA_ENABLED=true` yalnız Production'da açılmalı, son ayarlarla yeniden derlenmeli. Gerçek yeni test kimlikleriyle zar/hamle/küp/puan/rövanş/erişim reddi ve canlı tarayıcı akışı ayrıca sınanmalı. Yeni IAM/anahtar/ücret gerekmez. Eski odalara sessiz geçiş yoktur. Daha sonra legacy geniş oda izinleri, 26 bağımlılık uyarısı, anonim UID yenileyerek sınır aşma, ek token iptal kontrolü ve gerçek cihaz/yük sınırları ele alınmalıdır.
