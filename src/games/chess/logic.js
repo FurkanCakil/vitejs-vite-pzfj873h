@@ -45,7 +45,8 @@ export function getPseudoLegalMoves(board, index, checkCastling = true, enPassan
           if (attacksOnly) { moves.push(targetIdx); }
           else {
             if (board[targetIdx]?.color && (board[targetIdx].color !== piece.color || includeOwnPieceSquares)) moves.push(targetIdx);
-            else if (targetIdx === enPassantTarget) moves.push(targetIdx);
+            else if (!board[targetIdx] && targetIdx === enPassantTarget && r === (piece.color === 'w' ? 3 : 4)
+              && board[r * 8 + nc]?.type === 'p' && board[r * 8 + nc].color !== piece.color) moves.push(targetIdx);
           }
         }
       };
@@ -85,8 +86,14 @@ export function getStrictLegalMoves(board, index, enPassantTarget = null) {
   const piece = board[index]; if (!piece) return [];
   const pseudo = getPseudoLegalMoves(board, index, true, enPassantTarget, false); const legal = [];
   for (const target of pseudo) {
+    // The king is checked/mated, never captured. Attack maps still include it.
+    if (board[target]?.type === 'k') continue;
     const newBoard = [...board]; newBoard[target] = newBoard[index]; newBoard[index] = null;
     if (piece.type === 'p' && target === enPassantTarget) { const captureIdx = piece.color === 'w' ? target + 8 : target - 8; newBoard[captureIdx] = null; }
+    if (piece.type === 'k' && Math.abs(target - index) === 2) {
+      const rookFrom = target > index ? index + 3 : index - 4, rookTo = target > index ? index + 1 : index - 1;
+      newBoard[rookTo] = newBoard[rookFrom]; newBoard[rookFrom] = null;
+    }
     let kingIdx = -1;
     for (let i = 0; i < 64; i++) { if (newBoard[i]?.type === 'k' && newBoard[i]?.color === piece.color) { kingIdx = i; break; } }
     const enemyColor = piece.color === 'w' ? 'b' : 'w';

@@ -3,13 +3,13 @@ import { Loader2, Check, X, Users, ArrowUpDown, Undo2, Handshake, Flag, Bot } fr
 import { doc, updateDoc, runTransaction } from 'firebase/firestore';
 import { playSound } from '../../utils/sound.js';
 import { CHESS_ICONS, PIECE_VALUES, chessPieceStyle } from './constants.js';
-import { createInitialChessBoard, getStrictLegalMoves, getPseudoLegalMoves, isSquareAttacked, getBoardStateString, getGameState } from './logic.js';
+import { createInitialChessBoard, getStrictLegalMoves, getPseudoLegalMoves, isSquareAttacked, getBoardStateString } from './logic.js';
 import { boardToFEN, uciMoveToIndices } from './fen.js';
 import { useStockfish } from './stockfishEngine.js';
 import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG, chooseEasyMove } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
 import MoveNotation from './MoveNotation.jsx';
-import { moveToSAN } from './notation.js';
+import { getChessMoveUpdate } from './move.js';
 
 const EMPTY_SET = new Set();
 
@@ -27,6 +27,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const [promotionPrompt, setPromotionPrompt] = useState(null);
   const [spectatorFlipped, setSpectatorFlipped] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const movePendingRef = useRef(false);
   const [gameToast, setGameToast] = useState(null);
   const [resignConfirm, setResignConfirm] = useState(false);
 
@@ -82,18 +83,21 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // sonrası "gecikme" hissi (ağ round-trip'i beklenmeden) ortadan kalkar.
   const [optimistic, setOptimistic] = useState(null);
   const optimisticSafetyRef = useRef(null);
+  const optimisticBaseRef = useRef(null);
+  const confirmedPosition = useMemo(() => JSON.stringify([roomData.board, roomData.turn, roomData.chessMoves, roomData.winner, roomData.status]),
+    [roomData.board, roomData.turn, roomData.chessMoves, roomData.winner, roomData.status]);
   const effective = optimistic ? { ...roomData, ...optimistic } : roomData;
   const isMyTurn = effective.turn === user.uid && !isSpectator;
 
   useEffect(() => {
-    if (!optimistic) return undefined;
+    if (!optimistic || confirmedPosition === optimisticBaseRef.current) return undefined;
     const sameLastMove = roomData.lastMove?.from === optimistic.lastMove?.from && roomData.lastMove?.to === optimistic.lastMove?.to;
-    const caughtUp = (sameLastMove && roomData.turn === optimistic.turn) || roomData.turn === user.uid || roomData.winner;
+    const caughtUp = (sameLastMove && roomData.turn === optimistic.turn) || roomData.turn === user.uid || roomData.winner || roomData.status !== 'playing';
     if (caughtUp) {
       setOptimistic(null);
       if (optimisticSafetyRef.current) { clearTimeout(optimisticSafetyRef.current); optimisticSafetyRef.current = null; }
     }
-  }, [roomData.lastMove, roomData.turn, roomData.winner, optimistic, user.uid]);
+  }, [confirmedPosition, roomData.lastMove, roomData.turn, roomData.winner, roomData.status, optimistic, user.uid]);
   useEffect(() => () => { if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current); }, []);
 
   // ============================================================
@@ -109,7 +113,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const [premovePromotionPrompt, setPremovePromotionPrompt] = useState(null); // { from, to }
   useEffect(() => { if (isMyTurn) setPremovePromotionPrompt(null); }, [isMyTurn]);
 
-  const canInteract = !isSpectator && !effective.winner && roomData.status !== 'abandoned' && !promotionPrompt && !premovePromotionPrompt && !isSubmitting;
+  const canInteract = !isSpectator && !effective.winner && roomData.status === 'playing' && !promotionPrompt && !premovePromotionPrompt && !isSubmitting;
 
   const applyPremoveToBoard = (boardArr, pm) => {
     const b = boardArr.map((p) => (p ? { ...p } : null));
@@ -181,89 +185,40 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
      prevInCheckRef.current = inCheckKings.length;
   }, [inCheckKings.length, effective.winner]);
 
-  useEffect(() => { if (roomData.status === 'abandoned' || roomData.status === 'closed' || !isMyTurn) setPromotionPrompt(null); }, [roomData.status, isMyTurn]);
+  useEffect(() => {
+    if (roomData.status !== 'playing' || !isMyTurn || effective.winner || (promotionPrompt && promotionPrompt.board !== board)) setPromotionPrompt(null);
+    if (roomData.status !== 'playing' || effective.winner) { setPremoves([]); setPremovePromotionPrompt(null); }
+  }, [roomData.status, isMyTurn, effective.winner, promotionPrompt, board]);
 
   const p1Name = roomData.playerNames?.[p1Uid] || 'Oyuncu 1'; const p2Name = roomData.playerNames?.[p2Uid] || 'Oyuncu 2';
   const p1Color = roomData.playerColors?.[p1Uid] || 'w'; const p2Color = roomData.playerColors?.[p2Uid] || 'b';
   const p1Score = effective.scores?.[p1Uid] || 0; const p2Score = effective.scores?.[p2Uid] || 0;
 
-  const executeMove = async (from, to, movingPiece, targetPiece, currentBoard, moverUid = user.uid, moverColor = myColor) => {
-    const originalPiece = board[from];
-    const notationStartFen = effective.notationStartFen || boardToFEN(board, moverColor, effective.enPassantTarget, effective.halfmoveClock || 0, 1);
-    if (movingPiece.type === 'k' && Math.abs(from - to) === 2) {
-      if (to === 62) { currentBoard[61] = currentBoard[63]; currentBoard[61].hasMoved = true; currentBoard[63] = null; }
-      if (to === 58) { currentBoard[59] = currentBoard[56]; currentBoard[59].hasMoved = true; currentBoard[56] = null; }
-      if (to === 6)  { currentBoard[5] = currentBoard[7]; currentBoard[5].hasMoved = true; currentBoard[7] = null; }
-      if (to === 2)  { currentBoard[3] = currentBoard[0]; currentBoard[3].hasMoved = true; currentBoard[0] = null; }
-    }
-
-    if (movingPiece.type === 'p' && to === effective.enPassantTarget) {
-       const captureIdx = movingPiece.color === 'w' ? to + 8 : to - 8;
-       targetPiece = currentBoard[captureIdx]; currentBoard[captureIdx] = null;
-    }
-
-    playSound(targetPiece ? 'capture' : 'move');
-
-    let newEnPassantTarget = null;
-    if (movingPiece.type === 'p' && Math.abs(from - to) === 16) { newEnPassantTarget = movingPiece.color === 'w' ? from - 8 : from + 8; }
-
-    movingPiece.hasMoved = true; currentBoard[to] = movingPiece; currentBoard[from] = null;
-
-    const newCaptured = { w: [...(effective.captured?.w || [])], b: [...(effective.captured?.b || [])] };
-    if (targetPiece && moverColor) newCaptured[moverColor].push(targetPiece.type);
-
-    const oppUid = roomData.players.find(id => id !== moverUid) ?? null;
-    const oppColor = moverColor === 'w' ? 'b' : 'w';
-
-    let newHalfmoveClock = (effective.halfmoveClock || 0) + 1;
-    let newPositionHistory = [...(effective.positionHistory || [])];
-
-    if (originalPiece.type === 'p' || targetPiece) {
-       newHalfmoveClock = 0;
-       newPositionHistory = [];
-    }
-
-    newPositionHistory.push(getBoardStateString(currentBoard, newEnPassantTarget, oppColor));
-    if (newPositionHistory.length > 100) newPositionHistory = newPositionHistory.slice(-100);
-
-    const gameState = getGameState(currentBoard, oppColor, newHalfmoveClock, newPositionHistory, newEnPassantTarget);
-    const san = moveToSAN(board, currentBoard, from, to, effective.enPassantTarget, newEnPassantTarget, gameState === 'mate');
-    let newWinner = null, newDrawReason = null;
-
-    if (gameState === 'mate') { newWinner = moverUid; playSound('win'); }
-    else if (gameState === 'draw_stalemate') { newWinner = 'Draw'; newDrawReason = 'stalemate'; }
-    else if (gameState === 'draw_material') { newWinner = 'Draw'; newDrawReason = 'material'; }
-    else if (gameState === 'draw_50move') { newWinner = 'Draw'; newDrawReason = '50move'; }
-    else if (gameState === 'draw_repetition') { newWinner = 'Draw'; newDrawReason = 'repetition'; }
-
-    let updatePayload = {
-      board: currentBoard, turn: newWinner ? null : oppUid, captured: newCaptured, winner: newWinner,
-      halfmoveClock: newHalfmoveClock, positionHistory: newPositionHistory, enPassantTarget: newEnPassantTarget,
-      chessMoves: [...(effective.chessMoves || []), san], notationStartFen,
-      lastMove: { from, to }, drawOffer: null, takebackOffer: null,
-      previousState: {
-         board: effective.board, turn: effective.turn, captured: effective.captured || {w:[], b:[]},
-         halfmoveClock: effective.halfmoveClock || 0, positionHistory: effective.positionHistory || [],
-         chessMoves: effective.chessMoves || [], notationStartFen: effective.notationStartFen || null,
-         enPassantTarget: effective.enPassantTarget || null, lastMove: effective.lastMove || null
-      }
-    };
-    if (newDrawReason) updatePayload.drawReason = newDrawReason;
-    if (newWinner && newWinner !== 'Draw') updatePayload.scores = { ...roomData.scores, [newWinner]: (roomData.scores?.[newWinner] || 0) + 1 };
-
-    // Tahtayı sunucu yanıtını beklemeden ANINDA güncelle (bkz. yukarıdaki
-    // optimistic katman açıklaması) — asıl yazma arka planda devam eder.
-    setOptimistic(updatePayload);
-    setSelectedSquare(null); setPromotionPrompt(null);
-    if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current);
-    optimisticSafetyRef.current = setTimeout(() => setOptimistic(null), 4000);
-
-    await updateRoom(updatePayload);
+  const executeMove = async (from, to, promotion = null, moverUid = user.uid) => {
+    if (movePendingRef.current || effective.turn !== moverUid || effective.winner || roomData.status !== 'playing') return;
+    movePendingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const updatePayload = getChessMoveUpdate(effective, from, to, promotion);
+      const color = effective.playerColors[moverUid];
+      playSound(updatePayload.captured[color].length > (effective.captured?.[color]?.length ?? 0) ? 'capture' : 'move');
+      if (updatePayload.winner === moverUid) playSound('win');
+      optimisticBaseRef.current = confirmedPosition;
+      setOptimistic(updatePayload);
+      setSelectedSquare(null); setPromotionPrompt(null);
+      if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current);
+      optimisticSafetyRef.current = setTimeout(() => setOptimistic(null), 4000);
+      await updateRoom(updatePayload);
+    } finally { movePendingRef.current = false; setIsSubmitting(false); }
   };
 
   const performMove = async (from, to) => {
+    if (!canInteract || movePendingRef.current) return;
     const srcPiece = interactionBoard[from];
-    if (!srcPiece) return;
+    if (srcPiece?.color !== myColor) return;
+    const legal = isMyTurn ? getStrictLegalMoves(board, from, effective.enPassantTarget)
+      : getPseudoLegalMoves(interactionBoard, from, true, null, false, true);
+    if (!legal.includes(to)) return;
     const r = Math.floor(to / 8);
     const isPromotion = srcPiece.type === 'p' && ((srcPiece.color === 'w' && r === 0) || (srcPiece.color === 'b' && r === 7));
 
@@ -275,17 +230,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       return;
     }
 
-    setIsSubmitting(true);
     try {
-      const newBoard = board.map(p => p ? { ...p } : null);
-      const movingPiece = { ...newBoard[from] }; const targetPiece = newBoard[to] ? { ...newBoard[to] } : null;
-      if (isPromotion) { playSound('move'); setPromotionPrompt({ from, to, movingPiece, targetPiece, newBoard }); return; }
-      await executeMove(from, to, movingPiece, targetPiece, newBoard);
+      if (isPromotion) { setPromotionPrompt({ from, to, board }); return; }
+      await executeMove(from, to);
     } catch (err) {
       showToast("Hamle gönderilemedi.");
       setOptimistic(null);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -295,20 +245,15 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // tehlikesi vb.) TÜM kuyruk sessizce iptal edilir (chess.com'daki gibi:
   // pozisyon beklenmedik şekilde saptığı için kalan hamleler de güvenilmez).
   useEffect(() => {
-    if (!isMyTurn || premoves.length === 0 || isSubmitting || isSpectator || effective.winner || roomData.status === 'abandoned') return;
+    if (!isMyTurn || premoves.length === 0 || isSubmitting || movePendingRef.current || isSpectator || effective.winner || roomData.status !== 'playing') return;
     const next = premoves[0];
     const legal = getStrictLegalMoves(board, next.from, effective.enPassantTarget);
     if (!legal.includes(next.to)) { setPremoves([]); return; }
     const srcPiece = board[next.from];
-    if (!srcPiece) { setPremoves([]); return; }
+    if (srcPiece?.color !== myColor) { setPremoves([]); return; }
     setPremoves((prev) => prev.slice(1));
-    const movingPiece = { ...srcPiece, ...(next.promotion ? { type: next.promotion } : {}) };
-    const targetPiece = board[next.to] ? { ...board[next.to] } : null;
-    const freshBoard = board.map(p => p ? { ...p } : null);
-    setIsSubmitting(true);
-    executeMove(next.from, next.to, movingPiece, targetPiece, freshBoard)
-      .catch(() => setOptimistic(null))
-      .finally(() => setIsSubmitting(false));
+    executeMove(next.from, next.to, next.promotion ?? null)
+      .catch(() => { setOptimistic(null); setPremoves([]); showToast('Ön-hamle uygulanamadı.'); });
   }, [isMyTurn, premoves, board, effective.enPassantTarget, isSubmitting, isSpectator, effective.winner, roomData.status]);
 
   // Sürükleyerek YA DA tıklayarak oynama aynı anda desteklenir. pointerup bir
@@ -321,7 +266,24 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // işlenmiyordu (bkz. kullanıcı raporu). Kareyi de eşleştirerek bu düzeltildi.
   const pointerHandledAtRef = useRef(null);
   const dragMovedRef = useRef(false);
+  const dragRef = useRef(null);
   const [dragPiece, setDragPiece] = useState(null);
+  const cancelPieceDrag = () => { dragRef.current = null; dragMovedRef.current = false; setDragPiece(null); };
+  useEffect(() => { cancelPieceDrag(); }, [board, effective.turn, roomData.status, effective.winner, promotionPrompt, premoves]);
+  useEffect(() => {
+    const onHidden = () => { if (document.hidden) cancelPieceDrag(); };
+    // Source elements may disappear before their own pointerup can fire.
+    window.addEventListener('pointerup', cancelPieceDrag);
+    window.addEventListener('pointercancel', cancelPieceDrag);
+    window.addEventListener('blur', cancelPieceDrag);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('pointerup', cancelPieceDrag);
+      window.removeEventListener('pointercancel', cancelPieceDrag);
+      window.removeEventListener('blur', cancelPieceDrag);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, []);
 
   const getSquareAt = (clientX, clientY) => {
     const el = document.elementFromPoint(clientX, clientY);
@@ -339,27 +301,28 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (arrows.length) setArrows([]);
     if (redSquares.size) setRedSquares(new Set());
     dragMovedRef.current = false;
-    setDragPiece({ from: index, piece, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
+    dragRef.current = { from: index, piece, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY,
+      board: interactionBoard, turn: effective.turn };
+    setDragPiece(dragRef.current);
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no-op */ }
   };
 
   const handlePiecePointerMove = (e) => {
-    setDragPiece((prev) => {
-      if (!prev) return prev;
-      if (!dragMovedRef.current) {
-        const dx = e.clientX - prev.startX, dy = e.clientY - prev.startY;
-        if (Math.hypot(dx, dy) > 5) { dragMovedRef.current = true; setSelectedSquare(prev.from); }
-      }
-      return dragMovedRef.current ? { ...prev, x: e.clientX, y: e.clientY } : prev;
-    });
+    const prev = dragRef.current;
+    if (!prev) return;
+    if (!dragMovedRef.current && Math.hypot(e.clientX - prev.startX, e.clientY - prev.startY) > 5) {
+      dragMovedRef.current = true; setSelectedSquare(prev.from);
+    }
+    if (dragMovedRef.current) { dragRef.current = { ...prev, x: e.clientX, y: e.clientY }; setDragPiece(dragRef.current); }
   };
 
   const handlePiecePointerUp = async (e) => {
-    const current = dragPiece;
-    setDragPiece(null);
+    const current = dragRef.current, moved = dragMovedRef.current;
+    cancelPieceDrag();
     if (!current) return;
+    if (!canInteract || movePendingRef.current || current.board !== interactionBoard || current.turn !== effective.turn) return;
     try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch { /* no-op */ }
-    if (!dragMovedRef.current) {
+    if (!moved) {
       // Hareket yok: basit dokunma/tık — orijinal tıkla-oyna akışıyla BİREBİR
       // aynı geçiş kuralı (seç / seçimi kaldır).
       pointerHandledAtRef.current = { time: Date.now(), index: current.from };
@@ -537,11 +500,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         if (board[from]?.color !== botColor || !getStrictLegalMoves(board, from, effective.enPassantTarget).includes(to)) {
           throw new Error('Bot geçersiz bir hamle döndürdü.');
         }
-        const freshBoard = board.map(p => p ? { ...p } : null);
-        const movingPiece = { ...freshBoard[from] };
-        if (promotion) movingPiece.type = promotion;
-        const targetPiece = freshBoard[to] ? { ...freshBoard[to] } : null;
-        await executeMove(from, to, movingPiece, targetPiece, freshBoard, BOT_UID, botColor);
+        await executeMove(from, to, promotion ?? null, BOT_UID);
       } catch (error) {
         if (!cancelled) { setOptimistic(null); showToast(error.message || 'Bot hamlesi uygulanamadı.'); }
       } finally { if (!cancelled) setBotThinking(false); }
@@ -595,7 +554,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (isBot || isSpectator || isSubmitting) return; setIsSubmitting(true);
     try {
        if (accept && effective.previousState) {
-           await updateRoom({ ...effective.previousState, takebackOffer: null, drawOffer: null });
+           await updateRoom({ ...effective.previousState, previousState: null, takebackOffer: null, drawOffer: null });
        } else { await updateRoom({ takebackOffer: null }); }
     } finally { setIsSubmitting(false); }
   };
@@ -809,7 +768,8 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                     onPointerDown={isDraggable ? (e) => handlePiecePointerDown(e, i, cell) : undefined}
                     onPointerMove={isDraggable ? handlePiecePointerMove : undefined}
                     onPointerUp={isDraggable ? handlePiecePointerUp : undefined}
-                    onPointerCancel={isDraggable ? handlePiecePointerUp : undefined}
+                    onPointerCancel={cancelPieceDrag}
+                    onLostPointerCapture={cancelPieceDrag}
                     className={`${hasSizedBoard ? '' : 'text-[36px] sm:text-[52px] md:text-[64px] lg:text-[76px]'} leading-none drop-shadow-md select-none flex items-center justify-center w-full h-full font-sans transition-transform duration-200 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''} ${cell.color === 'w' ? 'text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]' : 'text-black drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]'}`}
                   >{CHESS_ICONS[cell.type]}</div>
                 )}
@@ -841,18 +801,15 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                   <h3 className="text-white font-bold mb-4">Piyon Terfisi</h3>
                   <div className="flex gap-4 mb-6">
                      {['q', 'r', 'b', 'n'].map(type => (
-                         <button key={type} onClick={async () => { 
-                            setIsSubmitting(true); 
-                            const freshBoard = board.map(p => p ? { ...p } : null);
-                            const promotedPiece = { ...freshBoard[promotionPrompt.from], type }; 
-                            const targetPiece = freshBoard[promotionPrompt.to] ? { ...freshBoard[promotionPrompt.to] } : null;
-                            try { await executeMove(promotionPrompt.from, promotionPrompt.to, promotedPiece, targetPiece, freshBoard); }
-                            catch(e){ setOptimistic(null); } finally {setIsSubmitting(false);}
+                         <button key={type} disabled={isSubmitting} onClick={async () => {
+                            if (promotionPrompt.board !== board || !isMyTurn || movePendingRef.current) { setPromotionPrompt(null); return; }
+                            try { await executeMove(promotionPrompt.from, promotionPrompt.to, type); }
+                            catch(e){ setOptimistic(null); showToast('Terfi hamlesi uygulanamadı.'); }
                          }} 
                             style={chessPieceStyle} className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}>{CHESS_ICONS[type]}</button>
                      ))}
                   </div>
-                  <button onClick={() => { setPromotionPrompt(null); setIsSubmitting(false); }} className="text-red-400 hover:text-red-300 font-medium px-4 py-2 border border-red-500/50 rounded-lg bg-red-500/10 transition-colors w-full text-center">Vazgeç</button>
+                  <button disabled={isSubmitting} onClick={() => setPromotionPrompt(null)} className="text-red-400 hover:text-red-300 font-medium px-4 py-2 border border-red-500/50 rounded-lg bg-red-500/10 transition-colors w-full text-center">Vazgeç</button>
               </div>
            </div>
         )}
