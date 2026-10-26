@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { requireAction } from './errors.js';
+import { freshServerTime, monotonicServerTime } from './time.js';
 import { validateAction } from './room-schema.js';
 import { FRESH_MS, PRESENCE_SHARDS } from '../src/utils/presenceProtocol.js';
 
 const RETIRED_MS = 120_000;
 const MAX_MEMBERS = 128, MAX_ACTIVE_TABS = 8, MAX_SESSIONS = 16;
-const fresh = (at, now, ttl) => Number.isFinite(at) && at <= now && now - at < ttl;
+const fresh = freshServerTime;
 export const presenceShardId = uid => String(createHash('sha256').update(uid).digest().readUInt32BE(0) % PRESENCE_SHARDS).padStart(2, '0');
 
 function pruneMembers(source, now) {
@@ -79,11 +80,13 @@ export async function executePresenceAction(db, projectId, uid, input, now = Dat
       if (!held) requireAction(Object.keys(member.sessions).length < MAX_SESSIONS, 429, 'too_many_tabs');
       if (action.type === 'presence.heartbeat' && !held) requireAction(Object.values(member.sessions)
         .filter(session => !session.closed).length < MAX_ACTIVE_TABS, 429, 'too_many_tabs');
-      member.sessions[action.sessionId] = action.type === 'presence.leave' ? { at: now, closed: true }
-        : { at: now, roomCode };
+      const at = monotonicServerTime(held?.at, now);
+      member.sessions[action.sessionId] = action.type === 'presence.leave' ? { at, closed: true }
+        : { at, roomCode };
     }
-    const result = { serverNow: now, retired };
-    Object.assign(member, { seenAt: now, windowStart: sameWindow ? member.windowStart : now, count: count + 1,
+    const seenAt = monotonicServerTime(member.seenAt, now);
+    const result = { serverNow: seenAt, retired };
+    Object.assign(member, { seenAt, windowStart: sameWindow ? member.windowStart : now, count: count + 1,
       recent: [...member.recent.slice(-7), { actionId: action.actionId, fingerprint, result }] });
     members[uid] = member;
     requireAction(Buffer.byteLength(JSON.stringify({ members })) <= 700_000, 503, 'presence_capacity');

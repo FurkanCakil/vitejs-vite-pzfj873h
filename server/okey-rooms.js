@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { requireAction } from './errors.js';
+import { freshServerTime, monotonicServerTime } from './time.js';
 import { applyOkeyAction, dealOkeyRound, publicOkeyState, privateOkeyView, secureShuffle } from './games/okey.js';
 import { okeyCommand } from './okey-schema.js';
 import { createBotPlayers } from '../src/games/okey101/botPlayers.js';
 import { buildSeatSwapUpdate } from '../src/games/okey101/gameLogic.js';
 import { TURN_DURATION_MS } from '../src/games/okey101/tiles.js';
 
-const live = (at, now) => Number.isFinite(at) && at <= now && now - at < 60_000;
+const live = (at, now) => freshServerTime(at, now, 60_000);
 const prune = (connections, now) => Object.fromEntries(Object.entries(connections ?? {}).map(([uid, sessions]) =>
   [uid, Object.fromEntries(Object.entries(sessions).filter(([, at]) => live(at, now)).slice(-8))]).filter(([, sessions]) => Object.keys(sessions).length));
 const connected = (connections, uid) => Object.keys(connections[uid] ?? {}).length > 0;
@@ -122,7 +123,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   if (action.sessionId && !['room.leave', 'room.disconnect'].includes(action.type)) {
     const sessions = connections[uid] ?? {};
     requireAction(Object.hasOwn(sessions, action.sessionId) || Object.keys(sessions).length < 8, 429, 'too_many_tabs');
-    connections[uid] = { ...sessions, [action.sessionId]: now };
+    connections[uid] = { ...sessions, [action.sessionId]: monotonicServerTime(sessions[action.sessionId], now) };
   }
   if (action.type === 'room.leave' || action.type === 'room.disconnect') {
     if (action.type === 'room.leave') requireAction(connected(connections, uid) && Object.hasOwn(connections[uid], action.sessionId), 409, 'session_expired');
@@ -219,7 +220,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
     data.spectators.includes(id) && data.players.includes(request.botUid) && bot(data, request.botUid)));
   let changed = JSON.stringify(data) !== JSON.stringify(before);
   if (changed && !creating) data.version = before.version + 1;
-  if (changed || creating) data.updatedAt = now;
+  if (changed || creating) data.updatedAt = monotonicServerTime(data.updatedAt, now);
   const handWrites = [];
   data.handVersions ??= {};
   if (data.racks) for (const id of humanPlayers(data)) {
@@ -234,7 +235,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   entries = entries.filter(entry => entry.roomId !== id);
   if (touchesQueue && data.isPublic && data.status === 'waiting' && data.players.length < 4 && connected(connections, data.host)) {
     requireAction(entries.length < 30, 503, 'match_queue_full');
-    entries.push({ roomId: id, host: data.host, players: data.players.length, updatedAt: now });
+    entries.push({ roomId: id, host: data.host, players: data.players.length, updatedAt: Math.max(now, ...Object.values(connections[data.host])) });
   }
   if (changed || creating) {
     tx.set(secretRef(id), data); tx.set(roomRef(id), publicOkeyState(data));

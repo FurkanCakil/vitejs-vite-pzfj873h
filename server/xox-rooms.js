@@ -1,5 +1,6 @@
 import { createHash, randomInt, randomBytes } from 'node:crypto';
 import { requireAction } from './errors.js';
+import { freshServerTime, monotonicServerTime } from './time.js';
 import { applyXoxMove } from './games/xox.js';
 import { applyConnect4Move, freshConnect4 } from './games/connect4.js';
 import { applyCheckersMove, freshCheckers } from './games/checkers.js';
@@ -12,7 +13,7 @@ import { executeOkeyTransaction } from './okey-rooms.js';
 export const CONNECTION_TTL = 60_000;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join('');
-const live = (time, now) => Number.isFinite(time) && time <= now && now - time < CONNECTION_TTL;
+const live = (time, now) => freshServerTime(time, now, CONNECTION_TTL);
 const pair = players => createHash('sha256').update(JSON.stringify([...players].sort())).digest('hex');
 const matchFields = ['players', 'board', 'turn', 'startingPlayer', 'winner', 'winningLine', 'scores', 'rematchRequestedBy'];
 const battleFields = ['players', 'setupPhase', 'roundId', 'readyPlayers', 'shots', 'revealedShips', 'turn', 'startingPlayer', 'winner', 'scores', 'rematchRequestedBy'];
@@ -83,7 +84,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       return receipt.result;
     }
     const rate = rateSnap.data();
-    const sameWindow = rate && now >= rate.windowStart && now - rate.windowStart < 10_000;
+    const sameWindow = rate && freshServerTime(rate.windowStart, now, 10_000);
     const count = sameWindow ? rate.count : 0;
     requireAction(count < 30, 429, 'too_many_actions');
     let id = action.roomId;
@@ -139,7 +140,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       id = candidateCode;
       const [candidate, legacy] = await tx.getAll(roomRef(id), db.doc(`${root}/public/data/rooms/${id}`));
       requireAction(!candidate.exists && !legacy.exists, 409, 'room_code_collision');
-      const recentCreates = (actor.createdAt ?? []).filter(at => now >= at && now - at < 60_000);
+      const recentCreates = (actor.createdAt ?? []).filter(at => live(at, now));
       requireAction(recentCreates.length < 3, 429, 'too_many_rooms');
       actor.createdAt = [...recentCreates, now];
       data = { schemaVersion: 2, gameType: game, gameId: game, version: 0,
@@ -206,7 +207,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     if (action.sessionId && !['room.leave', 'room.disconnect'].includes(action.type)) {
       const sessions = connections[uid] ?? {};
       requireAction(Object.hasOwn(sessions, action.sessionId) || Object.keys(sessions).length < 8, 429, 'too_many_tabs');
-      connections[uid] = { ...sessions, [action.sessionId]: now };
+      connections[uid] = { ...sessions, [action.sessionId]: monotonicServerTime(sessions[action.sessionId], now) };
     }
     if (action.type === 'room.leave' || action.type === 'room.disconnect') {
       if (action.type === 'room.leave') requireAction(Object.hasOwn(connections[uid] ?? {}, action.sessionId), 409, 'session_expired');
@@ -325,12 +326,12 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     data.playerNames = Object.fromEntries(Object.entries(data.playerNames ?? {}).filter(([id]) => remembered.has(id)));
     if (changed && !creating) data.version += 1;
     const publicChanged = creating || changed || JSON.stringify(data) !== originalPublic;
-    if (publicChanged) data.updatedAt = now;
+    if (publicChanged) data.updatedAt = monotonicServerTime(data.updatedAt, now);
     if (touchesQueue) {
       entries = entries.filter(item => item.roomId !== id);
       if (data.isPublic && data.status === 'waiting' && data.players.length === 1 && connected(connections, data.host)) {
         requireAction(entries.length < 30, 503, 'match_queue_full');
-        entries.push({ roomId: id, host: data.host, updatedAt: now });
+        entries.push({ roomId: id, host: data.host, updatedAt: Math.max(now, ...Object.values(connections[data.host])) });
       }
     }
     const result = { roomId: id, version: data.version, winner: data.winner };
