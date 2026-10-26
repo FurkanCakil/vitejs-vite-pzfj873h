@@ -10,15 +10,17 @@ import { BOT_UID, DIFFICULTY_LABELS, DIFFICULTY_CONFIG, chooseEasyMove } from '.
 import useViewport from '../../hooks/useViewport.js';
 import MoveNotation from './MoveNotation.jsx';
 import { getChessMoveUpdate } from './move.js';
+import { gameErrorMessage } from '../../utils/gameApi.js';
 
 const EMPTY_SET = new Set();
 
-export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData }) {
+export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   const p1Uid = roomData.players?.[0]; const p2Uid = roomData.players?.[1];
   const isSpectator = !roomData.players?.includes(user.uid);
   const myColor = roomData.playerColors?.[user.uid] || null;
 
   const updateRoom = async (patch) => {
+    if (roomData.schemaVersion === 2) throw new Error('Server room requires a verified action');
     if (isBot) { setLocalRoomData(prev => ({ ...prev, ...patch })); return; }
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode), patch);
   };
@@ -84,20 +86,23 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   const [optimistic, setOptimistic] = useState(null);
   const optimisticSafetyRef = useRef(null);
   const optimisticBaseRef = useRef(null);
+  const optimisticVersionRef = useRef(null);
   const confirmedPosition = useMemo(() => JSON.stringify([roomData.board, roomData.turn, roomData.chessMoves, roomData.winner, roomData.status]),
     [roomData.board, roomData.turn, roomData.chessMoves, roomData.winner, roomData.status]);
-  const effective = optimistic ? { ...roomData, ...optimistic } : roomData;
+  const effective = optimistic && (!sendAction || roomData.version === optimisticVersionRef.current) ? { ...roomData, ...optimistic } : roomData;
   const isMyTurn = effective.turn === user.uid && !isSpectator;
 
   useEffect(() => {
-    if (!optimistic || confirmedPosition === optimisticBaseRef.current) return undefined;
+    if (!optimistic) return undefined;
+    if (sendAction && roomData.version !== optimisticVersionRef.current) { setOptimistic(null); return undefined; }
+    if (confirmedPosition === optimisticBaseRef.current) return undefined;
     const sameLastMove = roomData.lastMove?.from === optimistic.lastMove?.from && roomData.lastMove?.to === optimistic.lastMove?.to;
     const caughtUp = (sameLastMove && roomData.turn === optimistic.turn) || roomData.turn === user.uid || roomData.winner || roomData.status !== 'playing';
     if (caughtUp) {
       setOptimistic(null);
       if (optimisticSafetyRef.current) { clearTimeout(optimisticSafetyRef.current); optimisticSafetyRef.current = null; }
     }
-  }, [confirmedPosition, roomData.lastMove, roomData.turn, roomData.winner, roomData.status, optimistic, user.uid]);
+  }, [confirmedPosition, roomData.lastMove, roomData.turn, roomData.winner, roomData.status, roomData.version, sendAction, optimistic, user.uid]);
   useEffect(() => () => { if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current); }, []);
 
   // ============================================================
@@ -138,6 +143,18 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     toastTimeoutRef.current = setTimeout(() => setGameToast(null), 3000);
   };
   useEffect(() => { return () => { if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current); }; }, []);
+  const submitServer = async (type) => {
+    if (!sendAction || movePendingRef.current || isSpectator) return false;
+    movePendingRef.current = true; setIsSubmitting(true);
+    try { await sendAction(type, { expectedVersion: roomData.version }); return true; }
+    catch (error) { showToast(gameErrorMessage(error)); return false; }
+    finally { movePendingRef.current = false; setIsSubmitting(false); }
+  };
+  const lastWinnerRef = useRef(roomData.winner);
+  useEffect(() => {
+    if (sendAction && roomData.winner && !lastWinnerRef.current) playSound('win');
+    lastWinnerRef.current = roomData.winner;
+  }, [roomData.winner, sendAction]);
 
   useEffect(() => { setSelectedSquare(null); }, [effective.turn]);
 
@@ -202,13 +219,16 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       const updatePayload = getChessMoveUpdate(effective, from, to, promotion);
       const color = effective.playerColors[moverUid];
       playSound(updatePayload.captured[color].length > (effective.captured?.[color]?.length ?? 0) ? 'capture' : 'move');
-      if (updatePayload.winner === moverUid) playSound('win');
+      if (!sendAction && updatePayload.winner === moverUid) playSound('win');
       optimisticBaseRef.current = confirmedPosition;
-      setOptimistic(updatePayload);
+      optimisticVersionRef.current = roomData.version;
+      // Preview movement, but display results/scores only when confirmed.
+      setOptimistic(sendAction ? { ...updatePayload, winner: null, scores: roomData.scores, drawReason: null } : updatePayload);
       setSelectedSquare(null); setPromotionPrompt(null);
       if (optimisticSafetyRef.current) clearTimeout(optimisticSafetyRef.current);
       optimisticSafetyRef.current = setTimeout(() => setOptimistic(null), 4000);
-      await updateRoom(updatePayload);
+      if (sendAction) await sendAction('chess.move', { expectedVersion: roomData.version, from, to, promotion });
+      else await updateRoom(updatePayload);
     } finally { movePendingRef.current = false; setIsSubmitting(false); }
   };
 
@@ -234,7 +254,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       if (isPromotion) { setPromotionPrompt({ from, to, board }); return; }
       await executeMove(from, to);
     } catch (err) {
-      showToast("Hamle gönderilemedi.");
+      showToast(sendAction ? gameErrorMessage(err) : 'Hamle gönderilemedi.');
       setOptimistic(null);
     }
   };
@@ -253,7 +273,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     if (srcPiece?.color !== myColor) { setPremoves([]); return; }
     setPremoves((prev) => prev.slice(1));
     executeMove(next.from, next.to, next.promotion ?? null)
-      .catch(() => { setOptimistic(null); setPremoves([]); showToast('Ön-hamle uygulanamadı.'); });
+      .catch(error => { setOptimistic(null); setPremoves([]); showToast(sendAction ? gameErrorMessage(error) : 'Ön-hamle uygulanamadı.'); });
   }, [isMyTurn, premoves, board, effective.enPassantTarget, isSubmitting, isSpectator, effective.winner, roomData.status]);
 
   // Sürükleyerek YA DA tıklayarak oynama aynı anda desteklenir. pointerup bir
@@ -510,6 +530,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   }, [isBot, isEngineReady, effective.turn, effective.winner, roomData.status]);
 
   const handleResign = async () => {
+    if (sendAction) { if (await submitServer('chess.resign')) setResignConfirm(false); return; }
     if (isSpectator || effective.winner || isSubmitting) return; setIsSubmitting(true);
     try {
        const oppUid = roomData.players.find(id => id !== user.uid) ?? null;
@@ -519,6 +540,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const handleDrawOffer = async () => {
+    if (sendAction) { await submitServer(roomData.drawOffer && roomData.drawOffer !== user.uid ? 'chess.draw.accept' : 'chess.draw.request'); return; }
     if (isBot || isSpectator || effective.winner || isSubmitting) return; setIsSubmitting(true);
     try {
        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
@@ -536,11 +558,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const handleDeclineDraw = async () => {
+    if (sendAction) { await submitServer('chess.draw.reject'); return; }
     if (isBot || isSpectator || isSubmitting) return; setIsSubmitting(true);
     try { await updateRoom({ drawOffer: null }); } finally { setIsSubmitting(false); }
   };
 
   const handleTakebackOffer = async () => {
+    if (sendAction) { await submitServer('chess.takeback.request'); return; }
     if (isBot || isSpectator || effective.winner || isSubmitting) return;
     const canTakeback = !isMyTurn && effective.previousState && effective.previousState.turn === user.uid;
     if (!canTakeback) { showToast("Geri alma isteği geçersiz."); return; }
@@ -551,6 +575,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const answerTakeback = async (accept) => {
+    if (sendAction) { await submitServer(accept ? 'chess.takeback.accept' : 'chess.takeback.reject'); return; }
     if (isBot || isSpectator || isSubmitting) return; setIsSubmitting(true);
     try {
        if (accept && effective.previousState) {
@@ -560,6 +585,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   };
 
   const requestRematch = async () => {
+    if (sendAction) { await submitServer('chess.rematch.request'); return; }
     if (isSpectator) return;
     const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
@@ -571,12 +597,14 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
     await updateRoom({ rematchRequestedBy: user.uid });
   };
   const acceptRematch = async () => {
+    if (sendAction) { await submitServer('chess.rematch.accept'); return; }
     if (isSpectator) return; const newColors = {}; let whiteUid = null;
     for (const uid of roomData.players) { const c = roomData.playerColors[uid] === 'w' ? 'b' : 'w'; newColors[uid] = c; if (c === 'w') whiteUid = uid; }
     const initBoard = createInitialChessBoard();
     await updateRoom({ board: initBoard, turn: whiteUid, startingPlayer: whiteUid, playerColors: newColors, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], chessMoves: [], notationStartFen: null, winner: null, drawReason: null, winReason: null, rematchRequestedBy: null, enPassantTarget: null, lastMove: null, drawOffer: null, takebackOffer: null, previousState: null });
   };
   const rejectRematch = async () => {
+    if (sendAction) { await submitServer('chess.rematch.reject'); return; }
     if (isSpectator) return;
     if (isBot) { leaveRoom(); return; }
     await updateRoom({ status: 'closed', closedBy: user.uid });
@@ -804,7 +832,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
                          <button key={type} disabled={isSubmitting} onClick={async () => {
                             if (promotionPrompt.board !== board || !isMyTurn || movePendingRef.current) { setPromotionPrompt(null); return; }
                             try { await executeMove(promotionPrompt.from, promotionPrompt.to, type); }
-                            catch(e){ setOptimistic(null); showToast('Terfi hamlesi uygulanamadı.'); }
+                            catch(e){ setOptimistic(null); showToast(sendAction ? gameErrorMessage(e) : 'Terfi hamlesi uygulanamadı.'); }
                          }} 
                             style={chessPieceStyle} className={`w-16 h-16 md:w-20 md:h-20 rounded-xl bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-4xl md:text-5xl transition-colors border-2 ${myColor === 'w' ? 'text-slate-100' : 'text-slate-900'}`}>{CHESS_ICONS[type]}</button>
                      ))}

@@ -41,7 +41,7 @@ export function applyChessMove(room, uid, from, to, promotion = null) {
   requireAction(!isSquareAttacked(room.board, otherKing, color), 409, 'invalid_board');
   requireAction(Number.isInteger(room.halfmoveClock) && room.halfmoveClock >= 0 && room.halfmoveClock < 100
     && Array.isArray(room.positionHistory) && room.positionHistory.length <= 100 && room.positionHistory.every(key => typeof key === 'string' && key.length <= 256)
-    && Array.isArray(room.chessMoves) && room.chessMoves.length <= 20_000 && room.chessMoves.every(san => typeof san === 'string' && san.length <= 16), 409, 'invalid_history');
+    && Array.isArray(room.chessMoves) && room.chessMoves.length < 20_000 && room.chessMoves.every(san => typeof san === 'string' && san.length <= 16), 409, 'invalid_history');
   requireAction(room.enPassantTarget === null || (Number.isInteger(room.enPassantTarget)
     && Math.floor(room.enPassantTarget / 8) === (color === 'w' ? 2 : 5) && room.board[room.enPassantTarget] === null
     && room.board[room.enPassantTarget + (color === 'w' ? 8 : -8)]?.type === 'p'
@@ -57,10 +57,28 @@ export function applyChessMove(room, uid, from, to, promotion = null) {
   }
 }
 
-// This core is deliberately not connected to the live room handler yet.
-// Agreement and takeback must be server validated before that activation.
 export function resignChess(room, uid) {
   const { opponent } = requirePlayers(room, uid);
   return { winner: opponent, winReason: 'resign', drawReason: null, turn: null,
     scores: { ...room.scores, [opponent]: room.scores[opponent] + 1 }, drawOffer: null, takebackOffer: null };
+}
+
+export function applyChessOffer(room, uid, kind, decision) {
+  requirePlayers(room, uid);
+  requireAction(['draw', 'takeback'].includes(kind) && ['request', 'accept', 'reject'].includes(decision), 400, 'invalid_offer');
+  const key = kind === 'draw' ? 'drawOffer' : 'takebackOffer';
+  const offer = room[key];
+  if (decision === 'request') {
+    requireAction(!offer || offer === uid, 409, 'offer_pending');
+    if (kind === 'takeback') requireAction(room.turn !== uid && room.previousState?.turn === uid && room.lastMove, 409, 'invalid_takeback');
+    return { [key]: uid };
+  }
+  requireAction(offer && offer !== uid && room.players.includes(offer), 409, 'invalid_offer');
+  if (decision === 'reject') return { [key]: null };
+  if (kind === 'draw') return { winner: 'Draw', drawReason: 'agreement', winReason: null, turn: null, drawOffer: null, takebackOffer: null };
+  requireAction(room.turn === uid && room.previousState?.turn === offer && room.lastMove, 409, 'invalid_takeback');
+  // Restore only the last server-derived position, never a supplied snapshot,
+  // score or identity; consume the snapshot so it cannot be accepted twice.
+  return { ...structuredClone(room.previousState), previousState: null, drawOffer: null, takebackOffer: null,
+    winner: null, winReason: null, drawReason: null };
 }

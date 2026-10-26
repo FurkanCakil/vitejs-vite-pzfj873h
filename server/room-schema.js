@@ -35,6 +35,19 @@ const fields = {
   'checkers.rematch.request': [...room, ...version],
   'checkers.rematch.accept': [...room, ...version],
   'checkers.rematch.reject': [...room, ...version],
+  'chess.create': [...session, 'nickname', 'isPublic'],
+  'chess.match': [...session, 'nickname'],
+  'chess.move': [...room, ...version, 'from', 'to', 'promotion'],
+  'chess.resign': [...room, ...version],
+  'chess.draw.request': [...room, ...version],
+  'chess.draw.accept': [...room, ...version],
+  'chess.draw.reject': [...room, ...version],
+  'chess.takeback.request': [...room, ...version],
+  'chess.takeback.accept': [...room, ...version],
+  'chess.takeback.reject': [...room, ...version],
+  'chess.rematch.request': [...room, ...version],
+  'chess.rematch.accept': [...room, ...version],
+  'chess.rematch.reject': [...room, ...version],
   'battleship.create': [...session, 'nickname', 'isPublic'],
   'battleship.match': [...session, 'nickname'],
   'battleship.ready': [...room, 'roundId', 'fleet'],
@@ -58,6 +71,7 @@ export function validateAction(input) {
   if (keys.includes('cell')) requireAction(Number.isInteger(input.cell) && input.cell >= 0 && input.cell < 9, 400, 'invalid_cell');
   if (keys.includes('column')) requireAction(Number.isInteger(input.column) && input.column >= 0 && input.column < 7, 400, 'invalid_column');
   for (const key of ['from', 'to']) if (keys.includes(key)) requireAction(Number.isInteger(input[key]) && input[key] >= 0 && input[key] < 64, 400, 'invalid_cell');
+  if (keys.includes('promotion')) requireAction(input.promotion === null || ['q', 'r', 'b', 'n'].includes(input.promotion), 400, 'invalid_promotion');
   if (keys.includes('nickname')) requireAction(typeof input.nickname === 'string' && input.nickname.trim().length >= 1 && input.nickname.length <= 15 && [...input.nickname].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 400, 'invalid_nickname');
   if (keys.includes('isPublic')) requireAction(typeof input.isPublic === 'boolean', 400, 'invalid_visibility');
   if (keys.includes('roundId')) requireAction(typeof input.roundId === 'string' && /^[a-f0-9]{24}$/.test(input.roundId), 400, 'invalid_round');

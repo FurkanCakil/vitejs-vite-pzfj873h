@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyChessMove, freshChess, resignChess } from './games/chess.js';
+import { applyChessMove, freshChess, resignChess, applyChessOffer } from './games/chess.js';
+import { validateAction } from './room-schema.js';
 import { getStrictLegalMoves, getBoardStateString, isSquareAttacked } from '../src/games/chess/logic.js';
 import { gameToPGN } from '../src/games/chess/notation.js';
 
@@ -22,6 +23,53 @@ test('Chess creates a complete initial state with white to move and scores retai
   assert.equal(fresh.turn, 'bob'); assert.equal(fresh.playerColors.bob, 'w');
   assert.equal(fresh.board.filter(Boolean).length, 32); assert.deepEqual(fresh.scores, { alice: 3, bob: 2 });
   assert.deepEqual(fresh.chessMoves, []); assert.equal(fresh.previousState, null);
+});
+
+test('Chess actions accept only coordinates/promotion or an explicit decision; forged state is denied', () => {
+  const request = { type: 'chess.move', actionId: 'chess_schema_test1', roomId: 'CTEST1', expectedVersion: 1, from: 52, to: 36, promotion: null };
+  assert.deepEqual(validateAction(request), request);
+  for (const key of ['board', 'scores', 'winner', 'uid', 'captured', 'previousState', 'chessMoves', 'playerColors']) fail(() => validateAction({ ...request, [key]: 'forged' }), 'invalid_fields');
+  for (const promotion of ['k', 'p', 'Q', {}, false]) fail(() => validateAction({ ...request, promotion }), 'invalid_promotion');
+  for (const type of ['chess.resign', 'chess.draw.accept', 'chess.takeback.accept', 'chess.rematch.accept']) {
+    const input = { type, actionId: request.actionId, roomId: request.roomId, expectedVersion: 1 };
+    assert.deepEqual(validateAction(input), input);
+    fail(() => validateAction({ ...input, previousState: {} }), 'invalid_fields');
+  }
+});
+
+test('Chess draw offers need opponent consent and never award points', () => {
+  const room = state(), offered = { ...room, ...applyChessOffer(room, 'alice', 'draw', 'request') };
+  fail(() => applyChessOffer(offered, 'alice', 'draw', 'accept'), 'invalid_offer');
+  fail(() => applyChessOffer(offered, 'viewer', 'draw', 'accept'), 'not_a_player');
+  fail(() => applyChessOffer(offered, 'bob', 'draw', 'request'), 'offer_pending');
+  const accepted = { ...offered, ...applyChessOffer(offered, 'bob', 'draw', 'accept') };
+  assert.equal(accepted.winner, 'Draw'); assert.equal(accepted.drawReason, 'agreement'); assert.equal(accepted.turn, null);
+  assert.deepEqual(accepted.scores, room.scores);
+  fail(() => applyChessOffer(accepted, 'bob', 'draw', 'accept'), 'game_not_playing');
+  assert.equal(applyChessOffer(offered, 'bob', 'draw', 'reject').drawOffer, null);
+});
+
+test('Chess takeback restores exactly the previous position, EP and notation once, without touching score', () => {
+  let room = play(state(), 'e2', 'e4'); room = play(room, 'a7', 'a6'); room = play(room, 'e4', 'e5'); room = play(room, 'd7', 'd5');
+  const before = structuredClone(room), capture = play(room, 'e5', 'd6');
+  const offered = { ...capture, ...applyChessOffer(capture, 'alice', 'takeback', 'request') };
+  fail(() => applyChessOffer(offered, 'alice', 'takeback', 'accept'), 'invalid_offer');
+  const restored = { ...offered, ...applyChessOffer(offered, 'bob', 'takeback', 'accept') };
+  for (const key of ['board', 'turn', 'enPassantTarget', 'chessMoves', 'positionHistory', 'halfmoveClock', 'captured', 'scores']) assert.deepEqual(restored[key], before[key], key);
+  assert.equal(restored.previousState, null); assert.equal(restored.takebackOffer, null);
+  fail(() => applyChessOffer(restored, 'bob', 'takeback', 'accept'), 'invalid_offer');
+  fail(() => applyChessOffer(restored, 'alice', 'takeback', 'request'), 'invalid_takeback');
+  const replied = play(capture, 'a6', 'a5');
+  fail(() => applyChessOffer(replied, 'alice', 'takeback', 'request'), 'invalid_takeback');
+});
+
+test('Chess playing a move cancels pending offers and makes their old acceptance invalid', () => {
+  let room = play(state(), 'e2', 'e4');
+  room = { ...room, ...applyChessOffer(room, 'alice', 'takeback', 'request'), ...applyChessOffer(room, 'alice', 'draw', 'request') };
+  room = play(room, 'e7', 'e5');
+  assert.equal(room.takebackOffer, null); assert.equal(room.drawOffer, null);
+  fail(() => applyChessOffer(room, 'bob', 'takeback', 'accept'), 'invalid_offer');
+  fail(() => applyChessOffer(room, 'bob', 'draw', 'accept'), 'invalid_offer');
 });
 
 test('Chess move is immutable, records SAN and stores only one previous state', () => {

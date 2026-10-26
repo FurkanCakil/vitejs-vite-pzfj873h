@@ -3,12 +3,13 @@ export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP
 export const SERVER_OKEY_ENABLED = import.meta.env?.VITE_SERVER_OKEY_ENABLED === 'true';
 export const SERVER_CONNECT4_ENABLED = import.meta.env?.VITE_SERVER_CONNECT4_ENABLED === 'true';
 export const SERVER_CHECKERS_ENABLED = import.meta.env?.VITE_SERVER_CHECKERS_ENABLED === 'true';
+export const SERVER_CHESS_ENABLED = import.meta.env?.VITE_SERVER_CHESS_ENABLED === 'true';
 export const SERVER_PRESENCE_ENABLED = import.meta.env?.VITE_SERVER_PRESENCE_ENABLED === 'true';
 export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
   || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED) || (game === 'okey101' && SERVER_OKEY_ENABLED)
-  || (game === 'connect4' && SERVER_CONNECT4_ENABLED) || (game === 'dama' && SERVER_CHECKERS_ENABLED);
-export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create', connect4: 'connect4.create', dama: 'checkers.create' })[game];
-export const serverMatchType = game => ({ xox: 'room.match', amiralbatti: 'battleship.match', okey101: 'okey.match', connect4: 'connect4.match', dama: 'checkers.match' })[game];
+  || (game === 'connect4' && SERVER_CONNECT4_ENABLED) || (game === 'dama' && SERVER_CHECKERS_ENABLED) || (game === 'satranc' && SERVER_CHESS_ENABLED);
+export const serverCreateType = game => ({ xox: 'room.create', amiralbatti: 'battleship.create', okey101: 'okey.create', connect4: 'connect4.create', dama: 'checkers.create', satranc: 'chess.create' })[game];
+export const serverMatchType = game => ({ xox: 'room.match', amiralbatti: 'battleship.match', okey101: 'okey.match', connect4: 'connect4.match', dama: 'checkers.match', satranc: 'chess.match' })[game];
 
 export class GameApiError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -54,7 +55,12 @@ export function gameErrorMessage(error) {
     player_reconnected: 'Rakibin yeniden bağlandı; oyun devam ediyor.',
     not_your_turn: 'Henüz senin sıran değil.', occupied_cell: 'Bu kare dolu.',
     column_full: 'Bu sütun dolu. Başka bir sütun seç.', invalid_column: 'Geçerli bir sütun seç.',
-    piece_not_owned: 'Bu taş sana ait değil.', illegal_move: 'Bu hamle geçerli değil. Zorunlu yeme ve zincirleme yeme kuralını kontrol et.',
+    piece_not_owned: 'Bu taş sana ait değil.', illegal_move: 'Bu hamle mevcut konumda geçerli değil.',
+    invalid_promotion: 'Piyon terfisi için vezir, kale, fil veya at seç.',
+    offer_pending: 'Bekleyen teklife yanıt verilmesi gerekiyor.',
+    invalid_offer: 'Bu teklif artık geçerli değil. Güncel durumu kontrol et.',
+    invalid_takeback: 'Yalnız son hamleni, rakibin yanıtından önce geri alabilirsin.',
+    game_not_playing: 'Oyun şu anda hamle kabul etmiyor.',
     already_shot: 'Bu hücreye zaten ateş ettin.', invalid_fleet: 'Gemilerin yerleşimi geçerli değil. Filonu kontrol et.',
     setup_locked: 'Yerleştirme aşaması değişti. Son durumu kontrol et.',
     stale_round: 'Yeni tur başladı. Son durumu kontrol edip tekrar dene.',
