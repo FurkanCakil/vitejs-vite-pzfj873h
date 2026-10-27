@@ -48,8 +48,8 @@ test('verified presence, concurrent tabs and read-only public summaries', { skip
     });
     await t.test('only actual public waiting-room members advertise a room; private/playing/malformed rooms are hidden', async () => {
       clock += 200_000; const host = 'presence-room-host', visitor = 'presence-room-other';
-      const ref = db.doc(`${root}/public/data/rooms/PRWAIT`);
-      const room = { gameId: 'tavla', isPublic: true, status: 'waiting', host, players: [host] };
+      const ref = db.doc(`${root}/public/data/roomsV2/PRWAIT`);
+      const room = { schemaVersion: 2, gameId: 'tavla', isPublic: true, status: 'waiting', host, players: [host] };
       await ref.set(room); await beat(host, 'PRWAIT'); await beat(visitor, 'PRWAIT');
       assert.deepEqual((await member(host)).rooms, { PRWAIT: clock }); assert.deepEqual((await member(visitor)).rooms, {});
       const sessions = presenceShardSessions([(await pub(host).get()).data()]);
@@ -60,9 +60,16 @@ test('verified presence, concurrent tabs and read-only public summaries', { skip
       await db.doc(`${root}/public/data/roomsV2/PRV2AA`).set({ ...room, gameId: 'xox' });
       await beat(host, 'PRV2AA'); assert.deepEqual((await member(host)).rooms, { PRV2AA: clock });
     });
+    await t.test('old room membership no longer advertises a retired room through the counter', async () => {
+      clock += 200_000; const uid = 'presence-retired-room';
+      await db.doc(`${root}/public/data/rooms/PROLD1`).set({ gameId: 'okey101', isPublic: true, status: 'waiting', host: uid, players: [uid], racks: { [uid]: ['old-private-tile'] } });
+      await beat(uid, 'PROLD1');
+      assert.deepEqual((await member(uid)).rooms, {});
+      assert.equal(countActiveSessions(presenceShardSessions([(await pub(uid).get()).data()]), clock), 1);
+    });
     await t.test('a live lobby tab does not keep a closed room tab or its ghost opponent alive', async () => {
       clock += 200_000; const uid = 'presence-room-expiry';
-      await db.doc(`${root}/public/data/rooms/PRLIVE`).set({ gameId: 'tavla', isPublic: true, status: 'waiting', host: uid, players: [uid] });
+      await db.doc(`${root}/public/data/roomsV2/PRLIVE`).set({ schemaVersion: 2, gameId: 'tavla', isPublic: true, status: 'waiting', host: uid, players: [uid] });
       await beat(uid, 'PRLIVE', 'presence_session_room');
       clock += 40_000; await beat(uid, null, 'presence_session_lobby');
       clock += 40_000; await beat(uid, null, 'presence_session_lobby');

@@ -2,24 +2,19 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gamepad2, AlertCircle, Loader2, X, WifiOff, Minimize, Maximize, RotateCcw } from 'lucide-react';
 import { signInAnonymously, onAuthStateChanged, signInWithCustomToken, setPersistence, inMemoryPersistence } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, updateDoc, runTransaction, collection, query, where, getDocs, deleteField, arrayRemove } from 'firebase/firestore';
 
 // --- BİZİM OLUŞTURDUĞUMUZ MODÜLLERİ İÇE AKTARIYORUZ ---
 import { auth, db, appId } from './firebase/config.js';
-import { normalizeRoomCode, reserveRoomCode } from './utils/roomCode.js';
-import { roomRecoveryUpdate } from './utils/roomRecovery.js';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, SERVER_TAVLA_ENABLED, SERVER_PRESENCE_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
+import { normalizeRoomCode } from './utils/roomCode.js';
+import { createRoomSessionStorage } from './utils/roomSession.js';
+import { SERVER_ROOMS_ENABLED, serverGameEnabled, serverCreateType, serverMatchType, gameErrorMessage } from './utils/gameApi.js';
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence from './hooks/usePresence.js';
-import { readPresenceSessions } from './hooks/presenceStore.js';
-import { presenceNow } from './utils/presenceProtocol.js';
-import { waitingPlayers, livePlayersByRoom } from './utils/presence.js';
 
 import useViewport from './hooks/useViewport.js';
 
-import { getPlayerId, formatPlayerId, lineupKey } from './utils/playerId.js';
-import { snapshotMatchState, encodeUids, decodeUids, freshMatchState, staleFieldDeletions, pruneHistory } from './utils/matchState.js';
+import { getPlayerId, formatPlayerId } from './utils/playerId.js';
 
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Lobby from './components/Lobby.jsx';
@@ -46,7 +41,6 @@ const TicTacToeGame = lazy(() => import('./games/xox/TicTacToeGame.jsx'));
 const TavlaGame = lazy(() => import('./games/backgammon/TavlaGame.jsx'));
 const ChessGame = lazy(() => import('./games/chess/ChessGame.jsx'));
 const CheckersGame = lazy(() => import('./games/checkers/CheckersGame.jsx'));
-const Okey101Game = lazy(() => import('./games/okey101/Okey101Game.jsx'));
 const ServerOkey101Game = lazy(() => import('./games/okey101/ServerOkey101Game.jsx'));
 const Connect4Game = lazy(() => import('./games/connect4/Connect4Game.jsx'));
 const BattleshipGame = lazy(() => import('./games/battleship/BattleshipGame.jsx'));
@@ -59,7 +53,6 @@ import { BOT_UID, DIFFICULTY_LABELS } from './games/xox/bot.js';
 import { BOT_UID as CHECKERS_BOT_UID, DIFFICULTY_LABELS as CHECKERS_DIFFICULTY_LABELS } from './games/checkers/bot.js';
 import { BOT_UID as CHESS_BOT_UID, DIFFICULTY_LABELS as CHESS_DIFFICULTY_LABELS } from './games/chess/bot.js';
 import { BOT_UID as BACKGAMMON_BOT_UID, DIFFICULTY_LABELS as BACKGAMMON_DIFFICULTY_LABELS } from './games/backgammon/bot.js';
-import { isBotUid as isOkeyBotUid } from './games/okey101/botPlayers.js';
 import { BOT_UID as CONNECT4_BOT_UID, DIFFICULTY_LABELS as CONNECT4_DIFFICULTY_LABELS } from './games/connect4/bot.js';
 import { BOT_UID as BATTLESHIP_BOT_UID, generateBotFleet as generateBattleshipBotFleet } from './games/battleship/bot.js';
 
@@ -83,17 +76,10 @@ const safeStorage = {
 // yenilemede kaldığın odaya dön" (bağlantı kopması koruması) davranışı
 // KORUNUR, sadece "linke/kısayola sıfırdan tıklayınca eski odaya düş" hatası
 // giderilir.
-const sessionRoomStorage = {
-  get() { try { return sessionStorage.getItem('activeRoom'); } catch { return null; } },
-  set(value) { try { sessionStorage.setItem('activeRoom', value); } catch { /* yok say */ } },
-  protocol(value) { try { sessionStorage.setItem('activeRoomProtocol', value); } catch { /* yok say */ } },
-  isServer() { try { return sessionStorage.getItem('activeRoomProtocol') === 'v2'; } catch { return false; } },
-  remove() { try { sessionStorage.removeItem('activeRoom'); sessionStorage.removeItem('activeRoomProtocol'); } catch { /* yok say */ } },
-};
+const sessionRoomStorage = createRoomSessionStorage(() => sessionStorage);
 
 export default function App() {
-  // Bu CİHAZIN kalıcı oyuncu kimliği (bkz. utils/playerId.js). Odalardaki skor
-  // sürekliliği `uid` yerine buna bağlanır.
+  // Görünen oyuncu numarasıdır; oda üyeliği ve skor yetkisi Firebase UID ile sunucuda doğrulanır.
   const myPlayerId = getPlayerId();
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
@@ -124,25 +110,15 @@ export default function App() {
 
   const [isBotGame, setIsBotGame] = useState(false);
   const [isServerRoom, setIsServerRoom] = useState(false);
-  const serverSpectateRef = useRef(false);
-  const countedRoomCode = isBotGame ? null : SERVER_PRESENCE_ENABLED
-    ? (roomData?.isPublic && roomData.status === 'waiting' && !serverGameEnabled(roomData.gameId) ? roomCode : null)
-    : roomCode;
-  usePresence(user?.uid, myPlayerId, countedRoomCode);
+  // Matchmaking uses server queues; presence never advertises legacy room codes.
+  usePresence(user?.uid);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);
   const creatingRoomRef = useRef(false);
-  // sessionStorage'dan geri yüklenen (yani kullanıcının bu oturumda bilerek
-  // girmediği) oda kodu. Bkz. aşağıdaki onSnapshot içindeki "bayat oda" koruması.
-  const restoredRoomRef = useRef(null);
+  const leavingRoomRef = useRef(null);
   const roomStateRef = useRef({ roomCode, user, roomData, currentView, disconnectCountdown, isBotGame });
   roomStateRef.current = { roomCode, user, roomData, currentView, disconnectCountdown, isBotGame };
-  // Sekme/uygulama kısa bir an gizlenip (telefon bildirimi, ekran kilidi,
-  // hızlı uygulama değişimi) hemen geri gelirse odayı "abandoned" yapmayı
-  // İPTAL edebilmek için bekleyen zamanlayıcı — bkz. handleVisibility.
-  const visibilityAbandonTimerRef = useRef(null);
-
   // Yakalanmamış hataları sessizce yutmak yerine ekranda göster. Telefonda
   // (özellikle normal sekmede) çıkan hataların ne olduğunu görebilmek için
   // gerekli; aksi halde kullanıcı sadece boş/bozuk bir ekran görüyor.
@@ -224,25 +200,11 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoadingAuth(false);
-      let savedCode = null;
-      savedCode = sessionRoomStorage.get();
-      savedCode = normalizeRoomCode(savedCode);
-      if (savedCode && currentUser) {
-        if (sessionRoomStorage.isServer() && !SERVER_XOX_ENABLED && !SERVER_BATTLESHIP_ENABLED && !SERVER_OKEY_ENABLED && !SERVER_CONNECT4_ENABLED && !SERVER_CHECKERS_ENABLED && !SERVER_CHESS_ENABLED && !SERVER_TAVLA_ENABLED) sessionRoomStorage.remove();
-        else { setIsServerRoom(sessionRoomStorage.isServer()); restoredRoomRef.current = savedCode; setRoomCode(savedCode); }
-      }
-
-      // Firestore BAĞLANTISINI ERKENDEN ISITIR: SDK'nın gerçek ağ kanalını
-      // (WebChannel/gRPC el sıkışması) kurması, o oturumdaki İLK okuma/yazma
-      // isteğinde ekstra bir gecikme olarak hissediliyordu — özellikle
-      // "Özel Oda Kur" butonuna basıldığında (o an henüz hiçbir Firestore
-      // isteği yapılmamışsa) oda oluşturma transaction'ı bu soğuk başlangıç
-      // gecikmesini üstleniyordu. Kullanıcı lobide oyun seçerken (birkaç
-      // saniye insan etkileşim süresi) bu ucuz, sonucu önemsenmeyen okuma
-      // arka planda bağlantıyı ısıtır; buton basıldığında kanal çoktan
-      // hazırdır.
       if (currentUser) {
-        getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', '__warmup__')).catch(() => { /* sonuç önemsiz, sadece bağlantıyı ısıtır */ });
+        const saved = sessionRoomStorage.restore(SERVER_ROOMS_ENABLED);
+        if (saved.code) { setIsServerRoom(true); setRoomCode(saved.code); }
+        else if (saved.reason === 'legacy') setErrorMsg('Eski oda oturumun kapatıldı. Yeni bir oda kurarak devam edebilirsin.');
+        else if (saved.reason === 'unavailable') setErrorMsg('Bu ortamda çevrimiçi oyun açık değil. Canlı siteyi açıp tekrar dene.');
       }
     });
     return () => unsubscribe();
@@ -250,10 +212,6 @@ export default function App() {
 
 
   const leaveRoomLocal = () => {
-    if (visibilityAbandonTimerRef.current) {
-      clearTimeout(visibilityAbandonTimerRef.current);
-      visibilityAbandonTimerRef.current = null;
-    }
     setRoomCode(''); setRoomData(null); setCurrentView('lobby');
     setDisconnectCountdown(null); setSpectatePrompt(null); sessionRoomStorage.remove();
     setIsBotGame(false); setIsServerRoom(false); setResumeNoticeAt(null);
@@ -261,6 +219,7 @@ export default function App() {
   };
 
   const enterServerRoom = (result) => {
+    leavingRoomRef.current = null;
     setIsServerRoom(true); setIsBotGame(false); setRoomData(null);
     setRoomCode(result.roomId); sessionRoomStorage.set(result.roomId); sessionRoomStorage.protocol('v2');
     setCurrentView('room'); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
@@ -268,26 +227,10 @@ export default function App() {
   const sendXoxAction = (type, fields = {}) => xoxApi(user)({ type, roomId: roomCode, ...fields });
 
   const waitForOpponent = async () => {
-    const code = roomCode;
-    const expectedPlayer = roomData?.abandonedBy;
-    const expectedReason = roomData?.abandonReason;
+    if (!isServerRoom) { leaveRoomLocal(); return; }
     setDisconnectCountdown('paused');
-    try {
-      if (isServerRoom) {
-        await sendXoxAction('room.wait', { expectedVersion: roomData.version });
-        return;
-      }
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
-      await runTransaction(db, async (transaction) => {
-        const snapshot = await transaction.get(roomRef);
-        const update = roomRecoveryUpdate(snapshot.data(), expectedPlayer, expectedReason);
-        if (update) transaction.update(roomRef, update);
-      });
-    } catch {
-      if (roomStateRef.current.roomCode !== code) return;
-      setErrorMsg('Bekleme isteği kaydedilemedi. Bağlantını kontrol edip tekrar dene.');
-      setDisconnectCountdown(15);
-    }
+    try { await sendXoxAction('room.wait', { expectedVersion: roomData.version }); }
+    catch (error) { setErrorMsg(gameErrorMessage(error)); setDisconnectCountdown(15); }
   };
 
   useEffect(() => {
@@ -299,7 +242,8 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !roomCode || isBotGame) return;
-    if (isServerRoom) return subscribeXoxRoom({ db, appId, user, roomId: roomCode,
+    if (!isServerRoom) { leaveRoomLocal(); setErrorMsg('Bu oda eski sürümde açılmış. Yeni bir oda kurarak devam edebilirsin.'); return; }
+    return subscribeXoxRoom({ db, appId, user, roomId: roomCode,
       onData: data => {
         if (!data || data.status === 'closed') {
           if (data?.closedBy !== user.uid) setLeftOverlayTimer(5);
@@ -308,76 +252,26 @@ export default function App() {
         if (!serverGameEnabled(data.gameId)) {
           leaveRoomLocal(); setErrorMsg('Bu oyun için yeni sistem henüz açık değil. Sayfayı yenileyip tekrar dene.'); return;
         }
-        restoredRoomRef.current = null;
         setRoomData(data); setCurrentView('room');
         if (data.status === 'abandoned' && data.abandonedBy !== user.uid && data.players.includes(user.uid)) {
           setDisconnectCountdown(value => value === null ? (data.abandonReason === 'left' ? 5 : 15) : value);
         } else setDisconnectCountdown(null);
       },
       onError: error => {
+        // Okey seat/spectator removal can revoke this listener before the
+        // intentional leave response arrives. Finish leaving without a false
+        // expired-session warning, and do not touch a subsequently joined room.
+        if (leavingRoomRef.current === roomCode && ['permission-denied', 'not_a_player', 'room_closed', 'room_not_found'].includes(error.code)) {
+          leaveRoomLocal(); return;
+        }
         if (['permission-denied', 'not_a_player', 'room_closed', 'room_not_found'].includes(error.code)) leaveRoomLocal();
         setErrorMsg(gameErrorMessage(error));
       },
     });
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-    const unsubscribe = onSnapshot(roomRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (serverGameEnabled(data.gameId)) {
-          leaveRoomLocal();
-          setErrorMsg('Bu oda eski sürümde açılmış. Yeni bir oda kurarak devam edebilirsin.');
-          return;
-        }
-        if (data.status === 'closed') {
-          if (roomStateRef.current.currentView === 'room' && data.players?.includes(user.uid)) { if (data.closedBy !== user.uid) setLeftOverlayTimer(5); } 
-          else { setErrorMsg("Oda kapatıldı."); }
-          leaveRoomLocal();
-        } 
-        else if (data.status === 'abandoned') {
-          setRoomData(data); setCurrentView('room');
-          // 101 Okey'de sekme/uygulama değiştirme artık odayı "terk edilmiş"
-          // yapmıyor (bkz. handleVisibility'deki istisna). Yine de ESKİ
-          // oturumlardan kalmış böyle bir kayıt varsa masa sonsuza dek
-          // "bağlantı koptu" sayacında asılı kalmasın diye host sessizce onarır.
-          if (data.gameId === 'okey101' && data.abandonReason !== 'left') {
-            setDisconnectCountdown(null);
-            if (data.host === user.uid) updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {});
-            return;
-          }
-          if (data.players?.includes(user.uid)) {
-            if (data.abandonedBy === user.uid) {
-               if (data.abandonReason !== 'left') { updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(()=>{}); }
-            } else { 
-               setDisconnectCountdown(prev => prev === null ? (data.abandonReason === 'left' ? 5 : 15) : prev); 
-            }
-          } 
-        } 
-        else {
-          // BAYAT ODA KORUMASI: localStorage'da kalmış eski bir oda kodu yüzünden
-          // (gizli sekmede localStorage boş olduğu için bu hiç yaşanmaz) oyuncu,
-          // artık üyesi olmadığı yabancı bir masaya otomatik sokuluyordu. Geri
-          // yüklenen bir odaya ancak gerçekten oyuncusu/seyircisiysek gireriz.
-          const isParticipant = data.players?.includes(user.uid) || data.spectators?.includes(user.uid);
-          if (restoredRoomRef.current === roomCode && !isParticipant) {
-            restoredRoomRef.current = null;
-            leaveRoomLocal();
-            return;
-          }
-          restoredRoomRef.current = null;
-          if (data.status === 'waiting' && data.gameId !== 'okey101' && data.players?.length === 2 && data.host === user.uid) { updateDoc(roomRef, { status: 'playing' }).catch(()=>{}); }
-          setRoomData(data); setDisconnectCountdown(null); setCurrentView('room'); sessionRoomStorage.set(roomCode);
-        }
-      } else { leaveRoomLocal(); }
-    }, (error) => {
-      console.error('Oda bağlantısı kurulamadı:', error);
-      leaveRoomLocal();
-      setErrorMsg('Oda bilgileri okunamadı. Bağlantını kontrol edip tekrar katıl.');
-    });
-    return () => unsubscribe();
   }, [user, roomCode, isBotGame, isServerRoom]);
 
   // "Kaldığınız yerden devam ediyorsunuz" bildirimi. `resumeNotice` odaya,
-  // ESKİ bir dizilim geri geldiği anda yazılır (bkz. attemptJoinRoom) — yani
+  // Sunucudan bir devam bildirimi geldiğinde masadaki herkeste gösterilir; yani
   // masadaki herkes bunu aynı anda görür. Bildirim kısa ömürlüdür.
   // (State'in kendisi yukarıda, diğer state'lerle birlikte tanımlıdır.)
   const shownResumeRef = useRef(null);
@@ -407,110 +301,12 @@ export default function App() {
         });
         return;
       }
-      const expected = roomStateRef.current.roomData?.abandonedBy;
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-      runTransaction(db, async (t) => {
-        const snap = await t.get(roomRef);
-        const data = snap.data();
-        if (!data || data.status !== 'abandoned' || data.abandonedBy !== expected) return false;
-        t.update(roomRef, { status: 'closed' });
-        return true;
-      }).then((closed) => {
-        if (roomStateRef.current.roomCode !== roomCode) return;
-        if (closed) { setLeftOverlayTimer(5); leaveRoomLocal(); }
-        else setDisconnectCountdown(null);
-      }).catch(() => {
-        if (roomStateRef.current.roomCode !== roomCode) return;
-        setDisconnectCountdown('paused');
-        setErrorMsg('Oda kapatılamadı. Bağlantını kontrol edip tekrar dene.');
-      });
+      leaveRoomLocal();
       return;
     }
     const timer = setTimeout(() => { setDisconnectCountdown(prev => typeof prev === 'number' ? prev - 1 : prev); }, 1000);
     return () => clearTimeout(timer);
   }, [disconnectCountdown, roomCode, isServerRoom]);
-
-  useEffect(() => {
-    // 101 OKEY İSTİSNASI (ekran "koması"/anlık titreme düzeltmesi):
-    // Aşağıdaki mekanizma, sekme gizlendiğinde odayı KISA bir süreliğine
-    // `abandoned` yapıp geri döndürüyordu. 4 kişilik bir masada bu, biri
-    // telefonunda bildirim açtığında / sekme değiştirdiğinde / tarayıcı adres
-    // çubuğu gizlenip göründüğünde bile tetikleniyor ve HERKESİN ekranında:
-    //   1) "Bağlantı koptu" sayacı (DisconnectOverlay) bir anlığına beliriyor,
-    //   2) Okey101Game `status !== 'playing'` olduğu için MASAYI komple bırakıp
-    //      LOBİYİ çiziyor, hemen ardından masaya geri dönüyordu.
-    // Kullanıcının tarif ettiği "ekrana bir şey gelip gidiyor" tam olarak buydu.
-    // 101 Okey'de bir oyuncunun yokluğu zaten 30sn'lik hamle süresi + otomatik
-    // hamle mekanizmasıyla yönetildiği için bu koruma bu oyunda GEREKSİZ.
-    const isOkeyRoom = () => roomStateRef.current.roomData?.gameId === 'okey101';
-    const handleDisconnect = () => {
-      const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot || data?.schemaVersion === 2) return;
-      if (!code || !u || !data) return;
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
-      // İZLEYİCİ sekmeyi kapatıyorsa kendini listeden düşürür. Eskiden bu hiç
-      // yapılmıyordu: "Odadan Çık"a basmadan sekmeyi kapatan bir izleyici
-      // sonsuza dek sayılmaya devam ediyor, izleyici sayacı şişiyordu.
-      // `arrayRemove` atomiktir — kapanış anında okuma yapmaya gerek kalmaz.
-      // EN İYİ ÇABA: tarayıcı sayfayı kapatırken isteği göndermeye fırsat
-      // bulamayabilir; bu yüzden katılım/izleme işlemleri de listeyi ayrıca
-      // temizler (bkz. cleanSpectators).
-      if (data.spectators?.includes(u.uid)) {
-        updateDoc(roomRef, { spectators: arrayRemove(u.uid) }).catch(() => {});
-        return;
-      }
-      if (isOkeyRoom()) return;
-      if (data.status === 'playing' && data.players?.includes(u.uid)) { updateDoc(roomRef, { status: 'abandoned', abandonedBy: u.uid }).catch(() => {}); }
-    };
-    // GÖRÜNÜRLÜK GECİKMESİ (kısa süreliğine sekmeden ayrılmanın odayı yanlışlıkla
-    // "terk edilmiş" yapması): `visibilitychange` telefonlarda son derece
-    // gürültülü bir sinyaldir — ekran kilidi, bildirim çubuğunu açmak, hızlı bir
-    // uygulama değişimi bile `hidden` tetikler. Eskiden bu ANINDA odayı
-    // `abandoned` yapıyordu; rakip ekranında "Bağlantı koptu" sayacı/örtüşü bir
-    // anlığına beliriyor, sıra kimde olursa olsun kafa karıştırıyordu (bkz.
-    // kullanıcı raporu: telefonda sıra kendisindeyken bile rakip tarafında bu
-    // görünüyordu). Artık `hidden` olduğunda ANINDA yazmak yerine kısa bir
-    // (5sn) bekleme süresi başlatılır; kullanıcı bu süre İÇİNDE sekmeye geri
-    // dönerse (gerçek bir "bırakma" değil, sadece anlık bir bakışsa) zamanlayıcı
-    // iptal edilir ve HİÇBİR ŞEY yazılmaz. Gerçekten uzun süre uzakta kalırsa
-    // (ör. uygulamayı tamamen kapatmak) süre dolar ve oda normal şekilde
-    // `abandoned` işaretlenir — asıl "biri gerçekten ayrıldı" tespiti bozulmaz.
-    const VISIBILITY_ABANDON_GRACE_MS = 5000;
-    const handleVisibility = () => {
-      const { roomCode: code, user: u, roomData: data, isBotGame: isBot } = roomStateRef.current;
-      if (isBot || isOkeyRoom() || data?.schemaVersion === 2) return;
-      if (!code || !u || !data) return;
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
-      if (document.visibilityState === 'hidden') {
-         if (data.status === 'playing' && data.players?.includes(u.uid)) {
-            if (visibilityAbandonTimerRef.current) clearTimeout(visibilityAbandonTimerRef.current);
-            visibilityAbandonTimerRef.current = setTimeout(() => {
-               visibilityAbandonTimerRef.current = null;
-               runTransaction(db, async (t) => {
-                 const snap = await t.get(roomRef);
-                 const latest = snap.data();
-                 if (document.visibilityState !== 'hidden' || roomStateRef.current.roomCode !== code ||
-                     latest?.status !== 'playing' || !latest.players?.includes(u.uid)) return;
-                 t.update(roomRef, { status: 'abandoned', abandonedBy: u.uid, abandonReason: null });
-               }).catch(() => {});
-            }, VISIBILITY_ABANDON_GRACE_MS);
-         }
-      }
-      else if (document.visibilityState === 'visible') {
-         if (visibilityAbandonTimerRef.current) { clearTimeout(visibilityAbandonTimerRef.current); visibilityAbandonTimerRef.current = null; }
-         getDoc(roomRef).then(snap => {
-            if (snap.exists() && snap.data().status === 'abandoned' && snap.data().abandonedBy === u.uid && snap.data().abandonReason !== 'left') {
-                updateDoc(roomRef, { status: 'playing', abandonedBy: null, abandonReason: null }).catch(() => {});
-            }
-         }).catch(()=>{});
-      }
-    };
-    window.addEventListener('beforeunload', handleDisconnect); window.addEventListener('pagehide', handleDisconnect); window.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      window.removeEventListener('beforeunload', handleDisconnect); window.removeEventListener('pagehide', handleDisconnect); window.removeEventListener('visibilitychange', handleVisibility);
-      if (visibilityAbandonTimerRef.current) { clearTimeout(visibilityAbandonTimerRef.current); visibilityAbandonTimerRef.current = null; }
-    };
-  }, []);
 
   const startBotGame = (gameId, difficulty) => {
     if (!user || (gameId !== 'xox' && gameId !== 'dama' && gameId !== 'satranc' && gameId !== 'tavla' && gameId !== 'connect4' && gameId !== 'amiralbatti')) return;
@@ -594,7 +390,6 @@ export default function App() {
     // Bot oyunu tamamen YEREL çalışır (Firestore odası yoktur). Tarayıcıda
     // kalmış eski bir oda kodu, bot masası açılırken devreye girip oyunu
     // ezmesin diye burada kesin olarak temizlenir.
-    restoredRoomRef.current = null;
     sessionRoomStorage.remove();
 
     setBotDifficulty(difficulty);
@@ -605,515 +400,71 @@ export default function App() {
     setDisconnectCountdown(null);
   };
 
-  // `isPublic`: Hızlı Eşleşme (findMatch) tarafından kurulan bekleme
-  // odalarını, kod-ile-katılım için kurulan ÖZEL odalardan ayırt eder — bkz.
-  // findMatch. Var olan "Özel Oda Kur" / "Arkadaşla Oyna" çağrıları bu
-  // parametreyi HİÇ vermez (varsayılan false), yani mevcut davranışları
-  // birebir aynı kalır.
+  // Online rooms always use authenticated server actions. A disabled rollout
+  // cannot silently fall back to the retired client-written collection.
   const createRoom = async (gameId, isPublic = false) => {
     if (!user || creatingRoomRef.current) return;
-    creatingRoomRef.current = true;
-    setIsCreatingRoom(true);
-    if (serverGameEnabled(gameId)) {
-      try {
-        const api = xoxApi(user);
-        let result;
-        for (let attempt = 0; attempt < 4; attempt++) {
-          try { result = await api({ type: serverCreateType(gameId), nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
-          catch (error) { if (error.code !== 'room_code_collision' || attempt === 3) throw error; }
-        }
-        enterServerRoom(result);
-      } catch (error) { setErrorMsg(gameErrorMessage(error)); }
-      finally { creatingRoomRef.current = false; setIsCreatingRoom(false); }
-      return;
-    }
-    {
-      const initialState = {
-         gameId: gameId, host: user.uid, players: [user.uid], spectators: [], playerNames: { [user.uid]: nickname || 'Oyuncu 1' },
-         scores: { [user.uid]: 0 }, status: 'waiting', isPublic, board: gameId === 'xox' ? Array(9).fill(null) : (gameId === 'connect4' ? createInitialConnect4Board() : null),
-         turn: null, startingPlayer: null, winner: null, drawOffer: null, takebackOffer: null, rematchRequestedBy: null, abandonedBy: null, abandonReason: null, createdAt: new Date().toISOString(),
-         // --- Oyuncu kimliği & skor sürekliliği (bkz. utils/playerId.js) ---
-         // `playerIds`  : koltuktaki uid -> o cihazın kalıcı 9 haneli kimliği
-         // `matchKey`   : masadaki oyuncu kümesini temsil eden anahtar
-         // `matchHistory`: geçmiş dizilimlerin skorları (aynı kişiler geri
-         //                 gelirse maç oradan devam eder)
-         playerIds: { [user.uid]: myPlayerId },
-         matchKey: lineupKey([user.uid], { [user.uid]: myPlayerId }),
-         matchHistory: {},
-         resumeNotice: null,
-       };
-       
-       if (gameId === 'tavla') { Object.assign(initialState, { dice: [], usedDice: [], phase: 'opening', openingRolls: { p1: null, p2: null }, bar: {white:0, black:0}, borneOff: {white:0, black:0}, playerColors: {}, cubeValue: 1, cubeOwner: null, cubeOfferBy: null, initialTurnState: null }); }
-       else if (gameId === 'satranc') { const initBoard = createInitialChessBoard(); Object.assign(initialState, { board: initBoard, playerColors: {}, captured: { w: [], b: [] }, halfmoveClock: 0, positionHistory: [getBoardStateString(initBoard, null, 'w')], enPassantTarget: null, lastMove: null, previousState: null, chessMoves: [], notationStartFen: null }); }
-       else if (gameId === 'dama') {
-        const isWhite = Math.random() > 0.5;
-        Object.assign(initialState, {
-          board: createInitialCheckersBoard(),
-          playerColors: { [user.uid]: isWhite ? 'w' : 'b' },
-          turn: null, // İkinci oyuncu katılana kadar kesinlikle boş kalmalı
-          startingPlayer: null
-        });
+    if (!serverGameEnabled(gameId)) { setErrorMsg(gameErrorMessage({ code: 'server_not_enabled' })); return; }
+    creatingRoomRef.current = true; setIsCreatingRoom(true);
+    try {
+      const api = xoxApi(user); let result;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try { result = await api({ type: serverCreateType(gameId), nickname: nickname.trim() || 'Oyuncu', isPublic, sessionId: xoxSessionId() }); break; }
+        catch (error) { if (error.code !== 'room_code_collision' || attempt === 3) throw error; }
       }
-      else if (gameId === 'okey101') {
-        // NOT: Sadece oda/lobi altyapısı — oyun mantığı (taşlar, per vb.) burada YOK.
-        Object.assign(initialState, {
-          maxPlayers: 4,
-          isBotPlayer: {},
-          rules: { gameType: 'ffa', foldingEnabled: false, foldToPartnerEnabled: false },
-          teams: { A: [], B: [] },
-          countdownStartedAt: null,
-          // Seyircilerin "botun yerine geçme" teklifleri (bkz. Okey101Game).
-          seatRequests: {},
-        });
-      }
-      else if (gameId === 'amiralbatti') {
-        // FAZ 1: yerleştirme aşaması. `ships.{uid}` her oyuncu "Hazır"a
-        // bastığında BattleshipGame tarafından yazılır. FAZ 2: her iki
-        // oyuncu da hazır olunca setupPhase kapanır, sıra Host'a geçer;
-        // `shots.{uid}` o oyuncunun rakibe yaptığı atışların listesidir
-        // (bkz. BattleshipGame#handleShoot / computeRoundEnd benzeri
-        // batırma/kazanma kontrolü doğrudan bileşende yapılır).
-        Object.assign(initialState, {
-          setupPhase: true,
-          ships: {},
-          readyPlayers: {},
-          shots: {},
-          turn: null,
-        });
-      }
-
-       try {
-         const newCode = await reserveRoomCode((code) => runTransaction(db, async (transaction) => {
-           const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
-           if ((await transaction.get(roomRef)).exists()) return false;
-           transaction.set(roomRef, initialState);
-           return true;
-         }));
-         // Sunucudan onSnapshot ile aynı veriyi tekrar bekletmeden, az önce yazdığımız veriyi
-         // hemen yerelde gösteriyoruz; onSnapshot geldiğinde zaten aynı veriyle sessizce senkronlanır.
-         setRoomData(initialState); setCurrentView('room');
-         setRoomCode(newCode); sessionRoomStorage.set(newCode); setDisconnectCountdown(null);
-       } catch (err) {
-         setErrorMsg("Oda kurulamadı.");
-       } finally {
-         creatingRoomRef.current = false;
-         setIsCreatingRoom(false);
-       }
-    }
-  };
-
-  // Bir oda koduna katılmanın SAF (UI'dan bağımsız) çekirdek mantığı: mevcut
-  // "kod ile katıl" akışı (joinRoom) VE Hızlı Eşleşme (findMatch, aşağıda)
-  // TARAFINDAN paylaşılır — böylece takım rengi/sıra ataması, isim numarası,
-  // "resume" (yeniden bağlanma) gibi TÜM per-oyun mantığı TEK bir yerde kalır,
-  // iki akış arasında asla birbirinden sapmaz. Başarısızlıkta (oda yok/kapalı/
-  // dolu/zaten seyirci) `Error(mesaj-kodu)` FIRLATIR — çağıran taraf bunu
-  // kendi UI'ına uygun şekilde (joinRoom: kullanıcıya göster; findMatch:
-  // sessizce bir sonraki adayı dene) yorumlar.
-  const attemptJoinRoom = async (cleanCode, matchmaking = false) => {
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
-    let optimisticData = null;
-
-    await runTransaction(db, async (transaction) => {
-        const roomSnap = await transaction.get(roomRef);
-        if (!roomSnap.exists()) throw new Error("not-found");
-        
-        const data = roomSnap.data();
-        if (serverGameEnabled(data.gameId)) throw new Error('legacy-server-game');
-        if (data.status === 'closed') throw new Error("closed");
-        if (matchmaking) {
-          const sessions = await readPresenceSessions(transaction);
-          if (!waitingPlayers(data, cleanCode, sessions, user.uid).length) {
-            throw new Error('no-live-opponent');
-          }
-        }
-
-        const maxPlayers = data.maxPlayers || 2;
-        if (data.players?.length >= maxPlayers && !data.players.includes(user.uid)) {
-          if (data.spectators && data.spectators.includes(user.uid)) {
-             throw new Error("already-spectator");
-          }
-          throw new Error("full");
-        }
-
-        if (!data.players?.includes(user.uid)) {
-          const updatedPlayers = [...(data.players || []), user.uid];
-          // Maç sıfırlandığında/geri yüklendiğinde artık geçersiz kalan
-          // alanların `deleteField()` işaretçileri (bkz. aşağısı).
-          let deletions = {};
-
-          // ============================================================
-          // MASA DİZİLİMİ: bu katılım maçı DEVAM mı ettiriyor, SIFIRDAN mı
-          // başlatıyor, yoksa ESKİ bir maçı GERİ mi getiriyor?
-          // ============================================================
-          // Bkz. utils/playerId.js + utils/matchState.js. Karar, artık "boşta
-          // koltuk var mı" (isResume) sorusuna değil, MASADA KİMLER OLDUĞUNA
-          // göre verilir — çünkü boş koltuğu dolduran kişi eskisiyle AYNI kişi
-          // olmak zorunda değil.
-          const newPlayerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
-          const prevSnapshot = snapshotMatchState(data);
-          const prevEncoded = encodeUids(prevSnapshot, data);
-          // Eski (bu özellikten önce kurulmuş) odalarda `matchKey` yoktur; o
-          // durumda dizilim, skor tablosundaki kayıtlardan çıkarılır — masadan
-          // AYRILMIŞ ama skoru duran oyuncular da dahil.
-          const prevKey = data.matchKey || Object.keys(encodeUids(data.scores || {}, data)).sort().join('|');
-          const newKey = lineupKey(updatedPlayers, newPlayerIds);
-          const lineupChanged = newKey !== prevKey;
-          const archived = lineupChanged ? (data.matchHistory || {})[newKey] : null;
-
-          const missingUid = data.scores ? Object.keys(data.scores).find(uid => !data.players.includes(uid)) : null;
-          const isResume = !!missingUid;
-          // Okey101'de el zaten dağıtılmışken (racks var) VE masa hâlâ 'playing'
-          // durumundaysa (bkz. DisconnectOverlay#Bekle — artık ayrılmayan diğer
-          // oyuncular için oyunu 'playing'de tutuyor), buraya 'waiting' yazmak
-          // masayı gereksiz yere yeniden dondururdu: racks dolu olduğu için
-          // Okey101Lobby hiç mount olmaz, dolayısıyla onun 4-oyunculu geri sayımı da
-          // hiç çalışıp masayı tekrar 'playing'e döndüremezdi. Bu yüzden orta-maç
-          // dönüşlerinde mevcut 'playing' durumu KORUNUR; sadece henüz hiç el
-          // dağıtılmamış (lobi aşaması) katılımlarda eskisi gibi 'waiting' yazılır.
-          const okeyMidMatchResume = data.gameId === 'okey101' && !!data.racks && data.status === 'playing';
-          let updatePayload = { players: updatedPlayers, status: okeyMidMatchResume ? 'playing' : (data.gameId === 'okey101' ? 'waiting' : 'playing'), abandonedBy: null, abandonReason: null, playerIds: newPlayerIds, matchKey: newKey };
-
-          // ÖNCEKİ dizilimin gerçekten bir MAÇI var mıydı? İki durum ayırt
-          // edilir:
-          //   * Masa ilk kez doluyor (A tek başına bekliyordu, B katıldı;
-          //     ya da 101 Okey lobisinde 3. / 4. oyuncu geliyor) -> ortada
-          //     sıfırlanacak/arşivlenecek bir maç YOK, eski hafif davranış
-          //     aynen sürer (takım seçimleri vb. bozulmaz).
-          //   * Boşalan bir koltuğa (skoru hâlâ duran biri ayrılmış) yeni
-          //     birisi oturuyor -> önceki dizilimin maçı vardı.
-          // `status !== 'waiting'` koşulu 101 Okey lobisini dışarıda tutar:
-          // orada masa henüz dağıtılmamıştır.
-          const prevMatchExisted = isResume || ((data.players || []).length >= 2 && data.status !== 'waiting');
-
-          if (lineupChanged && (archived || prevMatchExisted)) {
-            // ============================================================
-            // DİZİLİM DEĞİŞTİ — MAÇIN TAMAMI arşivlenir / geri yüklenir /
-            // sıfırlanır (bkz. utils/matchState.js).
-            // ============================================================
-            // Bu dalın var oluş sebebi kullanıcı raporu: "B ilk hamlesini
-            // yapıp çıktı, C girince oyun B'nin hamlesiyle DOLU tahtadan
-            // başladı." Skoru sıfırlamak yetmiyor; TAHTA, sıra, renkler,
-            // kazanan — maça ait ne varsa hepsi birlikte taşınmalı.
-            let history = { ...(data.matchHistory || {}) };
-            if (prevMatchExisted && prevKey) {
-              history[prevKey] = {
-                state: prevEncoded,
-                // Odanın o anki durumu 'abandoned' olabilir; arşive maçın
-                // OYNANABİLİR hâli yazılır ki geri dönüşte masa donmasın.
-                status: (data.status === 'playing' || data.status === 'abandoned') ? 'playing' : data.status,
-                at: new Date().toISOString(),
-              };
-              history = pruneHistory(history);
-            }
-
-            const nextState = archived
-              ? decodeUids(archived.state || {}, updatedPlayers, newPlayerIds)
-              : freshMatchState(data.gameId, updatedPlayers);
-            // Yeni durumda KARŞILIĞI OLMAYAN eski maç alanları (ör. 101
-            // Okey'in dağıtılmış `racks`/`drawPile`'ı) odada asılı kalmasın.
-            deletions = staleFieldDeletions(data, nextState, deleteField);
-
-            Object.assign(updatePayload, nextState, deletions);
-            updatePayload.matchHistory = history;
-            updatePayload.resumeNotice = archived ? { at: new Date().toISOString(), key: newKey } : null;
-            if (archived?.status === 'playing') updatePayload.status = 'playing';
-
-            // Masadan ayrılmış oyuncuların isimleri tabelada asılı kalmasın.
-            const namesSource = data.playerNames || {};
-            updatePayload.playerNames = Object.fromEntries(
-              updatedPlayers.map((uid) => [uid, uid === user.uid
-                ? (nickname || namesSource[uid] || `Oyuncu ${updatedPlayers.length}`)
-                : (namesSource[uid] || 'Oyuncu')]),
-            );
-          } else if (!isResume) {
-            // Madde 12 (kullanıcı isteği): isim girmeyen misafirlere HEP sabit
-            // 'Oyuncu 2' yazılıyordu — Okey101 gibi 3-4 kişilik odalarda 3.
-            // ve 4. oyuncu da (hepsi boş isimle girerse) aynı "Oyuncu 2"
-            // adını alıp çakışıyordu. Artık numarası, odaya KATILDIĞI GERÇEK
-            // SIRAYA (updatedPlayers.length: host=1, sonrakiler=2,3,4...) göre
-            // sıralı ve artan şekilde verilir.
-            updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || `Oyuncu ${updatedPlayers.length}` };
-            updatePayload.scores = { ...data.scores, [user.uid]: 0 }; 
-            
-            if (data.gameId === 'tavla') {
-              const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'white' : 'black';
-              updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'black' : 'white' };
-              updatePayload.board = createInitialBoard(); updatePayload.bar = { white: 0, black: 0 }; updatePayload.borneOff = { white: 0, black: 0 }; 
-              updatePayload.phase = 'opening'; updatePayload.openingRolls = { p1: null, p2: null }; updatePayload.turn = null; updatePayload.cubeValue = 1; updatePayload.cubeOwner = null; updatePayload.cubeOfferBy = null; updatePayload.initialTurnState = null;
-            } else if (data.gameId === 'satranc') {
-              const isHostWhite = Math.random() < 0.5; const hostColor = isHostWhite ? 'w' : 'b'; const whitePlayerUid = isHostWhite ? data.players[0] : user.uid;
-              const initBoard = createInitialChessBoard();
-              updatePayload.playerColors = { [data.players[0]]: hostColor, [user.uid]: isHostWhite ? 'b' : 'w' }; updatePayload.board = initBoard; updatePayload.captured = { w: [], b: [] }; 
-              updatePayload.halfmoveClock = 0; updatePayload.positionHistory = [getBoardStateString(initBoard, null, 'w')]; updatePayload.enPassantTarget = null; updatePayload.lastMove = null; updatePayload.turn = whitePlayerUid; updatePayload.startingPlayer = whitePlayerUid; updatePayload.previousState = null;
-              updatePayload.chessMoves = []; updatePayload.notationStartFen = null;
-            } else if (data.gameId === 'dama') {
-              const hostColor = data.playerColors[data.players[0]];
-              const myColor = hostColor === 'w' ? 'b' : 'w';
-              const whitePlayerUid = hostColor === 'w' ? data.players[0] : user.uid;
-              updatePayload.playerColors = { ...data.playerColors, [user.uid]: myColor };
-              updatePayload.turn = whitePlayerUid;
-              updatePayload.startingPlayer = whitePlayerUid;
-            } else if (data.gameId === 'okey101') {
-              // Yeni oyuncu takımsız (Bekleyenler havuzunda) katılır; status zaten yukarıda
-              // 'waiting' tutuldu — Okey101Lobby'nin geri sayım efekti eşiğe ulaşınca 'playing'e çevirecek.
-            } else if (data.gameId === 'amiralbatti') {
-              // FAZ 1: katılışta yapılacak bir şey yok — sıra/tur ataması,
-              // her iki oyuncu da gemilerini yerleştirip "Hazır" olduktan
-              // sonra FAZ 2'de belirlenecek.
-            } else {
-              const startingPlayer = updatedPlayers[Math.random() < 0.5 ? 0 : 1];
-              updatePayload.turn = startingPlayer; updatePayload.startingPlayer = startingPlayer;
-            }
-          } else {
-            // AYNI dizilim, boşalmış bir koltuk var: bu, aynı kişinin geri
-            // dönmesidir (dizilim anahtarı değişmediği için). Koltuğu —
-            // gerekiyorsa yeni bir uid'e — devrederiz.
-            if (missingUid && missingUid !== user.uid) {
-                const newScores = { ...data.scores }; newScores[user.uid] = newScores[missingUid] || 0; delete newScores[missingUid]; updatePayload.scores = newScores;
-                // Madde 12: terk edilen koltuğu dolduran yeni misafire de,
-                // sabit 'Oyuncu 2' yerine o koltuğun odadaki GERÇEK sıra
-                // numarası (1-tabanlı) verilir.
-                const seatNumber = (data.players || []).indexOf(missingUid) + 1;
-                const newNames = { ...data.playerNames }; newNames[user.uid] = nickname || `Oyuncu ${seatNumber || updatedPlayers.length}`; delete newNames[missingUid]; updatePayload.playerNames = newNames;
-                if (data.playerColors) { const newColors = { ...data.playerColors }; newColors[user.uid] = newColors[missingUid]; delete newColors[missingUid]; updatePayload.playerColors = newColors; }
-                if (data.turn === missingUid) updatePayload.turn = user.uid; if (data.startingPlayer === missingUid) updatePayload.startingPlayer = user.uid; if (data.winner === missingUid) updatePayload.winner = user.uid;
-            } else { updatePayload.playerNames = { ...data.playerNames, [user.uid]: nickname || data.playerNames?.[user.uid] || 'Oyuncu' }; }
-          }
-
-          // Dizilim DEĞİŞMEDİYSE (aynı kişi kopan bağlantısından geri döndü)
-          // bu bir "eski rakiple devam" durumu değildir; önceki devam
-          // bildirimi odada asılı kalıp yeniden tetiklenmesin.
-          if (!lineupChanged && data.resumeNotice) updatePayload.resumeNotice = null;
-
-          // KOLTUĞA OTURAN İZLEYİCİ artık izleyici değildir. Eskiden
-          // `spectators`'tan çıkarılmadığı için aynı kişi hem oyuncu hem
-          // izleyici sayılıyor, izleyici sayacı olduğundan fazla görünüyordu.
-          const cleanedSpectators = cleanSpectators({ ...data, playerIds: newPlayerIds }, user.uid);
-          if (cleanedSpectators.length !== (data.spectators || []).length) {
-            updatePayload.spectators = cleanedSpectators;
-          }
-
-          transaction.update(roomRef, updatePayload);
-          // Yerel (iyimser) kopyaya `deleteField()` işaretçileri sızmamalı:
-          // onlar Firestore'a özel nesnelerdir, oyunlar onları veri sanıp
-          // çökerdi. Silinen alanlar burada gerçekten kaldırılır.
-          optimisticData = { ...data, ...updatePayload };
-          Object.keys(deletions).forEach((k) => { delete optimisticData[k]; });
-        } else {
-          // Zaten masadayız (ör. sayfa yenilendi). Bu özellikten ÖNCE kurulmuş
-          // odalarda kimlik haritası boş olabilir; kendi kaydımızı bir kez
-          // yazarız ki skor sürekliliği bu odada da çalışsın.
-          if (data.playerIds?.[user.uid] !== myPlayerId) {
-            const patch = { playerIds: { ...(data.playerIds || {}), [user.uid]: myPlayerId } };
-            transaction.update(roomRef, patch);
-            optimisticData = { ...data, ...patch };
-          } else {
-            optimisticData = data;
-          }
-        }
-      });
-
-    // Az önce transaction'da okuduğumuz/yazdığımız veriyi onSnapshot'ın ilk paketini
-    // beklemeden hemen gösteriyoruz; onSnapshot geldiğinde sessizce senkronlanır.
-    if (optimisticData) { setRoomData(optimisticData); setCurrentView('room'); }
-    setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
+      enterServerRoom(result);
+    } catch (error) { setErrorMsg(gameErrorMessage(error)); }
+    finally { creatingRoomRef.current = false; setIsCreatingRoom(false); }
   };
 
   const joinRoom = async (code) => {
     if (!user || !code) return;
     const cleanCode = normalizeRoomCode(code);
     if (!cleanCode) { setErrorMsg('Oda kodu 6 harf veya rakamdan oluşmalı.'); return; }
+    if (!SERVER_ROOMS_ENABLED) { setErrorMsg(gameErrorMessage({ code: 'server_not_enabled' })); return; }
     try {
-      serverSpectateRef.current = false;
-      if (SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED || SERVER_OKEY_ENABLED || SERVER_CONNECT4_ENABLED || SERVER_CHECKERS_ENABLED || SERVER_CHESS_ENABLED || SERVER_TAVLA_ENABLED) {
-        try {
-          const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
-          enterServerRoom(result); return;
-        } catch (error) {
-          if (error.code === 'room_full') { serverSpectateRef.current = true; setSpectatePrompt(cleanCode); return; }
-          if (error.code !== 'room_not_found') { setErrorMsg(gameErrorMessage(error)); return; }
-        }
-      }
-      await attemptJoinRoom(cleanCode);
-    } catch (err) {
-      if (err.message === 'legacy-server-game') setErrorMsg('Bu oda eski sürümde açılmış. Yeni bir oda kurarak devam edebilirsin.');
-      else if (err.message === "not-found") setErrorMsg("Böyle bir oda kodu yok.");
-      else if (err.message === "closed") setErrorMsg("Bu oda kapalı.");
-      else if (err.message === "full") setSpectatePrompt(cleanCode);
-      else if (err.message === "already-spectator") { setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode); setJoinCodeInput(''); }
-      else setErrorMsg("Odaya katılırken bir hata oluştu.");
+      const result = await xoxApi(user)({ type: 'room.join', roomId: cleanCode, nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+      enterServerRoom(result);
+    } catch (error) {
+      if (error.code === 'room_full') setSpectatePrompt(cleanCode);
+      else setErrorMsg(gameErrorMessage(error));
     }
   };
 
-  // ============================================================
-  // HIZLI EŞLEŞME (Matchmaking) — bkz. Lobby.jsx "Hızlı Eşleş" butonu.
-  // ============================================================
-  // Mevcut "Özel Oda Kur" / "Kod ile Katıl" mimarisine HİÇ dokunmaz; sadece
-  // `isPublic: true` ile işaretlenmiş odaları arar/kurar. `rooms` koleksiyonu
-  // üzerinde SADECE eşitlik (`==`) filtreleriyle sorgulanır — Firestore'da bu
-  // tür sorgular (orderBy eklenmediği sürece) OTOMATİK tek-alan indeksleriyle
-  // çalışır, elle bir "composite index" oluşturmaya gerek YOKTUR.
   const [matchmakingGameId, setMatchmakingGameId] = useState(null);
   const findMatch = async (gameId) => {
     if (!user || matchmakingGameId) return;
+    if (!serverGameEnabled(gameId)) { setErrorMsg(gameErrorMessage({ code: 'server_not_enabled' })); return; }
     setMatchmakingGameId(gameId);
     try {
-      if (serverGameEnabled(gameId)) {
-        const result = await xoxApi(user)({ type: serverMatchType(gameId), nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
-        enterServerRoom(result); return;
-      }
-      const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
-      const q = query(
-        roomsRef,
-        where('gameId', '==', gameId),
-        where('status', '==', 'waiting'),
-        where('isPublic', '==', true),
-      );
-      const [snap, sessions] = await Promise.all([getDocs(q), readPresenceSessions()]);
-      // Kendi kurduğum (hâlâ tek başıma beklediğim) bir oda adaylar arasında
-      // çıkabilir — ona "2. oyuncu" olarak katılmaya çalışmak anlamsızdır,
-      // baştan elenir.
-      const now = presenceNow();
-      const liveRooms = livePlayersByRoom(sessions, now);
-      const candidates = snap.docs.filter((d) => waitingPlayers(d.data(), d.id, sessions, user.uid, now, liveRooms).length);
-
-      for (const candidate of candidates) {
-        try {
-          await attemptJoinRoom(candidate.id, true);
-          return; // başarıyla katılındı — attemptJoinRoom zaten currentView'i 'room'a çevirdi
-        } catch {
-          // Bu aday artık uygun değil (araya biri girip doldurmuş, kapanmış
-          // vb.) — sessizce bir SONRAKİ adaya geçilir, kullanıcıya hata
-          // gösterilmez (bu, dıştan bakınca tek bir arama gibi görünmeli).
-        }
-      }
-
-      // Uygun (boş) bir eşleşme bulunamadı: normal oda kurar gibi YENİ bir
-      // PUBLIC oda kurulur, oyuncu onun bekleme ekranına düşer — bir sonraki
-      // "Hızlı Eşleş" diyen oyuncu bu odayı bulup katılacaktır.
-      await createRoom(gameId, true);
-    } catch (err) {
-      console.error('Hızlı eşleşme hatası:', err);
-      setErrorMsg('Rakip aranırken bir sorun oluştu.');
-    } finally {
-      setMatchmakingGameId(null);
-    }
-  };
-
-  // İZLEYİCİ LİSTESİNİ TEKİLLEŞTİRİR (kullanıcı raporu: "bir arkadaşım
-  // izlemesine rağmen sayaç 0 -> 1 -> 2 oldu").
-  // Üç ayrı kaynak aynı kişiyi birden çok kez saydırabiliyordu:
-  //   1) Aynı uid listeye İKİ KEZ eklenebiliyordu (aşağıdaki `acceptSpectate`
-  //      eskiden koşulsuz `[...spectators, uid]` yazıyordu; "İzle" düğmesine
-  //      çift dokunmak ya da isteğin yeniden denenmesi listeyi ikizliyordu).
-  //   2) Aynı CİHAZ yeni bir anonim `uid` ile geri döndüğünde (Firebase
-  //      oturumu yenilendiğinde — bkz. bellek-içi kalıcılık yedeği) eski uid
-  //      listede ÖLÜ kayıt olarak kalıyordu.
-  //   3) İzleyiciyken boşalan bir koltuğa OTURAN kişi `players`'a eklenirken
-  //      `spectators`'tan çıkarılmıyordu; hem oyuncu hem izleyici sayılıyordu.
-  // Bu yardımcı üçünü birden temizler: kalıcı oyuncu kimliği (bkz.
-  // utils/playerId.js) aynı olan eski uid'ler, kendi uid'imiz ve artık
-  // oyuncu koltuğunda olanlar listeden düşer.
-  const cleanSpectators = (data, selfUid) => {
-    const ids = data.playerIds || {};
-    const players = data.players || [];
-    return [...new Set(data.spectators || [])].filter((uid) =>
-      uid !== selfUid && ids[uid] !== myPlayerId && !players.includes(uid),
-    );
+      const result = await xoxApi(user)({ type: serverMatchType(gameId), nickname: nickname.trim() || 'Oyuncu', sessionId: xoxSessionId() });
+      enterServerRoom(result);
+    } catch (error) { setErrorMsg(gameErrorMessage(error)); }
+    finally { setMatchmakingGameId(null); }
   };
 
   const [isSpectateJoining, setIsSpectateJoining] = useState(false);
   const acceptSpectate = async () => {
-    // Çift dokunuşa karşı kilit: iki eşzamanlı işlem, aynı uid'i listeye iki
-    // kez yazabiliyordu.
     if (!spectatePrompt || !user || isSpectateJoining) return;
     setIsSpectateJoining(true);
-    const cleanCode = spectatePrompt;
-    if (serverSpectateRef.current) {
-      try {
-        const result = await xoxApi(user)({ type: 'room.spectate', roomId: cleanCode, sessionId: xoxSessionId() });
-        setSpectatePrompt(null); enterServerRoom(result);
-      } catch (error) { setErrorMsg(gameErrorMessage(error)); }
-      finally { setIsSpectateJoining(false); }
-      return;
-    }
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', cleanCode);
     try {
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(roomRef);
-        if (!snap.exists()) throw new Error("not-found");
-        const data = snap.data();
-        // İzleyiciler de kalıcı kimlik haritasına yazılır; böylece aynı cihaz
-        // yeni bir uid ile döndüğünde eski kaydı tanınıp temizlenebilir.
-        const playerIds = { ...(data.playerIds || {}), [user.uid]: myPlayerId };
-        transaction.update(roomRef, {
-          spectators: [...cleanSpectators({ ...data, playerIds }, user.uid), user.uid],
-          playerIds,
-        });
-      });
-      setRoomCode(cleanCode); sessionRoomStorage.set(cleanCode);
-      setSpectatePrompt(null); setJoinCodeInput(''); setErrorMsg('');
-    } catch (err) { setErrorMsg("Seyirci olarak bağlanılamadı."); }
+      const result = await xoxApi(user)({ type: 'room.spectate', roomId: spectatePrompt, sessionId: xoxSessionId() });
+      setSpectatePrompt(null); enterServerRoom(result);
+    } catch (error) { setErrorMsg(gameErrorMessage(error)); }
     finally { setIsSpectateJoining(false); }
   };
 
   const leaveRoom = async () => {
-    if (isBotGame) { leaveRoomLocal(); return; }
-    if (isServerRoom) {
-      try { await sendXoxAction('room.leave', { sessionId: xoxSessionId() }); leaveRoomLocal(); }
-      catch (error) { setErrorMsg(gameErrorMessage(error)); }
-      return;
-    }
-    const currentCode = roomCode;
-    const isPlayer = roomData?.players?.includes(user?.uid);
-    const isSpec = roomData?.spectators?.includes(user?.uid);
-    if (currentCode && user && (isPlayer || isSpec)) {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentCode);
-      try {
-        await runTransaction(db, async (transaction) => {
-          const snap = await transaction.get(roomRef); if (!snap.exists()) return;
-          const data = snap.data();
-
-          // Okey101 lobi aşamasında (henüz oyun başlamadıysa) ayrılma, tüm odayı
-          // kapatmak yerine sadece o oyuncuyu koltuktan kaldırır; host ayrılırsa
-          // kalan bir gerçek oyuncuya (yoksa herhangi birine) host devredilir.
-          // Bu, geri sayımın "biri ayrılırsa iptal olsun" kuralını da doğal olarak sağlar.
-          if (isPlayer && data.gameId === 'okey101' && data.status === 'waiting') {
-            const remainingPlayers = (data.players || []).filter(uid => uid !== user.uid);
-            if (remainingPlayers.length === 0) {
-              transaction.update(roomRef, { status: 'closed', closedBy: user.uid });
-              return;
-            }
-            const newTeams = { A: (data.teams?.A || []).filter(uid => uid !== user.uid), B: (data.teams?.B || []).filter(uid => uid !== user.uid) };
-            const newScores = { ...data.scores }; delete newScores[user.uid];
-            const newNames = { ...data.playerNames }; delete newNames[user.uid];
-            const newIsBot = { ...(data.isBotPlayer || {}) }; delete newIsBot[user.uid];
-            const newHost = data.host === user.uid
-              ? (remainingPlayers.find(uid => !isOkeyBotUid(uid)) || remainingPlayers[0])
-              : data.host;
-            transaction.update(roomRef, {
-              players: remainingPlayers, host: newHost, teams: newTeams,
-              scores: newScores, playerNames: newNames, isBotPlayer: newIsBot,
-              countdownStartedAt: null,
-            });
-            return;
-          }
-
-          if (isPlayer) {
-             if (data.players.length <= 1 || (data.status === 'abandoned' && data.abandonedBy !== user.uid)) {
-                 transaction.update(roomRef, { status: 'closed', closedBy: user.uid });
-             } else {
-                 transaction.update(roomRef, { status: 'abandoned', abandonedBy: user.uid, abandonReason: 'left' });
-             }
-          } else if (isSpec) {
-             const newSpectators = (data.spectators || []).filter(id => id !== user.uid);
-             transaction.update(roomRef, { spectators: newSpectators });
-          }
-        });
-      } catch (err) { console.error("Oda kapatılamadı:", err); }
-    }
-    leaveRoomLocal();
+    if (isBotGame || !isServerRoom) { leaveRoomLocal(); return; }
+    if (leavingRoomRef.current === roomCode) return;
+    const leavingCode = roomCode;
+    leavingRoomRef.current = leavingCode;
+    try {
+      await sendXoxAction('room.leave', { sessionId: xoxSessionId() });
+      if (roomStateRef.current.roomCode === leavingCode) leaveRoomLocal();
+    } catch (error) {
+      if (roomStateRef.current.roomCode === leavingCode) setErrorMsg(gameErrorMessage(error));
+    } finally { if (leavingRoomRef.current === leavingCode) leavingRoomRef.current = null; }
   };
 
   // KULLANICI İSTEĞİ: lobiden bir oyuna/odaya girildiğinde tarayıcının GERİ
@@ -1344,9 +695,7 @@ export default function App() {
                    {roomData?.gameId === 'tavla' && <TavlaGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'satranc' && <ChessGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'dama' && <CheckersGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
-                   {roomData?.gameId === 'okey101' && (isServerRoom
-                     ? <ServerOkey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={sendXoxAction} />
-                     : <Okey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} />)}
+                   {roomData?.gameId === 'okey101' && <ServerOkey101Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={sendXoxAction} />}
                    {roomData?.gameId === 'connect4' && <Connect4Game roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} botDifficulty={botDifficulty} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    {roomData?.gameId === 'amiralbatti' && <BattleshipGame roomData={roomData} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} isBot={isBotGame} setLocalRoomData={setRoomData} sendAction={isServerRoom ? sendXoxAction : null} />}
                    </Suspense>

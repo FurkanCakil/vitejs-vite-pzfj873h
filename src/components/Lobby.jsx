@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, SERVER_TAVLA_ENABLED, serverGameEnabled } from '../utils/gameApi.js';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, SERVER_TAVLA_ENABLED, SERVER_PRESENCE_ENABLED } from '../utils/gameApi.js';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
 import { subscribePresenceSessions } from '../hooks/presenceStore.js';
 import { countActiveSessions } from '../utils/presence.js';
 import { presenceNow } from '../utils/presenceProtocol.js';
-import { waitingPlayers, livePlayersByRoom } from '../utils/presence.js';
 
 const GAMES = [
   { id: 'xox', name: 'XOX (Tic-Tac-Toe)', available: true, icon: '❌⭕' },
@@ -35,7 +34,7 @@ const DIFFICULTY_OPTIONS = [
 
 export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeInput, setJoinCodeInput, joinRoom, createRoom, startBotGame, findMatch, matchmakingGameId, userId }) {
   // ---- Aktif Kullanıcı Sayacı --------------------------------------------
-  // Tek bir bounded shard sorgusu dinlenir (legacy bayrak kapalıysa tek belge).
+  // Tek bir sınırlı parça sorgusu dinlenir; eski sayaç kullanılmaz.
   // Dinleyici yalnızca Lobby EKRANDAYKEN kuruludur — bir odaya girildiğinde
   // (Lobby unmount) otomatik kapanır, oyun içinde hiç okuma maliyeti olmaz.
   const [sessions, setSessions] = useState(null);
@@ -47,6 +46,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   // toparlamıyordu (sayaç sonsuza dek "—" kalıyordu).
   useEffect(() => {
     if (!userId) return undefined;
+    if (!SERVER_PRESENCE_ENABLED) { setPresenceError(true); return undefined; }
     const unsub = subscribePresenceSessions((sessions) => {
       setPresenceError(false);
       setSessions(sessions);
@@ -71,7 +71,6 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
 
   // ---- Hızlı Eşleşme: oyun seçim ekranı ----------------------------------
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [waitingRooms, setWaitingRooms] = useState([]);
   const [serverQueue, setServerQueue] = useState([]);
   const [battleQueue, setBattleQueue] = useState([]);
   const [okeyQueue, setOkeyQueue] = useState([]);
@@ -81,12 +80,6 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
   const [tavlaQueue, setTavlaQueue] = useState([]);
   const waitingCounts = useMemo(() => {
     const counts = {};
-    const liveRooms = livePlayersByRoom(sessions, nowTick);
-    for (const { code, data } of waitingRooms) {
-      if (serverGameEnabled(data.gameId)) continue;
-      const count = waitingPlayers(data, code, sessions, userId, nowTick, liveRooms).length;
-      if (count) counts[data.gameId] = (counts[data.gameId] || 0) + count;
-    }
     if (SERVER_XOX_ENABLED) counts.xox = serverQueue.filter(entry => entry.host !== userId &&
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
     if (SERVER_BATTLESHIP_ENABLED) counts.amiralbatti = battleQueue.filter(entry => entry.host !== userId &&
@@ -103,7 +96,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000)
       .reduce((total, entry) => total + (entry.players ?? 1), 0);
     return counts;
-  }, [waitingRooms, sessions, userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue]);
+  }, [userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue]);
   useEffect(() => {
     if (!SERVER_TAVLA_ENABLED || !pickerOpen || !userId) return undefined;
     return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'tavlaLobby', 'queue'), snapshot => {
@@ -146,22 +139,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       setBattleQueue(snapshot.data()?.entries ?? []);
     }, () => setBattleQueue([]));
   }, [pickerOpen, userId]);
-  // Bekleyen oyuncu sayıları SADECE seçim ekranı açıkken dinlenir — kapalıyken
-  // hiçbir okuma yapılmaz. Tek bir sorgu tüm oyunları kapsar (oyun başına ayrı
-  // sorgu YOK); sayım istemcide `gameId`'ye göre gruplanır.
-  useEffect(() => {
-    if (!pickerOpen || !userId) return undefined;
-    setWaitingRooms([]);
-    const q = query(
-      collection(db, 'artifacts', appId, 'public', 'data', 'rooms'),
-      where('status', '==', 'waiting'),
-      where('isPublic', '==', true),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setWaitingRooms(snap.docs.map(d => ({ code: d.id, data: d.data() })));
-    }, (err) => { console.error('Bekleyen oyuncu sayısı okunamadı:', err); setWaitingRooms([]); });
-    return unsub;
-  }, [pickerOpen, userId]);
+  // Queue listeners above exist only while the picker is open.
 
   const isMatching = !!matchmakingGameId;
   const chooseMatchGame = (gameId) => { setPickerOpen(false); findMatch(gameId); };

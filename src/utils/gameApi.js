@@ -6,6 +6,8 @@ export const SERVER_CHECKERS_ENABLED = import.meta.env?.VITE_SERVER_CHECKERS_ENA
 export const SERVER_CHESS_ENABLED = import.meta.env?.VITE_SERVER_CHESS_ENABLED === 'true';
 export const SERVER_TAVLA_ENABLED = import.meta.env?.VITE_SERVER_TAVLA_ENABLED === 'true';
 export const SERVER_PRESENCE_ENABLED = import.meta.env?.VITE_SERVER_PRESENCE_ENABLED === 'true';
+export const SERVER_ROOMS_ENABLED = SERVER_XOX_ENABLED || SERVER_BATTLESHIP_ENABLED || SERVER_OKEY_ENABLED
+  || SERVER_CONNECT4_ENABLED || SERVER_CHECKERS_ENABLED || SERVER_CHESS_ENABLED || SERVER_TAVLA_ENABLED;
 export const serverGameEnabled = game => (game === 'xox' && SERVER_XOX_ENABLED)
   || (game === 'amiralbatti' && SERVER_BATTLESHIP_ENABLED) || (game === 'okey101' && SERVER_OKEY_ENABLED)
   || (game === 'connect4' && SERVER_CONNECT4_ENABLED) || (game === 'dama' && SERVER_CHECKERS_ENABLED) || (game === 'satranc' && SERVER_CHESS_ENABLED)
@@ -50,7 +52,7 @@ export function createGameApi(getToken, fetcher = fetch) {
 
 export function gameErrorMessage(error) {
   return ({
-    room_not_found: 'Böyle bir oda kodu yok.', room_closed: 'Bu oda kapalı.',
+    room_not_found: 'Bu kodda bir oda bulunamadı. Eski odalar yerine yeni bir oda kurabilirsin.', room_closed: 'Bu oda kapalı.',
     room_full: 'Bu odadaki oyuncu koltukları dolu.',
     stale_version: 'Oyun güncellendi. Son durumu kontrol edip tekrar dene.',
     player_disconnected: 'Rakibin bağlantısı bekleniyor.',

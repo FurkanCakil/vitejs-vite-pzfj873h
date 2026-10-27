@@ -68,11 +68,11 @@ export async function executePresenceAction(db, projectId, uid, input, now = Dat
     requireAction(Object.hasOwn(members, uid) || Object.keys(members).length < MAX_MEMBERS, 503, 'presence_capacity');
     let roomCode = null;
     if (action.type === 'presence.heartbeat' && action.roomCode) {
-      const [v2, legacy] = await tx.getAll(db.doc(`${root}/public/data/roomsV2/${action.roomCode}`), db.doc(`${root}/public/data/rooms/${action.roomCode}`));
-      const room = v2.exists ? v2.data() : legacy.data();
-      // The counter needs no private/playing room codes. Legacy quick matching
-      // needs only verified members of public waiting rooms.
-      if (room?.isPublic === true && room.status === 'waiting' && Array.isArray(room.players) && room.players.includes(uid)) roomCode = action.roomCode;
+      const v2 = await tx.get(db.doc(`${root}/public/data/roomsV2/${action.roomCode}`));
+      const room = v2.data();
+      // Retired rooms never enter the public projection, even when the caller
+      // used to be a member. Only current public v2 waiting seats qualify.
+      if (room?.schemaVersion === 2 && room.isPublic === true && room.status === 'waiting' && Array.isArray(room.players) && room.players.includes(uid)) roomCode = action.roomCode;
     }
     const held = Object.hasOwn(member.sessions, action.sessionId) ? member.sessions[action.sessionId] : null;
     const retired = action.type === 'presence.heartbeat' && held?.closed === true;

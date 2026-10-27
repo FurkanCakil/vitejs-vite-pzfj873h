@@ -1,15 +1,13 @@
-// Staged rollout: retain existing access for games awaiting migration.
+// Production policy: online games use server-validated roomsV2 only.
 // V2 rooms, private player views and bounded lobbies are server-written only.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /artifacts/{appId}/public/data/rooms/{roomId} {
-      allow read, create: if true;
-      allow update: if request.auth != null;
+      allow read, write: if false;
     }
     match /artifacts/{appId}/public/data/serverStatus/{docId} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read, write: if false;
     }
     match /artifacts/{appId}/public/data/presenceV2/{shardId} {
       allow get, list: if request.auth != null;
