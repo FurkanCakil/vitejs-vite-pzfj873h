@@ -1,6 +1,6 @@
 # Bağımlılık güvenlik denetimi
 
-27 Ekim 2026 — Yerel düzeltme ve kabul testleri tamamlandı; bu kayıt anında yeni kilit dosyası henüz Production'a yayımlanmadı. Önceki canlı oyun/sayaç kuralları ve ortam ayarları değiştirilmez. Firebase istemcisi 10.14.1, Admin 13.10.0, Vercel OIDC 4.0.2 ve Tailwind 3 ana sürümleri korunur.
+27 Ekim 2026 — Bağımlılık düzeltmesi canlıya yayımlandı. `cc9df72` Production dağıtımı 15:56:22'de Ready oldu; gerçek anonim kimliklerle yedi yeni özel oda ve sayaç akışları doğrulandı. Önceki canlı oyun/sayaç kuralları ve ortam ayarları değiştirilmedi. Firebase istemcisi 10.14.1, Admin 13.10.0, Vercel OIDC 4.0.2 ve Tailwind 3 ana sürümleri korundu.
 
 ## Bulgu özeti
 
@@ -27,10 +27,18 @@ Override'lar kalıcı bakım gerektirir: üst Firebase/Vercel paketi güvenli ar
 
 - 22 Ekim'deki eski kayıt 26 uyarıydı. **27 Ekim'de değişiklik öncesi güncel tarama 23** verdi: 8 yüksek, 15 orta. Veri tabanı zamanla değiştiğinden 26→23 farkı bu kod değişikliğine mal edilmez.
 - Düzeltme sonrası güncel tarama **8 orta, 0 yüksek, 0 kritik**; sekiz kayıt aynı `uuid` sorununun üst paketlere yayılmasıdır. Gizlenmedi, audit kapsamı daraltılmadı. Eski paketlerin deprecation mesajları ayrıca devam edebilir.
-- Temiz `npm ci --ignore-scripts --no-audit --no-fund` başarılı. 128 otomatik test geçti; 11 emülatör üst testi normal komutta atlandı. Yeni Node istemci testi eklenince atlanan üst test sayısı 12 olur. API'nin `--no-experimental-require-module` başlatma kontrolü de geçti.
+- Temiz `npm ci --ignore-scripts --no-audit --no-fund` başarılı. 128 otomatik test geçti; emülatör gerektiren 12 üst test normal komutta atlandı. API'nin `--no-experimental-require-module` başlatma kontrolü de geçti.
 - Yedi oyunun mevcut emülatör paketi 91 senaryo / 102 sonuçla geçti. Yeni Firebase Node SDK testi ayrı temiz demo çalıştırmada iki senaryo / üç sonuçla geçti. Toplam kapsam 93 senaryo ve 12 üst test / 105 sonuçtur; tek birleşik çalıştırma sonucu olarak sunulmaz.
 - Yeni testte anonim giriş ve zorunlu token yenilemede aynı UID; oda okuma ve canlı snapshot; üye olsa bile doğrudan yazma, eski oda ve üye olmayan okuma reddi doğrulandı. Bilerek yapılan reddedilen yazma SDK'da PERMISSION_DENIED günlüğü üretir; başarısız test değildir.
 - TypeScript ve diff kontrolü temiz; lint sıfır hata / mevcut 36 uyarı. Tüm Production istemci ayarları açık derleme geçti. Ana JS `index-YYy92vMJ.js` 171,66 kB gzip, CSS `index-Tlx8d9Qx.css` 11,60 kB gzip; bütün 20 çıktı dosyası eski derlemeyle aynı.
+
+## Canlı kabul
+
+- [cc9df72 Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/CkVJdsRQuUSrHrf55xZmo1xRYrtN) Ready; böylece temiz kurulumla yeni sunucu bağımlılıklarının derlenmesi doğrulandı.
+- XOX, Amiral Battı, Okey, Connect 4, Dama, Satranç ve Tavla'da yalnız yeni özel test odaları kuruldu; katılım, üye okuma ve üye olmayan okuma reddi geçti. Her oda normal çıkışlarla kapatıldı ve kapalı durumu doğrulandı. Gerçek mevcut odalar kullanılmadı. Bu kontrol tam maçların tekrar oynanması değildir.
+- Gerçek ID token'larının sunucuda kabulü, bozuk Bearer reddi, sayaç heartbeat/özet/leave, eski oda okumasının hâlâ reddi ve canlı ana dosyanın yerel çıktıyla eşleşmesi geçti. Bu, çalışan function içindeki OIDC/Google erişimini de sınar.
+- Canlı tarayıcıda lobi, aktif sayaç ve yedi boş eşleşme seçeneği yüklendi; gözlenen konsolda hata/uyarı yoktu. Bütün istemci dosyaları aynı olduğundan tahta/CSS/Stockfish kodunda değişiklik yoktur; gerçek cihaz kapsamı genişletilmedi.
+- Yayımlanan sürümün ekran kanıtı `bagimlilik-guvenligi-canli-2026-10-27.png`; güncel npm önce/sonra raporları ve tam değişen dosyalar teslim paketindedir. Geçici testler ve emülatörler temizlendi. Paket uyarılarının sıfırlandığı iddia edilmez.
 
 ## Neden Admin 14'e geçirilmedi?
 
