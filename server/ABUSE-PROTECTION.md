@@ -1,6 +1,6 @@
 # API kötüye kullanım ve oturum kontrolü
 
-27 Ekim 2026 — Hazırlık aşaması. Hesap durumu kontrolü varsayılan kapalı `AUTH_SESSION_CHECK_ENABLED` ayarı arkasındadır; bu kayıt anında yeni sürüm canlıya gönderilmedi, ayar açılmadı ve Vercel Firewall taslağı yayımlanmadı. Mevcut Firebase oda kuralları, IAM, hizmet hesabı, anahtar ve planlar değişmez.
+27 Ekim 2026 — Canlı aşama tamamlandı. `093c975` kaynak sürümü önce kapalı ayarla doğrulandı; ardından `AUTH_SESSION_CHECK_ENABLED=true` yalnız Production’da açıldı ve [16:38:11 açık dağıtımı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/EFkTWvu6ejY23ZxAHzr7BGBdjZVN) Ready oldu. Production API hız sınırı yayımlandı ve etkinliği yeniden okundu. Firebase oda kuralları, IAM, hizmet hesabı, anahtar ve planlar değiştirilmedi. Genel site denetimi henüz bitmedi.
 
 ## Bulgular ve küçük düzeltmeler
 
@@ -11,7 +11,7 @@
 
 ## Oturum kontrolünün sınırı ve maliyeti
 
-`AUTH_SESSION_CHECK_ENABLED=true` yalnız Production'da açılmak üzere hazırlanır. Mevcut `VITE_FIREBASE_API_KEY` genel proje anahtarı kullanılır; bu kalıcı hizmet hesabı anahtarı değildir. Üretim derlemesi, ayar açıksa gerekli anahtarın varlığını değerini yazdırmadan kontrol eder. Önizleme/yerel süreç üretim oyun API'sini açamaz. İstemci SDK'sı değiştirilmez.
+`AUTH_SESSION_CHECK_ENABLED=true` yalnız Production’da açıktır; Preview/Development’a eklenmedi. Mevcut `VITE_FIREBASE_API_KEY` genel proje anahtarı kullanılır; bu kalıcı hizmet hesabı anahtarı değildir. Üretim derlemesi, ayar açıksa gerekli anahtarın varlığını değerini yazdırmadan kontrol eder. Önizleme/yerel süreç üretim oyun API'sini açamaz. İstemci SDK'sı değiştirilmez.
 
 - Her istekte mevcut Admin SDK imza/issuer/proje/son kullanım doğrulaması yine çalışır. Önbellek bu kontrolün yerine geçmez.
 - Kullanıcının hesabına ait yanıtın UID'si eşleşmeli. Disabled/eksik/geçersiz/süresi geçmiş token yanıtı reddedilir. Firebase bir `validSince` sınırı döndürürse JWT'nin ilk `auth_time` değeriyle ayrıca karşılaştırılır; son token üretim zamanı `iat` ile kıyaslanmaz.
@@ -22,20 +22,22 @@
 
 **Kalan sınır:** Firestore SDK'sının doğrudan oda/özel görünüm okumaları mevcut UID üyelik kurallarını kullanmaya devam eder. API'deki ek hesap kontrolü bu dinleyicilere uygulanmaz; stateless token'ın doğal süresi ve mevcut Firebase davranışı sürer. Anında bütün kanalları iptal etmek ayrı metadata/kural/işletim tasarımı gerektirir. Anonim UID/IP değiştirme de tam önlenmiş sayılmaz.
 
-## Hazırlanan WAF kuralı
+## Yayımlanan WAF kuralı
 
-YapAI / `vitejs-vite-pzfj873h-1hy2`, yalnız Production; normalize Request Path **`/api/` ile başlar**; Fixed Window, **IP başına 1200 istek / 60 saniye**, aşımda 429. Bu endpoint altında şu anda tek oyun/ortak sayaç API'si vardır. Sayfa, görsel, script ve Firebase'in doğrudan bağlantıları bu kurala girmez. Üye başına mevcut sunucu sınırları ayrıca korunur.
+Kural adı **Game API burst limit**, kimliği `rule_game_api_burst_limit_8MJybR`. YapAI / `vitejs-vite-pzfj873h-1hy2`, yalnız Production; normalize Request Path **`/api/` ile başlar**; Fixed Window, **IP başına 1200 istek / 60 saniye**, aşımda 429. Bu endpoint altında şu anda tek oyun/ortak sayaç API'si vardır. Sayfa, görsel, script ve Firebase'in doğrudan bağlantıları bu kurala girmez. Üye başına mevcut sunucu sınırları ayrıca korunur.
 
 Eşik, ortak okul/mobil NAT arkasındaki birkaç oyuncunun normal heartbeat/hamle trafiğine alan bırakır; kalabalık ortak ağ için sınırsız kullanım garantisi değildir. Sayaçlar bölge bazlıdır; farklı IP/bölgeler ve dağıtık saldırı genel proje kotasını yine zorlayabilir. Tam yük veya botnet testi yapılmaz. Hobby bir hız sınırı kuralı ve bir milyon allowed-request hakkı sunar; bu yeni ücretli plana/ödeme hesabına geçiş değildir ve sınırsız ücretsiz kullanım sözü vermez. Uygulama önünde reddedilen istek Firestore'a ulaşmaz.
 
-## Doğrulama ve yayın sırası
+## Tamamlanan doğrulama ve yayın
 
 1. Eski JSON-olmayan-yanıt hatası testte üretildi; yeni kodla HTTP redleri tekrarlanmaz, normal kayıp yanıt/aynı işlem kimliği ve 401'de tek yenileme korunur.
 2. Token önbelleği, sorgu birleştirme/kapasite, bitiş, iptal zamanı, yeni token, backend hatası ve gizli ayrıntıların yansımaması birim testleriyle sınandı.
 3. Yalnız demo emülatöründe gerçek token ile geçiş; test hesabını kapatma/yeniden açma, yapay iptal sınırı ve silinmiş test hesabının API yazmalarını durdurması doğrulandı. Canlı hesaplar bu yerel testte değiştirilmedi.
 4. İlk birleşik pakette bir XOX eşleşme senaryosu başka test dosyalarının aynı kuyruğu farklı yapay saatlerle değiştirmesinden bozuldu. XOX yaşam döngüsü ve zaman sırası testlerine ayrı artifact alanları verildi; gerçek transaction yarış testleri korunur. Ürün oyun kodu bu nedenle değiştirilmedi. Alan ayrımından sonra aynı birleşik paket 97 senaryo / 13 üst testle 110 sonuç verdi; hepsi geçti.
-5. 143 otomatik test, sıfır lint hatası/36 mevcut uyarı, tür/derleme ve birleşik 110 emülatör sonucu geçti; sonraki adımda kapalı ayarla kaynak yayımlanıp Ready ve mevcut oyunlar doğrulanır.
-6. Ardından tek yeni Production oturum ayarı açılır, yeni ayarla dağıtım doğrulanır ve WAF taslağı yayımlanır. Gerçek kendi-test-kimliğinde normal işlemler; varsa yalnız kendi test hesabında kapatma/yeniden açma kontrolü; yedi yeni özel oda/sayaç ve yetkisiz erişim reddi denenir. Büyük istek yağmuru yapılmaz, sınırın yük altında aşıldığı iddia edilmez.
+5. 143 otomatik test, sıfır lint hatası/36 mevcut uyarı, tür/derleme ve tek birleşik çalıştırmada 110 emülatör sonucu geçti. Kapalı kaynak dağıtımı Ready oldu; canlı ana dosya yerel derlemeyle eşleşti, yeni XOX odası ve sayaç çalıştı.
+6. Tek yeni Production oturum ayarı açıldı; açık dağıtım Ready oldu. WAF kuralı yayımlandı; değişiklik beklemeyen kural listesinde etkin olduğu ve kaydedilmiş ayrıntılarda Production + `/api/` + 1200/IP/60 saniye + 429 koşulları doğrulandı. Eşik için 1200 istekli canlı yük testi yapılmadı.
+7. Her iki koruma açıkken yalnız yeni özel test odalarında yedi oyunun kurma/katılma/üye okuması/üye olmayanı reddetme/normal çıkış/kapalı durum akışları ve sayaç heartbeat/leave geçti. İmzası bozulan token 401, eski oda okuması 403 verdi. Canlı ana dosya yine `index-DtGtTNDz.js` ile eşleşti. Bu aşamada yedi tam maç yeniden oynanmadı; önceki maç testleri tarihseldir.
+8. Yalnız yeni ve odasız kendi deneme hesabında önce 200 görüldü; hesap kapatıldıktan sonra süresi henüz dolmayan aynı token API’de 401/invalid_token aldı. Hesap geri açıldı ve aynı token yeniden 200 verdi; arayüzde Disabled etiketi kalktı. Diğer hesaplara dokunulmadı ve canlı hesap silinmedi. Yardımcı süreçler durdurulup geçici test dosyaları kaldırıldı. Bu sonuç bütün doğrudan Firestore kanallarının anında iptali değildir.
 
 Yerel açık istemci derlemesi: ana JS `index-DtGtTNDz.js`, 553,11 kB / gzip 171,85 kB; önceki 171,66 kB'ye yaklaşık 0,19 kB ek. CSS `index-Tlx8d9Qx.css` değişmedi. Yeni ücretli paket bağımlılığı yok; sekiz orta UUID paket uyarısı bu aşamanın çözümü değildir.
 
