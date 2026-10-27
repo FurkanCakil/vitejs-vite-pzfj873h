@@ -1,6 +1,6 @@
 # Eski oda erişiminin kapatılması
 
-27 Ekim 2026 — Hazırlık tamamlandı; bu kayıt yazılırken yeni istemci ve kısıtlı kurallar henüz canlıya yayımlanmadı. Önce istemci Production Ready olmalı, ardından `firestore.rollout.rules` yayımlanıp gerçek anonim kimliklerle sınanmalıdır. Eski sekmeler yenilenir; eski oda verisi silinmez ve yeni odalara taşınmaz. Yeni oda gerekir. IAM, anahtar, ortam ayarı, ücretli plan veya zamanlanmış iş eklenmez.
+27 Ekim 2026 — Canlı kapatma tamamlandı. Önce `70092eb` istemcisi Production Ready oldu (15:31:52), ana JavaScript yerel açık derlemeyle bayt düzeyinde eşleşti ve XOX/sayaç çalışması doğrulandı. Ardından Firebase kuralları 15:34'te yayımlandı; boş satırlar dışında kaynakla tam eşleştiği ve yayımlanmamış taslak kalmadığı doğrulandı. Eski sekmeler yenilenir; eski oda verisi silinmedi ve yeni odalara taşınmadı. Yeni oda gerekir. IAM, anahtar, ortam ayarı, ücretli plan veya zamanlanmış iş eklenmedi.
 
 ## Bulgu ve düzeltme nedenleri
 
@@ -19,6 +19,16 @@
 - Tüm sunucu istemci ayarları açık derleme başarılı: `index-YYy92vMJ.js`, 552,54 kB / gzip 171,66 kB; CSS 65,50 / 11,60 kB. Varsayılan kapalı ayar derlemesi de hazırlıkta geçti.
 - İki bağımsız yerel tarayıcıyla eski oturumun temizlenmesi/eski kodun reddi; XOX hamle/yenileme/yeniden katılım; seyirci ve temiz çıkış; Okey özel el/botla başlama/ayrılanın bota dönüşmesi; normal Okey çıkış uyarısı düzeltmesi; Connect 4 hızlı eşleşme/sayaç/karşılıklı hamle/yenileme ve yerel XOX bot yanıtı doğrulandı.
 - 320 ve 390 piksel lobi/eşleşme panelinde yatay taşma görülmedi. Gerçek iOS/Safari/Firefox testi değildir. Kullanılan beş demo odası normal çıkışla kapatıldı, geçici test dosyaları kaldırıldı.
+
+## Canlı kabul ve yayın kanıtı
+
+- [70092eb Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/AKtKUztA16fwRe2dSJZaFBtSX8M5) Ready; ana dosya `/assets/index-YYy92vMJ.js` test edilen dosyayla aynı.
+- Gerçek Firebase anonim test kimlikleri ve oturumsuz isteklerle eski oda/sayaç get-list ve yeni rastgele test kimliğine create/maskeli patch girişimleri 403 döndü. Mevcut eski odalar okunmadı, değiştirilmedi veya silinmedi. Eski örnek koda v2 join/spectate 404/room_not_found verdi.
+- Yedi eşleşme özetinde oturumsuz get 403; kimlikli get, mevcut belge için 200 veya hiç oluşmamış boş kuyruk için 404 verdi. Belgenin yokluğu yetki reddi değildir; istemci bunu boş kuyruk olarak gösterir.
+- Yeni yedi oyun türünde özel oda oluşturma/katılım/üye okuma/normal ayrılma ve kapalı durum doğrulandı. Üye olmayan/oturumsuz oda okuma, oda listesi ve üyenin doğrudan maskeli yazması reddedildi. Amiral Battı'da kendi özel filo görünümü okunabildi, rakip/dış kullanıcı reddedildi. Okey'de iki botla gerçek dağıtımdan sonra kendi el okuması geçti; rakip/dış kullanıcı reddedildi. Sayaç heartbeat/özet/leave geçti.
+- Test düzeneğinin ilk denemelerinde henüz oluşmamış kuyruk ve dağıtılmamış Okey el belgesi yanlışlıkla 200 bekledi; ayrıca bir Okey komutunda zorunlu sürüm eksikti. Bu varsayımlar düzeltildi, kalan testler tamamlandı. Önceki denemelerin test odaları da `finally` içindeki normal çıkışlarla kapatıldı ve kapalı durumları doğrulandı. Bunlar ürün hatası olarak raporlanmaz.
+- Canlı tarayıcıda aktif sayaç, eski kod için yeni oda mesajı ve yedi boş eşleşme seçeneği görüldü; gözlenen konsolda hata/uyarı yoktu. Okey odası botlarla açıldı, özel taşlar gösterildi, yenilemeyle aynı ele geri dönüldü ve normal çıkışla lobiye dönüldü. Bu son kontrol doğal tam maç veya tüm tarayıcı garantisi değildir.
+- Kural kanıtı yerel `eski-oda-kurallari-canli-2026-10-27.png` görüntüsünde; tam değişen dosyalar ve dosya başına nedenler teslim ZIP/TXT paketindedir. Geçici doğrulama kodu ve token'lar depoya alınmaz.
 
 ## Hız etkisi ve sınırlar
 
