@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { Firestore } from '@google-cloud/firestore';
 import { IdentityPoolClient } from 'google-auth-library';
 import { getVercelOidcToken } from '@vercel/oidc';
+import { createSelfAccountLookup, createSessionCheck } from './session-check.js';
 
 export function federationConfig(env) {
   const projectId = env.GCP_PROJECT_ID;
@@ -76,6 +77,9 @@ export function getServerServices() {
     projectId,
     auth: getAuth(app),
     db,
+    // Opt-in until the real Production lookup and outage behavior are checked.
+    checkSession: process.env.AUTH_SESSION_CHECK_ENABLED === 'true'
+      ? createSessionCheck({ lookup: createSelfAccountLookup({ apiKey: process.env.VITE_FIREBASE_API_KEY }) }) : null,
   };
   return services;
 }

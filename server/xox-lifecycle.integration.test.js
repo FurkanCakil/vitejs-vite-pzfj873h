@@ -5,6 +5,9 @@ import { OAuth2Client } from 'google-auth-library';
 import { executeRoomAction, CONNECTION_TTL } from './xox-rooms.js';
 
 const projectId = 'demo-oyun-portali';
+// Each concurrently running suite needs its own artifact namespace. Their
+// synthetic clocks must never prune another suite's matchmaking queue.
+const appId = 'test-xox-lifecycle';
 let sequence = 1000;
 const sessionId = 'session_00000001';
 const session2 = 'session_00000002';
@@ -16,10 +19,10 @@ test('XOX lifecycle on Firestore emulator', { skip: !process.env.FIRESTORE_EMULA
   const authClient = new OAuth2Client();
   authClient.setCredentials({ access_token: 'owner', expiry_date: Date.now() + 3_600_000 });
   const db = new Firestore({ projectId, authClient, preferRest: true });
-  const ref = id => db.doc(`artifacts/${projectId}/public/data/roomsV2/${id}`);
-  const queue = db.doc(`artifacts/${projectId}/public/data/xoxLobby/queue`);
+  const ref = id => db.doc(`artifacts/${appId}/public/data/roomsV2/${id}`);
+  const queue = db.doc(`artifacts/${appId}/public/data/xoxLobby/queue`);
   const now = 1_000_000;
-  const run = (uid, input, time = now, code = 'LIFE12') => executeRoomAction(db, projectId, uid, input, time, () => code);
+  const run = (uid, input, time = now, code = 'LIFE12') => executeRoomAction(db, appId, uid, input, time, () => code);
   const create = (uid, code, isPublic = false, time = now) => run(uid, action('room.create', { nickname: uid, isPublic, sessionId }), time, code);
   const join = (uid, roomId, time = now, tab = sessionId) => run(uid, action('room.join', { roomId, nickname: uid, sessionId: tab }), time);
   const rejects = (promise, code) => assert.rejects(promise, error => error.code === code);
@@ -30,7 +33,7 @@ test('XOX lifecycle on Firestore emulator', { skip: !process.env.FIRESTORE_EMULA
       assert.deepEqual(await run('creator', request, now, 'OTHER1'), first);
       await rejects(create('intruder', 'CRTE12'), 'room_code_collision');
       assert.deepEqual((await ref('CRTE12').get()).data().players, ['creator']);
-      const legacy = db.doc(`artifacts/${projectId}/public/data/rooms/OLD123`);
+      const legacy = db.doc(`artifacts/${appId}/public/data/rooms/OLD123`);
       await legacy.set({ gameId: 'tavla' });
       await rejects(create('intruder', 'OLD123'), 'room_code_collision');
       assert.equal((await legacy.get()).data().gameId, 'tavla');

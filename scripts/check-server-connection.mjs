@@ -5,6 +5,10 @@ import { createProductionFirestore } from '../server/firebase.js';
 if (process.env.VERCEL_ENV === 'production' && process.env.GCP_PROJECT_ID) {
   let db;
   try {
+    if (process.env.AUTH_SESSION_CHECK_ENABLED === 'true'
+      && (typeof process.env.VITE_FIREBASE_API_KEY !== 'string' || !/^AIza[A-Za-z0-9_-]{20,}$/.test(process.env.VITE_FIREBASE_API_KEY))) {
+      throw new Error('Session account check configuration is missing');
+    }
     const connection = createProductionFirestore();
     db = connection.db;
     // Read a fixed, server-only sentinel; do not print its contents or identity

@@ -35,7 +35,12 @@ export function createActionHandler({ enabled, verifyToken, applyAction, allowed
       const action = validateAction(body);
       let identity;
       try { identity = await verifyToken(authorization.slice(7)); }
-      catch { throw new ActionError(401, 'invalid_token'); }
+      catch (error) {
+        // A failed account-state backend is an availability error, not an
+        // expired identity. Keep the response generic and skip every write.
+        if (error instanceof ActionError && error.status === 503) throw error;
+        throw new ActionError(401, 'invalid_token');
+      }
       requireAction(typeof identity?.uid === 'string' && identity.uid.length > 0, 401, 'invalid_token');
       const result = await applyAction(identity.uid, action);
       return response.status(200).json({ ok: true, ...result });

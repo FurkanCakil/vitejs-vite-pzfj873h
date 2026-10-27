@@ -6,13 +6,16 @@ import { executeRoomAction } from './xox-rooms.js';
 import { executePresenceAction } from './presence.js';
 
 const projectId='demo-oyun-portali',sessionId='clock_order_session1';let sequence=0;
+// The emulator project is fixed, but this suite's artificial future clock
+// must not remove entries from other suites' shared XOX queue.
+const appId='test-clock-order';
 const action=(type,fields={})=>({type,actionId:`clock_order_${String(++sequence).padStart(8,'0')}`,...fields});
 test('Server requests that finish out of timestamp order preserve live seats and retired sessions',{skip:!process.env.FIRESTORE_EMULATOR_HOST},async t=>{
  assert.equal(process.env.FIRESTORE_EMULATOR_HOST,'127.0.0.1:8180');assert.equal(process.env.FIREBASE_AUTH_EMULATOR_HOST,'127.0.0.1:9199');
  const authClient=new OAuth2Client();authClient.setCredentials({access_token:'owner',expiry_date:Date.now()+3_600_000});
  const db=new Firestore({projectId,authClient,preferRest:true}),now=12_000_000;
- const run=(uid,type,fields,time=now,code='CLKUNO')=>executeRoomAction(db,projectId,uid,action(type,fields),time,()=>code,{okeyEnabled:true});
- const load=async code=>(await db.doc(`artifacts/${projectId}/public/data/roomsV2/${code}`).get()).data();
+ const run=(uid,type,fields,time=now,code='CLKUNO')=>executeRoomAction(db,appId,uid,action(type,fields),time,()=>code,{okeyEnabled:true});
+ const load=async code=>(await db.doc(`artifacts/${appId}/public/data/roomsV2/${code}`).get()).data();
  try{
   await t.test('an older heartbeat cannot disconnect a freshly renewed opponent',async()=>{
    await run('clock-a','room.create',{sessionId,nickname:'Clock A',isPublic:false},now,'CLKAB1');
@@ -37,8 +40,8 @@ test('Server requests that finish out of timestamp order preserve live seats and
   });
   await t.test('an older presence heartbeat cannot forget a newer leave tombstone',async()=>{
    const uid='clock-presence',fields={sessionId,roomCode:null};
-   const beat=time=>executePresenceAction(db,projectId,uid,action('presence.heartbeat',fields),time,{enabled:true});
-   await beat(now);await executePresenceAction(db,projectId,uid,action('presence.leave',{sessionId}),now+1,{enabled:true});
+   const beat=time=>executePresenceAction(db,appId,uid,action('presence.heartbeat',fields),time,{enabled:true});
+   await beat(now);await executePresenceAction(db,appId,uid,action('presence.leave',{sessionId}),now+1,{enabled:true});
    assert.equal((await beat(now)).retired,true);
   });
   await t.test('a request from before a newer rate window cannot reset its action count',async()=>{

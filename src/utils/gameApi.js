@@ -28,7 +28,12 @@ export function createGameApi(getToken, fetcher = fetch) {
   return async function send(fields, { keepalive = false } = {}) {
     const body = JSON.stringify({ ...fields, actionId: randomRequestId() });
     for (let attempt = 0; attempt < 2; attempt++) {
-      const token = await getToken(attempt > 0);
+      let token;
+      try { token = await getToken(attempt > 0); }
+      catch (error) {
+        const invalidSession = ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token', 'auth/user-not-found'].includes(error?.code);
+        throw new GameApiError(invalidSession ? 'invalid_token' : 'authentication_unavailable');
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12_000);
       try {
@@ -36,9 +41,20 @@ export function createGameApi(getToken, fetcher = fetch) {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body, signal: controller.signal, keepalive,
         });
-        const result = await response.json();
+        let result;
+        try { result = await response.json(); }
+        catch (error) {
+          // WAF/proxy rejections may be HTML or plain text. Their HTTP status
+          // is still authoritative; retrying would amplify a rate limit.
+          // Preserve lost-success recovery with the original action ID.
+          if (response.ok) throw error;
+        }
         if (response.status === 401 && attempt === 0) continue;
-        if (!response.ok || !result.ok) throw new GameApiError(result.error || 'service_unavailable');
+        if (!response.ok || result?.ok !== true) {
+          const fallback = { 401: 'invalid_token', 403: 'security_check_required', 429: 'too_many_actions' }[response.status]
+            || 'service_unavailable';
+          throw new GameApiError(typeof result?.error === 'string' ? result.error : fallback);
+        }
         return result;
       } catch (error) {
         if (error instanceof GameApiError) throw error;
@@ -90,6 +106,8 @@ export function gameErrorMessage(error) {
     presence_capacity: 'Bağlantı sayacı şu anda yoğun. Kısa süre sonra tekrar dene.',
     server_not_enabled: 'Yeni oyun sistemi henüz açılmadı. Sayfayı yenileyip tekrar dene.',
     invalid_token: 'Oturum doğrulanamadı. Sayfayı yenileyip tekrar dene.',
+    security_check_required: 'İstek güvenlik kontrolünde durduruldu. Biraz bekleyip sayfayı yenileyerek tekrar dene.',
+    authentication_unavailable: 'Oturum hizmetine şu anda ulaşılamıyor. Biraz bekleyip tekrar dene.',
     connection_failed: 'İşlem doğrulanamadı. İnternet bağlantını kontrol edip tekrar dene.',
     session_expired: 'Bağlantın yenileniyor. Birkaç saniye sonra tekrar dene.',
     'permission-denied': 'Odadaki oturumun sona erdi. Oda koduyla yeniden katılabilirsin.',

@@ -5,6 +5,7 @@ import { applyXoxMove } from './games/xox.js';
 import { validateAction } from './room-actions.js';
 import { createActionHandler } from './http.js';
 import { federationConfig, serverEnabled } from './firebase.js';
+import { ActionError } from './errors.js';
 
 const room = (patch = {}) => ({
   schemaVersion: 2, version: 0, gameType: 'xox', status: 'playing',
@@ -163,6 +164,17 @@ test('HTTP denies expired/forged tokens and hides underlying SDK errors', async 
     assert.equal(JSON.stringify(res.body).includes('secret'), false);
   }
   assert.equal(writes, 1);
+});
+
+test('account-state outages return 503 without misreporting expiry or applying an action', async () => {
+  const handler = createActionHandler({
+    enabled: () => true, allowedOrigins: new Set(['https://game.example']),
+    verifyToken: async () => { throw new ActionError(503, 'authentication_unavailable'); },
+    applyAction: () => assert.fail('an unchecked account cannot write'),
+  });
+  const res = response(); await handler(request(), res);
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { ok: false, error: 'authentication_unavailable' });
 });
 
 test('disabled rollout never verifies tokens or touches Firestore', async () => {
