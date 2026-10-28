@@ -200,6 +200,24 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       assert.equal(saved.roundId, original.roundId); assert.equal(saved.players.length, 4);
       assert.equal((await own('OKLS12', 'lease-b').get()).exists, false);
     });
+    await t.test('a restored page keeps its human seat and private hand after old connection cleanup', async () => {
+      clock += 100_000; await create('back-a', 'OKBK12'); await join('back-b', 'OKBK12'); await fillStart('back-a', 'OKBK12');
+      const before = await load('OKBK12'), restored = 'okey_restored_page_01';
+      await run('back-b', request('room.disconnect', { roomId: 'OKBK12', sessionId }));
+      await run('back-b', request('room.heartbeat', { roomId: 'OKBK12', sessionId: restored }));
+      await heartbeat('back-b', 'OKBK12'); // late heartbeat from the old document
+      await run('back-b', request('room.disconnect', { roomId: 'OKBK12', sessionId }));
+      // Keep the unrelated host online while the old page's lease expires.
+      clock += 59_000; await heartbeat('back-a', 'OKBK12'); clock += 1001;
+      await run('back-b', request('room.heartbeat', { roomId: 'OKBK12', sessionId: restored }));
+      await heartbeat('back-a', 'OKBK12');
+      const after = await load('OKBK12');
+      assert.ok(after.players.includes('back-b')); assert.equal(after.isBotPlayer['back-b'], undefined);
+      assert.equal(after.roundId, before.roundId); assert.deepEqual(after.racks['back-b'], before.racks['back-b']);
+      assert.equal((await own('OKBK12', 'back-b').get()).exists, true);
+      await run('back-b', request('room.leave', { roomId: 'OKBK12', sessionId: restored }));
+      assert.ok(!(await load('OKBK12')).players.includes('back-b'));
+    });
     await t.test('a late leave cannot replace a seat and reopen an already closed match', async () => {
       clock += 100_000; await create('closed-a', 'OKCL12'); await join('closed-b', 'OKCL12'); await fillStart('closed-a', 'OKCL12');
       const state = await load('OKCL12'); state.status = 'closed'; state.closedBy = 'closed-b';

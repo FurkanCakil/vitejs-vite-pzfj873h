@@ -77,6 +77,22 @@ test('XOX lifecycle on Firestore emulator', { skip: !process.env.FIRESTORE_EMULA
       await rejects(run('tabhost', action('room.leave', { roomId: 'TABS12', sessionId })), 'session_expired');
       await rejects(join('fake_display_id', 'TABS12'), 'room_full');
     });
+    await t.test('late pre-restore heartbeats and disconnects cannot remove the new page lease', async () => {
+      await create('restore-host', 'BACK12'); await join('restore-guest', 'BACK12');
+      await run('restore-host', action('xox.move', { roomId: 'BACK12', expectedVersion: 1, cell: 4 }));
+      const beat = tab => run('restore-host', action('room.heartbeat', { roomId: 'BACK12', sessionId: tab }));
+      const disconnect = tab => run('restore-host', action('room.disconnect', { roomId: 'BACK12', sessionId: tab }));
+      await disconnect(sessionId);
+      await beat(session2); // pageshow establishes the new page before old work settles
+      await beat(sessionId); // old heartbeat finishes late
+      await disconnect(sessionId); // its cleanup must affect only the old lease
+      const saved = (await ref('BACK12').get()).data();
+      assert.equal(saved.status, 'playing'); assert.equal(saved.board[4], 'X');
+      assert.equal(saved.turn, 'restore-guest'); assert.deepEqual(saved.scores, { 'restore-host': 0, 'restore-guest': 0 });
+      // The UI's explicit leave must use the renewed page ID too.
+      await run('restore-host', action('room.leave', { roomId: 'BACK12', sessionId: session2 }));
+      assert.equal((await ref('BACK12').get()).data().abandonReason, 'left');
+    });
     await t.test('rematch needs an opponent decision, alternates starter and preserves scores', async () => {
       await create('winner', 'PLAY12'); await join('loser', 'PLAY12');
       let version = 1;
