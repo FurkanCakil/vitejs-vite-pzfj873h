@@ -1,6 +1,6 @@
 # Oda bağlantısı: sayfaya dönüş ve ağ değişimi
 
-28 Ekim 2026 — Yerel doğrulama tamamlandı; bu kayıt hazırlanırken yeni sürüm henüz yayımlanmadı. Ortak bağlantı katmanı yedi sunucu oyununda kullanılır. Oyun kuralları, skor hesapları, özel el/filo izinleri, CSS ve tahta ölçüleri değiştirilmedi. Yeni Firebase kuralı, ortam ayarı, IAM, anahtar, ücretli hizmet veya zamanlanmış iş yok.
+28 Ekim 2026 — Canlı doğrulama tamamlandı. `24cf903` ana dala gönderildi ve [Production dağıtımı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/8vWWw5uV9cVcDrg3RJbPebSgwSWr) saat 18:20:18’de Ready oldu. Ortak bağlantı katmanı yedi sunucu oyununda kullanılır. Oyun kuralları, skor hesapları, özel el/filo izinleri, CSS ve tahta ölçüleri değiştirilmedi. Yeni Firebase kuralı, ortam ayarı, IAM, anahtar, ücretli hizmet veya zamanlanmış iş yok.
 
 ## Bulgular
 
@@ -27,6 +27,7 @@ Ağ bağlantısı kesilip geri gelmesi sayfadan ayrılma değildir: `offline` s�
 - İlk yeni Okey testinde yapay saat 60 saniye ilerletilirken ilgisiz hostun bağlantısı da yanlışlıkla eskitildi ve doğal bot devri `not_a_player` verdi. Test düzeneği diğer oyuncuyu çevrimiçi tutacak şekilde düzeltildi; ürünün Okey süre/bot kodu değiştirilmedi. Ardından birleşik paket tamamen geçti.
 - Lint sıfır hata / 36 mevcut uyarı; mevcut TypeScript kontrolü ve tüm oyun bayrakları açık üretim derlemesi geçti. App dosyasının önceki tür kontrolü sınırı sürer.
 - Yerel tarayıcıda iki bağımsız origin/oyuncu ile özel XOX odası kuruldu; hamle, başka belgeye gidip geri dönme, aynı tahta/skor ve karşı hamle, normal çıkış ve odanın kapanması geçti. Gözlenen iki konsolda hata/uyarı yoktu. Bu gerçek gezinme dönüşü bfcache’in kesin kullanıldığı kanıtı sayılmaz; olay sıraları ayrıca kontrollü testte sınandı. Tam yedi maç, uzun arka plan veya gerçek iOS/Safari/Firefox testi değildir.
+- Canlıda yalnız yeni özel XOX odası oluşturma, başka belgeye gidip aynı oda koduna dönme ve normal çıkış geçti; gözlenen konsol temizdi. Sayaç lobiye yüklendi. Mevcut kullanıcı odalarına dokunulmadı. Bu aşamada canlı yedi tam maç veya gerçek ağ kesme testi yapılmadı. Canlı ana dosya yerel derlemeyle bayt/SHA-256 düzeyinde eşleşti.
 - Ana JS `index-DZ7uDeHD.js`: 553,74 kB / gzip 172,05 kB; önceki gzip 171,85 kB’ye yaklaşık 0,20 kB ek. CSS `index-Tlx8d9Qx.css` değişmedi. Oyun parçası dosya adları ortak ana paket referansı nedeniyle değişebilir.
 
 ## Tahmini hız/kota etkisi ve açık sınırlar
