@@ -1,6 +1,6 @@
 # Okey sürükleme iptali ve mobil görünüm denetimi
 
-28 Ekim 2026 — Genel denetimin bu dar aşaması ıstakadaki sürükleme iptalini düzeltir. Oyun kuralları, puan, CSS/tahta boyutları ve özel el yetkileri korunur. Sunucu/API, Firebase kuralı, IAM, ortam ayarı, anahtar, ücret veya zamanlanmış iş değişmedi.
+28 Ekim 2026 — `8ced908` ana dala gönderildi; [Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/aD8pYd6912qj7nuLUm1oYJp4QvGy) 22:01:00’de Ready oldu. Genel denetimin bu dar aşaması ıstakadaki sürükleme iptalini düzeltir. Oyun kuralları, puan, CSS/tahta boyutları ve özel el yetkileri korunur. Sunucu/API, Firebase kuralı, IAM, ortam ayarı, anahtar, ücret veya zamanlanmış iş değişmedi.
 
 ## Bulgular ve değişiklik gerekçeleri
 
@@ -31,6 +31,8 @@ Bu yazıcı gerçek Firebase değildir; canlıya hamle/puan yazıldığı veya d
 Ayrı demo Auth/Firestore/API ile özel Okey masası ve üç bot açıldı. 390×844 görünümde gerçek fare sürüklemesiyle kırmızı 12 ilk slottan boş 29. slota taşındı; yenilemede aynı yerde kaldı. Normal çıkışla lobiye dönüldü. Gözlenen konsol temizdi. 320×740 ve 390×844 dikey ölçümlerinde 30 slot yatay belge sınırında kaldı; dikey sayfa kaydırması normaldir. 844×390 kompakt görünümde 30 slotun en altı yaklaşık 376 pikseldeydi ve yüksekliğe sığdı. Viewport ayarı geri alındı.
 
 Satrançta 320 pikselde kareler eş oranlıydı; 390 pikselde e4 ve botun d5 cevabı/notasyon görüldü, yaklaşık 31,67×31,67 kare ölçüsü korundu ve belge yatay taşmadı. 320 piksel çok dar görünümde okunabilirlik hakkında tam cihaz kullanılabilirlik sonucu çıkarılmaz. Bu sadece masaüstü Chromium viewport kontrolüdür; gerçek iOS/Safari/Firefox, dokunmatik donanım, tam doğal maç veya uzun süreli bellek/uyku/yük testi değildir.
+
+Canlı ana JS/Okey parçası/CSS test edilen üretim çıktısıyla bayt düzeyinde eşleşti. Yalnız yeni özel Okey masası ve üç botla normal fare sürüklemesiyle mavi 6 ilk slottan boş 29. slota taşındı; yenilemede aynı yerde kaldı. Normal çıkışla lobiye dönüldü, gözlenen konsol temizdi. Mevcut kullanıcı odalarına dokunulmadı; canlıda sentetik iptal, geçersiz hamle veya tam maç denenmedi. Yerel test yardımcıları kaldırıldı ve demo sunucu/emülatörlerin 5173/8180/9199 dinleme portları kapalı doğrulandı.
 
 ## Tahmini etki ve açık sınırlar
 
