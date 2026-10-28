@@ -104,35 +104,35 @@ export function useStockfish(enabled, skillLevel) {
     };
   }, [enabled, skillLevel, generation]);
 
+  // UCI emits one final bestmove after stop. Settle the cancelled caller now,
+  // but discard that response so it cannot complete the next search.
+  const cancelSearch = useCallback(() => {
+    const worker = workerRef.current;
+    if (worker && searchingRef.current) {
+      searchingRef.current = false;
+      discardRef.current += 1;
+      try { worker.postMessage('stop'); }
+      catch { failRef.current?.(); }
+    }
+    settlePending(null);
+  }, []);
+
   const getBestMove = useCallback((fen, depth) => {
     const worker = workerRef.current;
     if (!worker) return Promise.resolve(null);
-
-    // Bir önceki istek hâlâ cevap beklerken yenisi gelirse (bot efekti art arda
-    // tetiklenebilir) eskisinin `resolve`'u ESKİDEN sessizce ÜZERİNE YAZILIYOR
-    // ve o promise hiç settle olmuyordu. Artık önce kapatılır.
-    settlePending(null);
-
-    // Motor HÂLÂ arıyorsa durdurulur. UCI sözleşmesi: arama sürerken gelen
-    // `stop`, o arama için BİR `bestmove` bastırır — onu yutmamız gerekir
-    // (aşağıdaki discard sayacı). Arama çoktan bitmişse `searchingRef` false
-    // olur; o durumda `stop` GÖNDERİLMEZ, çünkü Stockfish aramıyorken gelen
-    // `stop`'a hiçbir çıktı üretmez ve sayacı boşuna artırmış olurduk (bu da
-    // bir sonraki GEÇERLİ cevabın yutulmasına, yani promise'in asılı
-    // kalmasına yol açardı).
-    if (searchingRef.current) {
-      worker.postMessage('stop');
-      discardRef.current += 1;
-    }
+    cancelSearch();
+    if (workerRef.current !== worker) return Promise.resolve(null);
 
     return new Promise((resolve) => {
       pendingRef.current = { resolve };
       timeoutRef.current = setTimeout(() => failRef.current?.(), 90_000);
       searchingRef.current = true;
-      worker.postMessage(`position fen ${fen}`);
-      worker.postMessage(`go depth ${depth}`);
+      try {
+        worker.postMessage(`position fen ${fen}`);
+        worker.postMessage(`go depth ${depth}`);
+      } catch { failRef.current?.(); }
     });
-  }, []);
+  }, [cancelSearch]);
 
-  return { isReady, getBestMove, error, restart };
+  return { isReady, getBestMove, cancelSearch, error, restart };
 }

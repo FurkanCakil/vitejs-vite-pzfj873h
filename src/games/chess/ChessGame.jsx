@@ -491,12 +491,13 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
   // Bot rakip: sıra bota geldiğinde Stockfish'e mevcut pozisyonu FEN olarak gönderip
   // dönen bestmove'u (Worker içinde, ana thread'i bloklamadan) tahtada oynatır.
   const botColor = isBot ? roomData.playerColors?.[BOT_UID] : null;
-  const { isReady: isEngineReady, getBestMove, error: engineError, restart: restartEngine } = useStockfish(isBot, DIFFICULTY_CONFIG[botDifficulty]?.skillLevel ?? 10);
+  const { isReady: isEngineReady, getBestMove, cancelSearch, error: engineError, restart: restartEngine } = useStockfish(isBot, DIFFICULTY_CONFIG[botDifficulty]?.skillLevel ?? 10);
   const [botThinking, setBotThinking] = useState(false);
 
   useEffect(() => {
     if (!isBot || isSpectator || effective.turn !== BOT_UID || effective.winner || roomData.status === 'abandoned' || !isEngineReady) return;
     let cancelled = false;
+    let thinkTimer, finishThinkDelay;
     setBotThinking(true);
     const fen = boardToFEN(board, botColor, effective.enPassantTarget, effective.halfmoveClock || 0, 1);
     const depth = DIFFICULTY_CONFIG[botDifficulty]?.depth ?? 8;
@@ -511,7 +512,7 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
         const easyMove = botDifficulty === 'easy' ? chooseEasyMove(board, botColor, effective.enPassantTarget) : null;
         const [uciMove] = await Promise.all([
           easyMove ? Promise.resolve(null) : getBestMove(fen, depth),
-          new Promise((resolve) => setTimeout(resolve, minThinkMs)),
+          new Promise((resolve) => { finishThinkDelay = resolve; thinkTimer = setTimeout(resolve, minThinkMs); }),
         ]);
         if (cancelled) return;
         const parsed = easyMove || (uciMove ? uciMoveToIndices(uciMove) : null);
@@ -526,8 +527,12 @@ export default function ChessGame({ roomData, roomCode, user, db, appId, leaveRo
       } finally { if (!cancelled) setBotThinking(false); }
     })();
 
-    return () => { cancelled = true; };
-  }, [isBot, isEngineReady, effective.turn, effective.winner, roomData.status]);
+    return () => {
+      cancelled = true;
+      clearTimeout(thinkTimer); finishThinkDelay?.();
+      cancelSearch(); setBotThinking(false);
+    };
+  }, [isBot, isSpectator, isEngineReady, effective.turn, effective.winner, roomData.status, cancelSearch]);
 
   const handleResign = async () => {
     if (sendAction) { if (await submitServer('chess.resign')) setResignConfirm(false); return; }
