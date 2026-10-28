@@ -1,6 +1,6 @@
 # Sunucu zamanı ve Okey sayaçları
 
-28 Ekim 2026 — Yerel doğrulama tamamlandı; yeni sürüm bu kayıt anında henüz yayımlanmadı. Genel denetimin bu aşaması saat kaymasına odaklanır. Tahta/CSS, Stockfish seviyesi, oyun kuralları, puan hesabı ve sunucunun gerçek süre denetimleri değiştirilmedi. Yeni kural, IAM, anahtar, ortam ayarı, ücretli hizmet veya zamanlanmış iş yok.
+28 Ekim 2026 — Canlı doğrulama tamamlandı. `3dc01c3` kaynağı ana dala gönderildi ve [Production dağıtımı](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/CLYARUdtjpMVDEKiDFzYAaCHE11C) 18:44:37’de Ready oldu. Genel denetimin bu aşaması saat kaymasına odaklanır. Tahta/CSS, Stockfish seviyesi, oyun kuralları, puan hesabı ve sunucunun gerçek süre denetimleri değiştirilmedi. Yeni kural, IAM, anahtar, ortam ayarı, ücretli hizmet veya zamanlanmış iş yok.
 
 ## Bulgular ve gerekçeler
 
@@ -27,6 +27,10 @@
 Eski hesap mantığında beş yeni test başarısız oldu: yanlış saatle sıfıra düşen Okey süresi, kalibrasyondan sonra cihaz saati değişimi, istek sırasında geri saat düzeltmesi, geç yanıtın yeni örneği ezmesi ve negatif örnek. Düzeltme sonrası 156 otomatik test geçti; normal komutta 13 emülatör üst testi bilerek atlanır. Tek temiz birleşik demo emülatör çalıştırmasında mevcut 99 senaryo + 13 üst test = 112 sonuç geçti. Lint sıfır hata/36 mevcut uyarı; mevcut TypeScript kontrolü ve tüm oyun bayrakları açık üretim derlemesi geçti. App dosyasının önceki tür kontrolü sınırı sürer.
 
 Yalnız yerel geçici test sekmesi iki saat ileri Date.now ile açıldı; bilgisayarın saati değiştirilmedi. Gerçek demo Auth/Firestore/API ile özel Okey odası ve üç bot açıldı; başlangıç 3 saniye, hazırlık normal aralıkta gösterildi. Hazırlıkta +2 saatten -2 saate geçildiğinde kalan 22 saniye sıçramadı; faz otomatik bitti ve bot turu 44 saniye gösterdi. Botlar oynayıp insana geçti. İnsan sırasında yeniden +2 saate geçişte kalan 37 saniye saatlere/sıfıra sıçramadı. Normal saate geri dönülüp odadan çıkıldı; gözlenen konsol temizdi. Geçici sayfa/süreçler kaldırıldı. Bu tam doğal maç, OS saatini değiştirme, gerçek telefon/Safari/Firefox veya uzun uyku testi değildir.
+
+Canlı kabulde uygulama dosyası yerel açık üretim çıktısıyla bayt düzeyinde eşleşti. Yeni gerçek anonim test kimliğiyle yalnız yeni özel XOX odası oluşturma, aynı işlem kimliğiyle aynı oda/sürümü koruyan tekrar, oda heartbeat, ortak sayaç heartbeat/leave ve normal oda çıkışı geçti. Başarılı yanıtlardaki serverNow tamsayısı HTTP Date zamanıyla makul aralıkta eşleşti; tekrar yanıtı güncel zamanı verdi. Oyun alındısı veya yetki alanına istemci zamanı eklenmedi.
+
+Canlı tarayıcıda yalnız yeni özel Okey odası ve üç botla başlangıç, özel elin yüklenmesi, hazırlığın otomatik bitişi ve normal tur sayacı görüldü; normal çıkışla lobiye dönüldü. Gözlenen konsol temizdi. Mevcut oyuncu odalarına dokunulmadı; canlıda cihaz saatini değiştirme, tam doğal maç veya uzun uyku testi yapılmadı. Geçici dosyalar/sekme/süreçler temizlendi.
 
 ## Tahmini etki ve sınırlar
 
