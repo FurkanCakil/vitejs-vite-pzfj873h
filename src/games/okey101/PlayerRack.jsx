@@ -7,6 +7,7 @@ import { buildSeriesArrangement, buildPairsArrangement, confirmedMeldTotal } fro
 import { findNearestSlotIndex } from './nearestSlot.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
+import { createRackWriteQueue } from './rackWriteQueue.js';
 
 const DRAG_THRESHOLD_PX = 6;
 const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
@@ -276,20 +277,24 @@ export default function PlayerRack({
   // --- Sunucuya yazım hattı (aşağıdaki iyimser-katman efektleri buna bakar,
   //     bu yüzden BİLEREK en üstte tanımlanır; detaylı açıklama için bkz.
   //     `flushRackWrite` ve `applyRack`). ---
-  const pendingWriteRef = useRef(null); // { rack, groups } — henüz gönderilmemiş en son istenen durum
-  const writeChainRef = useRef(Promise.resolve());
-  const writeDebounceRef = useRef(null);
-  const inFlightRef = useRef(0);        // sunucuda ŞU AN işlenen yazım sayısı
+  const writeQueueRef = useRef(null);
+  const latestUpdateRack = useRef(onUpdateRack); latestUpdateRack.current = onUpdateRack;
   const settleTimerRef = useRef(null);
   const [writeSettleTick, setWriteSettleTick] = useState(0);
-  useEffect(() => () => {
-    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+  useEffect(() => {
+    const queue = createRackWriteQueue({
+      write: (rack, groups) => latestUpdateRack.current(rack, groups),
+      onIdle: () => setWriteSettleTick(n => n + 1),
+      onError: err => console.error('Okey101 ıstaka senkron hatası:', err),
+    });
+    writeQueueRef.current = queue;
+    return () => {
+      queue.stop();
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    };
   }, []);
 
-  // Yazım hattı tamamen boş mu? (bekleyen debounce YOK, gönderilmemiş
-  // değişiklik YOK, uçuşta transaction YOK)
-  const isWriteIdle = () => !writeDebounceRef.current && !pendingWriteRef.current && inFlightRef.current === 0;
+  const isWriteIdle = () => writeQueueRef.current?.isIdle() ?? true;
 
   // Istaka düzenlemesi artık sunucuda transaction ile birleştirilerek yazılıyor
   // (taş kaybını önlemek için — bkz. tiles.js#mergeRackLayout). Bu fazladan bir
@@ -394,55 +399,10 @@ export default function PlayerRack({
     if (optimisticRack === null && optimisticGroups !== null) setOptimisticGroups(null);
   }, [optimisticRack, optimisticGroups]);
 
-  // PERFORMANS/DOĞRULUK: `handleUpdateRack` (Okey101Game.jsx) her çağrıldığında
-  // sunucudan OKUYUP birleştirip (mergeRackLayout) YAZAN bir transaction'dır.
-  // Eskiden HER taş/per hareketinde (applyRack her çağrıldığında) YENİ bir
-  // transaction ateşleniyordu. Per düzenlerken/taş taşırken art arda birkaç
-  // hareket yapıldığında (çok sık olur) bu transaction'lar BİRBİRİYLE
-  // ÇAKIŞIYOR, Firestore'un otomatik "en son yazan kazanır" yeniden deneme
-  // mekanizması ise ARADAKİ bir hareketi bazen sunucudaki ESKİ hale göre
-  // birleştirip görsel olarak "per eski yerine ışınlanıyor" gibi bir etki
-  // yaratıyordu (ayrıca donma/takılma hissine de katkıda bulunuyordu — CPU/ağ
-  // art arda birçok transaction'ı aynı anda işliyordu).
-  //
-  // Çözüm: EKRANDAKİ (iyimser) görünüm HER hareket için ANINDA güncellenir
-  // (gecikme YOK), ama sunucuya asıl YAZIM kısa bir süre DEBOUNCE edilip TEK
-  // BİR yazım zinciri (writeChainRef) üzerinden SIRAYLA gönderilir — asla iki
-  // transaction aynı anda uçuşmaz. `flushRackWrite`, bir aksiyonun (ör. "Seri
-  // Aç") sunucudaki GÜNCEL `groups`'a ihtiyaç duyduğu anlarda debounce'u
-  // atlayıp hemen (ve varsa önceki yazımların ardından) göndermek için
-  // kullanılır. (Hattın ref/state tanımları, iyimser-katman efektlerinin
-  // onlara erişebilmesi için bu dosyada DAHA YUKARIDA yapılır.)
-
-  // AYNI ANDA EN FAZLA BİR yazım uçuşta olur. Uçuşta bir yazım varken gelen
-  // yeni hareketler `pendingWriteRef` içinde BİRİKİR (eskisinin üzerine yazar)
-  // ve uçuştaki bitince SADECE EN GÜNCEL hali gönderilir.
-  //
-  // Eskiden her hareket zincire AYRI bir transaction ekliyordu: 7 sürükleme =
-  // 7 sunucu gidiş-dönüşü = saniyelerce süren bir "ara durum snapshot'ı yağmuru".
-  // Artık 7 sürükleme en fazla 2 gidiş-dönüşe (1 uçuştaki + 1 birleştirilmiş
-  // son hâl) iner.
-  const flushRackWrite = () => {
-    if (writeDebounceRef.current) { clearTimeout(writeDebounceRef.current); writeDebounceRef.current = null; }
-    if (inFlightRef.current > 0) return writeChainRef.current; // biriksin, bitince gönderilir
-    const pending = pendingWriteRef.current;
-    if (pending) {
-      pendingWriteRef.current = null;
-      inFlightRef.current += 1;
-      writeChainRef.current = writeChainRef.current
-        .then(() => onUpdateRack(pending.rack, pending.groups))
-        .catch((err) => console.error('Okey101 ıstaka senkron hatası:', err))
-        .finally(() => {
-          inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-          // Bu arada biriken daha güncel bir hâl varsa onu şimdi gönder.
-          if (pendingWriteRef.current) { flushRackWrite(); return; }
-          // Hat tamamen boşaldıysa "artık sunucu otoritedir" sinyalini ver
-          // (bkz. aşağıdaki iyimser-katman bırakma efekti).
-          if (isWriteIdle()) setWriteSettleTick((n) => n + 1);
-        });
-    }
-    return writeChainRef.current;
-  };
+  // Keep immediate optimistic rendering and the existing 140ms debounce.
+  // Opening waits for every coalesced write, including layouts queued while
+  // the first request was pending; unmount retires unsent work.
+  const flushRackWrite = () => writeQueueRef.current?.flush() ?? Promise.resolve(false);
 
   // Taşları/perleri yeni düzene taşırken EKRANDA (rack VE groups) hemen
   // göster, sunucuya yazımı debounce et. `immediate` true ise (buton
@@ -458,14 +418,7 @@ export default function PlayerRack({
     // Yeni bir hareket geldi: bekleyen "iyimser katmanı bırak" planı iptal.
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
 
-    pendingWriteRef.current = { rack: newRack, groups: newGroups };
-    if (immediate) { flushRackWrite(); return; }
-    if (writeDebounceRef.current) clearTimeout(writeDebounceRef.current);
-    // 300ms -> 140ms: ekrandaki görüntü zaten ANINDA güncelleniyor, ama yazımı
-    // geciktirmek "sunucu bizim düzenimize ulaşana kadar geçen süreyi" uzatıyor
-    // ve iyimser katmanın açık kaldığı pencereyi büyütüyordu. 140ms art arda
-    // sürüklemeleri hâlâ tek yazıma birleştirmeye yetiyor.
-    writeDebounceRef.current = setTimeout(flushRackWrite, 140);
+    writeQueueRef.current?.enqueue({ rack: newRack, groups: newGroups }, { immediate });
   };
 
   // 7. madde — "taş bir anlığına eski yerine ışınlanıp geri geliyor" ARTIĞI:
@@ -750,13 +703,13 @@ export default function PlayerRack({
 
   const assistedOpenSeries = async () => {
     if (assistedMeldGroupIds.length === 0 || !canAct || !canOpenMeldsRule || !onOpenSeries || assistedMeldsWouldEmptyRack) return;
-    await flushRackWrite();
+    if (!await flushRackWrite()) return;
     await onOpenSeries(assistedMeldGroupIds);
   };
 
   const assistedOpenPairs = async () => {
     if (assistedPairGroupIds.length === 0 || !canAct || !canOpenPairsRule || !onOpenPairs || assistedPairsWouldEmptyRack) return;
-    await flushRackWrite();
+    if (!await flushRackWrite()) return;
     await onOpenPairs(assistedPairGroupIds);
   };
 
@@ -768,14 +721,14 @@ export default function PlayerRack({
   const openSeries = async () => {
     if (!canOpenSeries || !onOpenSeries) return;
     setSelected(new Set());
-    await flushRackWrite();
+    if (!await flushRackWrite()) return;
     await onOpenSeries(selectedGroupIds);
   };
 
   const openPairs = async () => {
     if (!canOpenPairs || !onOpenPairs) return;
     setSelected(new Set());
-    await flushRackWrite();
+    if (!await flushRackWrite()) return;
     await onOpenPairs(selectedGroupIds);
   };
 
