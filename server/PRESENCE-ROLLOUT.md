@@ -1,5 +1,7 @@
 # Doğrulanmış oyuncu sayacı ve eski oyun eşleşmesi
 
+28 Ekim 2026 güncellemesi: Aşağıdaki 23 Ekim metni tarihsel aşamadır. Ağ kesilip gelmesinde artık aynı sayaç oturumu korunur; yalnız gerçek sayfadan ayrılıp dönme yeni kimlik açar. Ortak zaman 28 Ekim’de monoton sunucu referansına taşındı. Güncel toparlanma, testler ve tazelik sınırı [PRESENCE-RECOVERY.md](PRESENCE-RECOVERY.md), saat davranışı [CLOCK-SYNC.md](CLOCK-SYNC.md) içindedir.
+
 23 Ekim 2026. Genel denetimin sayaç aşaması. Diğer oyunların istemci hamle/skor yetkisi ve eski oda izinleri bu değişiklikle kapanmaz.
 
 ## Sorun ve davranış

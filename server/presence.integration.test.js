@@ -5,6 +5,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { executePresenceAction, presenceShardId } from './presence.js';
 import { presenceShardSessions, FRESH_MS } from '../src/utils/presenceProtocol.js';
 import { countActiveSessions, waitingPlayers } from '../src/utils/presence.js';
+import { startServerPresence } from '../src/hooks/serverPresence.js';
 
 let sequence = 0;
 test('verified presence, concurrent tabs and read-only public summaries', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async t => {
@@ -99,6 +100,29 @@ test('verified presence, concurrent tabs and read-only public summaries', { skip
       await rejects(beat(uid), 'too_many_actions');
       await beat('presence-unrelated'); assert.ok(await member('presence-unrelated'));
       clock += 10_000; await beat(uid); assert.ok(await member(uid));
+    });
+    await t.test('twenty client network recoveries preserve one server session and final leave removes its projection', async () => {
+      clock += 200_000; const uid = 'presence-client-recovery';
+      const win = new EventTarget(), doc = new EventTarget(); doc.visibilityState = 'visible'; win.navigator = { onLine: true };
+      globalThis.window = win; globalThis.document = doc;
+      const pending = [], calls = [], errors = [];
+      const api = fields => { calls.push(fields); const request = run(uid, action(fields.type, fields)); pending.push(request); return request; };
+      const settle = async () => { await Promise.all(pending); await new Promise(resolve => setImmediate(resolve)); };
+      const stop = startServerPresence({ api, getToken() {}, roomCode: null, onError: error => errors.push(error) });
+      try {
+        await settle();
+        for (let n = 0; n < 20; n++) {
+          clock += 1000; win.dispatchEvent(new Event('offline'));
+          const before = calls.length; doc.dispatchEvent(new Event('visibilitychange')); await settle();
+          assert.equal(calls.length, before);
+          win.dispatchEvent(new Event('online')); await settle();
+        }
+        assert.deepEqual(errors, []);
+        assert.equal(new Set(calls.filter(call => call.type === 'presence.heartbeat').map(call => call.sessionId)).size, 1);
+        const saved = (await secret(uid).get()).data().members[uid]; assert.equal(Object.keys(saved.sessions).length, 1);
+        assert.ok(await member(uid));
+        stop(); await settle(); assert.equal(await member(uid), undefined);
+      } finally { stop(); await settle(); delete globalThis.window; delete globalThis.document; }
     });
     await t.test('bounded shards reject saturation and reclaim expired identities without a scheduled job', async () => {
       clock += 200_000; const uid = 'presence-capacity', members = {};
