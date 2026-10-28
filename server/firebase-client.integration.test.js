@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, onSnapshot, terminate } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, onSnapshot, terminate, disableNetwork, enableNetwork } from 'firebase/firestore';
 import { Firestore } from '@google-cloud/firestore';
 import { OAuth2Client } from 'google-auth-library';
+import { subscribeServerSummary, queueEntries } from '../src/hooks/serverSummary.js';
 
 // The browser bundle does not include undici or gRPC. These tests exercise the
 // Node SDK paths whose pinned dependencies need narrowly scoped overrides.
@@ -49,6 +50,34 @@ test('Firebase client Node transports retain authentication, snapshots and rule 
       await server.doc(path).update({ players: ['another-player'] });
       await assert.rejects(getDoc(ref), error => error.code === 'permission-denied');
       assert.equal((await server.doc(path).get()).data().version, 1);
+    });
+    await t.test('summary cache is unknown until metadata confirms the server, including unchanged data and reconnect', async () => {
+      // An isolated artifact keeps this seeded queue separate from real game
+      // matchmaking fixtures in the same combined emulator run.
+      const summaryPath = 'artifacts/sdk-summary-read/public/data/xoxLobby/queue';
+      const ref = doc(client, summaryPath), saved = [{ host: 'sdk-summary-host', updatedAt: 1000 }];
+      await server.doc(summaryPath).set({ entries: saved });
+      assert.deepEqual((await getDoc(ref)).data().entries, saved);
+      await disableNetwork(client);
+      let unsubscribe = () => {}, waiter;
+      const observe = (predicate, action) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { waiter = null; reject(new Error('summary confirmation timeout')); }, 10_000);
+        waiter = { predicate, done: value => { clearTimeout(timer); waiter = null; resolve(value); },
+          fail: error => { clearTimeout(timer); waiter = null; reject(error); } };
+        Promise.resolve().then(action).catch(error => waiter?.fail(error));
+      });
+      try {
+        await observe(value => value === null, () => {
+          unsubscribe = subscribeServerSummary(ref, queueEntries, value => {
+            if (waiter?.predicate(value)) waiter.done(value);
+          }, error => waiter?.fail(error));
+        });
+        assert.deepEqual(await observe(value => Array.isArray(value), () => enableNetwork(client)), saved,
+          'unchanged cached data needs the metadata-only server confirmation');
+        await observe(value => value === null, () => disableNetwork(client));
+        await server.doc(summaryPath).set({ entries: [] });
+        assert.deepEqual(await observe(value => Array.isArray(value), () => enableNetwork(client)), []);
+      } finally { unsubscribe(); await disableNetwork(client); }
     });
   } finally {
     await terminate(client); await deleteApp(app); await server.terminate();

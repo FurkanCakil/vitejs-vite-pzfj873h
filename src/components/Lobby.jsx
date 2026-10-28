@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { subscribeServerSummary, queueEntries, waitingCount } from '../hooks/serverSummary.js';
 import { SERVER_XOX_ENABLED, SERVER_BATTLESHIP_ENABLED, SERVER_OKEY_ENABLED, SERVER_CONNECT4_ENABLED, SERVER_CHECKERS_ENABLED, SERVER_CHESS_ENABLED, SERVER_TAVLA_ENABLED, SERVER_PRESENCE_ENABLED } from '../utils/gameApi.js';
 import { Users, Bot, UserPlus, Zap, Loader2, X } from 'lucide-react';
 import { db, appId } from '../firebase/config.js';
@@ -71,76 +72,66 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
 
   // ---- Hızlı Eşleşme: oyun seçim ekranı ----------------------------------
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [serverQueue, setServerQueue] = useState([]);
-  const [battleQueue, setBattleQueue] = useState([]);
-  const [okeyQueue, setOkeyQueue] = useState([]);
-  const [connect4Queue, setConnect4Queue] = useState([]);
-  const [checkersQueue, setCheckersQueue] = useState([]);
-  const [chessQueue, setChessQueue] = useState([]);
-  const [tavlaQueue, setTavlaQueue] = useState([]);
+  const [serverQueue, setServerQueue] = useState(null);
+  const [battleQueue, setBattleQueue] = useState(null);
+  const [okeyQueue, setOkeyQueue] = useState(null);
+  const [connect4Queue, setConnect4Queue] = useState(null);
+  const [checkersQueue, setCheckersQueue] = useState(null);
+  const [chessQueue, setChessQueue] = useState(null);
+  const [tavlaQueue, setTavlaQueue] = useState(null);
   const waitingCounts = useMemo(() => {
-    const counts = {};
-    if (SERVER_XOX_ENABLED) counts.xox = serverQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_BATTLESHIP_ENABLED) counts.amiralbatti = battleQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_CONNECT4_ENABLED) counts.connect4 = connect4Queue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_CHECKERS_ENABLED) counts.dama = checkersQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_CHESS_ENABLED) counts.satranc = chessQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_TAVLA_ENABLED) counts.tavla = tavlaQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000).length;
-    if (SERVER_OKEY_ENABLED) counts.okey101 = okeyQueue.filter(entry => entry.host !== userId &&
-      Number.isFinite(entry.updatedAt) && nowTick >= entry.updatedAt && nowTick - entry.updatedAt < 60_000)
-      .reduce((total, entry) => total + (entry.players ?? 1), 0);
-    return counts;
+    return {
+      xox: SERVER_XOX_ENABLED ? waitingCount(serverQueue, userId, nowTick) : undefined,
+      amiralbatti: SERVER_BATTLESHIP_ENABLED ? waitingCount(battleQueue, userId, nowTick) : undefined,
+      okey101: SERVER_OKEY_ENABLED ? waitingCount(okeyQueue, userId, nowTick, true) : undefined,
+      connect4: SERVER_CONNECT4_ENABLED ? waitingCount(connect4Queue, userId, nowTick) : undefined,
+      dama: SERVER_CHECKERS_ENABLED ? waitingCount(checkersQueue, userId, nowTick) : undefined,
+      satranc: SERVER_CHESS_ENABLED ? waitingCount(chessQueue, userId, nowTick) : undefined,
+      tavla: SERVER_TAVLA_ENABLED ? waitingCount(tavlaQueue, userId, nowTick) : undefined,
+    };
   }, [userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue]);
   useEffect(() => {
     if (!SERVER_TAVLA_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'tavlaLobby', 'queue'), snapshot => {
-      setTavlaQueue(snapshot.data()?.entries ?? []);
-    }, () => setTavlaQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'tavlaLobby', 'queue'),
+      queueEntries, setTavlaQueue, () => setTavlaQueue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_CHESS_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'chessLobby', 'queue'), snapshot => {
-      setChessQueue(snapshot.data()?.entries ?? []);
-    }, () => setChessQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'chessLobby', 'queue'),
+      queueEntries, setChessQueue, () => setChessQueue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_CHECKERS_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'checkersLobby', 'queue'), snapshot => {
-      setCheckersQueue(snapshot.data()?.entries ?? []);
-    }, () => setCheckersQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'checkersLobby', 'queue'),
+      queueEntries, setCheckersQueue, () => setCheckersQueue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_CONNECT4_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'connect4Lobby', 'queue'), snapshot => {
-      setConnect4Queue(snapshot.data()?.entries ?? []);
-    }, () => setConnect4Queue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'connect4Lobby', 'queue'),
+      queueEntries, setConnect4Queue, () => setConnect4Queue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_OKEY_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'okeyLobby', 'queue'), snapshot => {
-      setOkeyQueue(snapshot.data()?.entries ?? []);
-    }, () => setOkeyQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'okeyLobby', 'queue'),
+      queueEntries, setOkeyQueue, () => setOkeyQueue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_XOX_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'xoxLobby', 'queue'), snapshot => {
-      setServerQueue(snapshot.data()?.entries ?? []);
-    }, () => setServerQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'xoxLobby', 'queue'),
+      queueEntries, setServerQueue, () => setServerQueue(undefined));
   }, [pickerOpen, userId]);
   useEffect(() => {
     if (!SERVER_BATTLESHIP_ENABLED || !pickerOpen || !userId) return undefined;
-    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'battleshipLobby', 'queue'), snapshot => {
-      setBattleQueue(snapshot.data()?.entries ?? []);
-    }, () => setBattleQueue([]));
+    return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'battleshipLobby', 'queue'),
+      queueEntries, setBattleQueue, () => setBattleQueue(undefined));
   }, [pickerOpen, userId]);
   // Queue listeners above exist only while the picker is open.
 
+  const openPicker = () => {
+    setServerQueue(null); setBattleQueue(null); setOkeyQueue(null); setConnect4Queue(null);
+    setCheckersQueue(null); setChessQueue(null); setTavlaQueue(null);
+    setPickerOpen(true);
+  };
   const isMatching = !!matchmakingGameId;
   const chooseMatchGame = (gameId) => { setPickerOpen(false); findMatch(gameId); };
 
@@ -171,8 +162,8 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
       <div className="flex justify-end mb-4">
         <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-full pl-2.5 pr-3.5 py-1.5 shadow-lg backdrop-blur-sm">
           <span
-            className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"
-            style={{ boxShadow: '0 0 6px 2px rgba(34,197,94,0.65)' }}
+            className={`w-2.5 h-2.5 rounded-full ${activeUsers === null ? 'bg-slate-500' : 'bg-green-500 animate-pulse'}`}
+            style={activeUsers === null ? undefined : { boxShadow: '0 0 6px 2px rgba(34,197,94,0.65)' }}
           />
           <span className="text-xs sm:text-sm font-medium text-slate-300">
             Aktif Oyuncu: <span className="font-bold text-white tabular-nums">{activeUsers === null ? (presenceError ? '—' : '…') : activeUsers}</span>
@@ -209,7 +200,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
           <p className="text-sm text-slate-400">Arkadaşın yoksa dert değil — rastgele bir rakiple hemen oyna.</p>
         </div>
         <button
-          onClick={() => setPickerOpen(true)}
+          onClick={openPicker}
           disabled={isCreatingRoom || isMatching}
           className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg font-bold transition-all border border-transparent bg-gradient-to-r from-fuchsia-600 to-indigo-600 text-white shadow-[0_0_18px_rgba(217,70,239,0.35)] hover:shadow-[0_0_24px_rgba(217,70,239,0.55)] hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
         >
@@ -236,7 +227,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {GAMES.filter((g) => g.available).map((game) => {
-                const waiting = waitingCounts[game.id] || 0;
+                const waiting = waitingCounts[game.id];
                 return (
                   <button
                     key={game.id}
@@ -246,7 +237,7 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
                     <span className="text-4xl drop-shadow-md">{game.icon}</span>
                     <span className="text-sm font-bold text-slate-100 leading-tight">{game.name}</span>
                     <span className={`text-[11px] font-medium mt-0.5 px-2 py-0.5 rounded-full border ${waiting > 0 ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' : 'text-slate-500 border-slate-700 bg-slate-800/60'}`}>
-                      {waiting > 0 ? `${waiting} kişi bekliyor` : 'Bekleyen yok'}
+                      {waiting === null ? 'Kontrol ediliyor…' : waiting === undefined ? 'Bilgi alınamadı' : waiting > 0 ? `${waiting} kişi bekliyor` : 'Bekleyen yok'}
                     </span>
                   </button>
                 );
