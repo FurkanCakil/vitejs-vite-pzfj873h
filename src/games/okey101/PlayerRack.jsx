@@ -90,7 +90,8 @@ const RackSlot = React.memo(function RackSlot({
       className={`rounded-md flex items-center justify-center shrink-0 transition-colors ${isHover ? 'bg-yellow-400/30 ring-2 ring-yellow-400' : 'bg-black/10'}`}
       onPointerMove={handlers.onPointerMove}
       onPointerUp={handlers.onPointerUp}
-      onPointerCancel={handlers.onPointerUp}
+      onPointerCancel={handlers.onPointerCancel}
+      onLostPointerCapture={handlers.onPointerCancel}
     >
       {tile && !hidden && (
         <Tile
@@ -754,7 +755,7 @@ export default function PlayerRack({
 
   // ---- Pointer tabanlı sürükle-bırak (mouse + dokunmatik ortak) ----
   const handlePointerDown = (e, index, tile) => {
-    if (!isOwner || !tile) return;
+    if (!isOwner || !tile || dragRef.current || e.button !== 0) return;
     if (tile.id === pendingTileId) return; // sunucu onayı beklenen taş henüz taşınamaz
     // Tarayıcının kendi metin-seçimi + HTML5 sürüklemesi devreye girerse imleç
     // "yasak" (kırmızı çarpı) olur ve seçili DOM parçaları hayalet resim olarak
@@ -779,7 +780,7 @@ export default function PlayerRack({
     // ortasından tutup boş alanın ortasına bırakmak da doğru çalışır.
     const grabOffset = Math.max(0, tileIds.indexOf(tile.id));
     const tiles = tileIds.map((id) => rackNow.find((t) => t && t.id === id)).filter(Boolean);
-    dragRef.current = { fromIndex, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
+    dragRef.current = { pointerId: e.pointerId, fromIndex, tileIds, grabOffset, startX: e.clientX, startY: e.clientY, moved: false, longPressed: false, tile, tiles };
     dropTargetRef.current = { index: null, discard: false }; // önceki sürüklemeden kalan hedef temizlenir
     e.currentTarget.setPointerCapture?.(e.pointerId);
 
@@ -800,7 +801,7 @@ export default function PlayerRack({
 
   const handlePointerMove = (e) => {
     const d = dragRef.current;
-    if (!d) return;
+    if (!d || d.pointerId !== e.pointerId) return;
     const dx = e.clientX - d.startX; const dy = e.clientY - d.startY;
     if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
       d.moved = true;
@@ -910,8 +911,20 @@ export default function PlayerRack({
     optimisticallyRemoveTile(tile.id, () => onDiscardTile(tile));
   };
 
-  const finishDrag = () => {
+  const cancelDrag = (e) => {
     const d = dragRef.current;
+    if (!d || (e?.pointerId !== undefined && e.pointerId !== d.pointerId)) return;
+    dragRef.current = null;
+    clearLongPress();
+    if (moveRafRef.current) { cancelAnimationFrame(moveRafRef.current); moveRafRef.current = 0; }
+    dropTargetRef.current = { index: null, discard: false };
+    clearTackHover(); clearCenterFinishHover(); clearReturnHover();
+    setGhost(null); setHoverIndex(null); setHoverDiscard(false);
+  };
+
+  const finishDrag = (e) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
     // Bekleyen bir hedef-tespiti karesi varsa (parmak, son hareketten sonraki
     // animasyon karesi gelmeden kaldırıldıysa) hedef BURADA senkron olarak
     // hesaplanır — taşın bir kare eski slota bırakılması ihtimali kalmaz.
@@ -999,11 +1012,35 @@ export default function PlayerRack({
   liveHandlersRef.current.pointerDown = handlePointerDown;
   liveHandlersRef.current.pointerMove = handlePointerMove;
   liveHandlersRef.current.finishDrag = finishDrag;
+  liveHandlersRef.current.cancelDrag = cancelDrag;
   const slotHandlers = useMemo(() => ({
     onPointerDown: (e, index, tile) => liveHandlersRef.current.pointerDown(e, index, tile),
     onPointerMove: (e) => liveHandlersRef.current.pointerMove(e),
-    onPointerUp: () => liveHandlersRef.current.finishDrag(),
+    onPointerUp: e => liveHandlersRef.current.finishDrag(e),
+    onPointerCancel: e => liveHandlersRef.current.cancelDrag(e),
   }), []);
+
+  useEffect(() => {
+    const cancel = e => liveHandlersRef.current.cancelDrag(e);
+    const hidden = () => { if (document.visibilityState !== 'visible') cancel(); };
+    // React handles a normal drop first; this fallback only clears leftovers
+    // when the captured source disappeared before its pointerup could run.
+    window.addEventListener('pointerup', cancel);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', cancel);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('pointerup', cancel);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', cancel);
+      document.removeEventListener('visibilitychange', hidden);
+      cancel();
+    };
+  }, []);
+  useEffect(() => {
+    const d = dragRef.current;
+    if (d && (!isOwner || d.tileIds.some(id => !safeRack.some(tile => tile?.id === id)))) cancelDrag();
+  }, [isOwner, safeRack]);
 
   // Okey bilgisi ({color, number}) her Firestore paketinde YENİ bir nesne olarak
   // gelir ama içeriği el boyunca sabittir; slot memoizasyonunun her snapshot'ta
@@ -1077,7 +1114,7 @@ export default function PlayerRack({
   // BOŞ bir nesne ({}), `undefined` değerli anahtarlar İÇEREN bir nesne
   // DEĞİL — böylece hangisi aktifse onun işleyicileri ayakta kalır.
   const takeHandlers = (canTakeIncoming && incomingDragHandlers) ? incomingDragHandlers : {};
-  const returnHandlers = sideTakeTileId ? { onPointerMove: handlePointerMove, onPointerUp: finishDrag, onPointerCancel: finishDrag } : {};
+  const returnHandlers = sideTakeTileId ? { onPointerMove: handlePointerMove, onPointerUp: finishDrag, onPointerCancel: cancelDrag } : {};
   const incomingSlot = (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -1111,7 +1148,7 @@ export default function PlayerRack({
         data-discard-zone={canDiscard ? 'true' : undefined}
         onPointerMove={canDiscard ? handlePointerMove : undefined}
         onPointerUp={canDiscard ? finishDrag : undefined}
-        onPointerCancel={canDiscard ? finishDrag : undefined}
+        onPointerCancel={canDiscard ? cancelDrag : undefined}
         title={canDiscard ? 'Turu bitirmek için bir taşı buraya sürükle' : 'Son attığın taş'}
         style={{ width: `${sideSlotW}px`, height: `${sideSlotH}px` }}
         className={`rounded-lg border-2 border-dashed flex items-center justify-center transition-colors touch-none
