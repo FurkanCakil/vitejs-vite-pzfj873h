@@ -1,6 +1,6 @@
 # Okey ıstaka yazım sırası
 
-28 Ekim 2026 — Genel denetimin bu dar aşaması, son düzenleme kaydını bekleyen per açma ve bileşen kapanışını düzeltir. Oyun kuralları, skorlar, CSS/tahta boyutları, özel el yetkileri ve sunucu API'si değişmedi. Yeni kural, IAM, ortam ayarı, anahtar, ücret veya zamanlanmış iş yok.
+28 Ekim 2026 — `d254900` ana dala gönderildi; [Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/9gaVyWBHJ8P9a4HqyuTbaapomJiU) 21:41:51’de Ready oldu. Genel denetimin bu dar aşaması, son düzenleme kaydını bekleyen per açma ve bileşen kapanışını düzeltir. Oyun kuralları, skorlar, CSS/tahta boyutları, özel el yetkileri ve sunucu API'si değişmedi. Yeni kural, IAM, ortam ayarı, anahtar, ücret veya zamanlanmış iş yok.
 
 ## Bulgular
 
@@ -23,6 +23,10 @@
 React StrictMode altında gerçek PlayerRack bileşeni geçici yerel sayfada kontrollü kayıt yanıtlarıyla çalıştırıldı. İki farklı onaylı per düzeni ve hemen Seri Aç isteğinden sonra A tamamlanınca B başladı, açma bekledi; B tamamlanınca açma yeni onaylı grup kimlikleriyle geçti. İkinci denemede aynı sırada bileşen kaldırılıp A tamamlandı; B veya açma gönderilmedi. Gözlenen konsol temizdi. Bu kontrollü bileşen denemesindeki yazıcı gerçek Firebase değildir; oyun sunucusuna açma veya puan yazıldığı iddia edilmez.
 
 Ayrı demo Firebase Auth/Firestore/API masasında üç botla yardımlı oyun, Seri Diz/Çift Diz/Seri Diz, yenilemede aynı el/grup düzenine dönüş ve normal çıkış geçti. Bu tam doğal maç, gerçek gecikmeli ağ veya telefon/Safari/Firefox testi değildir. Geçici test sayfaları kaynak paketine alınmaz.
+
+Canlı ana JS, Okey parçası ve CSS test edilen açık üretim çıktısıyla bayt düzeyinde eşleşti. Yalnız yeni özel Okey masası ve üç botla Seri Diz/Çift Diz/Seri Diz, yenilemede aynı özel el/per düzenine dönüş ve normal çıkış geçti; gözlenen konsol temizdi. Mevcut kullanıcı odalarına dokunulmadı. Canlıda yapay gecikme, geçersiz per açma veya tam maç uygulanmadı; son kayıt/açma yarışı kontrollü yerel bileşen ve otomatik testlerle sınandı.
+
+Geçici yardımcı sayfalar ve demo emülatörleri kapatıldı; yerel 5173/8180/9199 dinleme portları kalmadı. Test sayfası kaldırılırken açık geliştirme sekmesinin HMR yenileme mesajı oluştu; ürün oyunu testi sırasında gözlenen konsollar temizdi.
 
 ## Tahmini etki
 
