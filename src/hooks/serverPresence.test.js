@@ -1,16 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServerPresence } from './serverPresence.js';
-import { estimatePresenceClock, presenceNow } from '../utils/presenceProtocol.js';
-
-test('presence clock follows server time even when the local clock is hours wrong', t => {
-  t.mock.method(Date, 'now', () => 10_000_000);
-  estimatePresenceClock(1_000_000, 9_999_800, 10_000_000);
-  assert.equal(presenceNow(), 1_000_100);
-  estimatePresenceClock(NaN, 9_999_800, 10_000_000);
-  assert.equal(presenceNow(), 1_000_100);
-  estimatePresenceClock(10_000_000, 10_000_000, 10_000_000);
-});
 test('closing during a heartbeat retires only that session again after the delayed response', async t => {
   const win = new EventTarget(), doc = new EventTarget(); doc.visibilityState = 'visible';
   globalThis.window = win; globalThis.document = doc;

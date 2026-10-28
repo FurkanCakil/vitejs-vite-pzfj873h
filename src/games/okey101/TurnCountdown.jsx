@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { playOkeySound } from '../../utils/okeySound.js';
+import { countdownSeconds } from './okeyTiming.js';
 
 // Uyarı sesinin çalacağı saniyeler: 10'da bir kez "yaklaşıyor", son 5 saniyede
 // her saniye "bitiyor". (bkz. okeySound#timeWarn/timeTick)
@@ -34,7 +35,7 @@ export default function TurnCountdown({ deadline, active, warn = false }) {
     let first = true;
     lastBeepSecRef.current = null;
     const tick = () => {
-      const sec = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const sec = countdownSeconds(deadline);
       setRemaining(sec);
       const wasFirst = first;
       first = false;

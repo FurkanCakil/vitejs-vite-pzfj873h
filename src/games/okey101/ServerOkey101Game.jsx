@@ -3,7 +3,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { Loader2 } from 'lucide-react';
 import { gameErrorMessage } from '../../utils/gameApi.js';
 import Okey101Game from './Okey101Game.jsx';
-import { TURN_TIMEOUT_GRACE_MS } from './tiles.js';
+import { okeyAutoAction } from './okeyTiming.js';
 
 export default function ServerOkey101Game({ roomData, roomCode, user, db, appId, leaveRoom, sendAction }) {
   const [own, setOwn] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -82,13 +82,7 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
     const advance = () => {
       const data = latest.current.roomData;
       if (stopped.current || inFlight.current || document.visibilityState === 'hidden') return;
-      const stagger = Math.max(0, data.players.indexOf(user.uid)) * 150;
-      let type;
-      if (data.status === 'waiting' && data.countdownStartedAt && Date.now() >= data.countdownStartedAt + 3200 + stagger) type = 'okey.start';
-      if (data.status === 'playing' && data.hasDealt && !data.roundEnded) {
-        const due = data.setupPhase ? data.setupEndsAt : data.isBotPlayer?.[data.turn] ? data.botReadyAt : data.turnDeadline + TURN_TIMEOUT_GRACE_MS;
-        if (Date.now() >= due + 200 + stagger) type = 'okey.tick';
-      }
+      const type = okeyAutoAction(data, user.uid);
       if (type) { inFlight.current = true; send(type, {}, true).finally(() => { inFlight.current = false; }); }
     };
     advance(); const timer = setInterval(advance, 1000);

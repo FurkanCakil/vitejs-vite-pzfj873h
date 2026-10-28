@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGameApi } from './gameApi.js';
+import { serverNow } from './serverClock.js';
+import { countActiveSessions } from './presence.js';
 
 test('lost responses retry with the identical action ID and payload', async () => {
   const requests = [];
@@ -89,4 +91,23 @@ test('a disabled account during token refresh stops before a second HTTP request
 test('token service failures are temporary authentication errors and never send an unchecked request', async () => {
   const send = createGameApi(async () => { throw Error('private network details'); }, () => assert.fail('no request without token'));
   await assert.rejects(send({ type: 'room.join' }), error => error.code === 'authentication_unavailable');
+});
+
+test('successful API replies calibrate the display clock without sending a client time', async t => {
+  t.mock.method(Date, 'now', () => 20_000_000);
+  const send = createGameApi(async () => 'token', async (_, options) => {
+    const body = JSON.parse(options.body);
+    assert.deepEqual(Object.keys(body).sort(), ['actionId', 'roomId', 'sessionId', 'type']);
+    return Response.json({ ok: true, serverNow: 1_000_000, version: 2 });
+  });
+  assert.equal((await send({ type: 'room.heartbeat', roomId: 'ABC123', sessionId: 'test_session_001' })).version, 2);
+  assert.ok(serverNow() >= 1_000_000 && serverNow() < 1_001_000);
+  const sessions = { host: { uid: 'host', lastSeen: 1_000_000 } };
+  assert.equal(countActiveSessions(sessions), 1);
+  t.mock.method(Date, 'now', () => 1);
+  assert.equal(countActiveSessions(sessions), 1, 'the lobby count must share the calibrated monotonic clock');
+  const before = serverNow();
+  const denied = createGameApi(async () => 'token', async () => Response.json({ ok: false, error: 'stale_version', serverNow: 999_000_000 }, { status: 409 }));
+  await assert.rejects(denied({ type: 'xox.move' }));
+  assert.ok(serverNow() >= before && serverNow() < before + 1000);
 });

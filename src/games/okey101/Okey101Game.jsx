@@ -11,6 +11,7 @@ import Tile, { TileBack, TILE_ASPECT } from './Tile.jsx';
 import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
+import { serverNow } from '../../utils/serverClock.js';
 import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, TURN_TIMEOUT_GRACE_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
@@ -412,7 +413,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   useEffect(() => {
     const hint = roomData.tackHint;
     if (!hint?.expiresAt) return;
-    const remaining = hint.expiresAt - Date.now();
+    const remaining = hint.expiresAt - serverNow();
     if (remaining <= 0) return;
     const timer = setTimeout(() => bumpTackHintTick((n) => n + 1), remaining + 50);
     return () => clearTimeout(timer);
@@ -2387,7 +2388,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   const openEndsMap = openEndsCacheRef.current.map;
 
   // 3. madde: hâlâ süresi dolmamış bir "işlek taş nereye oturuyor" ipucu var mı?
-  const activeTackHint = (roomData.tackHint && roomData.tackHint.expiresAt > Date.now()) ? roomData.tackHint : null;
+  const activeTackHint = (roomData.tackHint && roomData.tackHint.expiresAt > serverNow()) ? roomData.tackHint : null;
   const isTackFlashing = (uid, groupIndex) => !!activeTackHint?.spots.some((s) => s.uid === uid && s.groupIndex === groupIndex);
 
   // 5. madde kuralları — arayüz butonlarının açık/kapalı olmasını belirler.

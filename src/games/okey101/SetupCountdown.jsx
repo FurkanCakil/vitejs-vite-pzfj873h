@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { countdownSeconds } from './okeyTiming.js';
 
 // Hazırlık fazında ekranın üst-ortasında akan büyük geri sayım.
 export default function SetupCountdown({ setupEndsAt }) {
@@ -6,7 +7,7 @@ export default function SetupCountdown({ setupEndsAt }) {
 
   useEffect(() => {
     if (!setupEndsAt) { setRemaining(null); return; }
-    const tick = () => setRemaining(Math.max(0, Math.ceil((setupEndsAt - Date.now()) / 1000)));
+    const tick = () => setRemaining(countdownSeconds(setupEndsAt));
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);

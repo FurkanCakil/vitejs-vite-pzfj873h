@@ -6,6 +6,7 @@ import TeamSelection from './TeamSelection.jsx';
 import PlayerList from './PlayerList.jsx';
 import { createBotPlayers, isBotUid } from './botPlayers.js';
 import { playSound } from '../../utils/sound.js';
+import { countdownSeconds } from './okeyTiming.js';
 
 export const MAX_PLAYERS = 4;
 const COUNTDOWN_MS = 3000;
@@ -159,7 +160,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
   useEffect(() => {
     if (!roomData.countdownStartedAt) { setCountdownDisplay(null); lastBeepedRef.current = null; return; }
     const tick = () => {
-      const next = Math.max(0, Math.ceil((roomData.countdownStartedAt + COUNTDOWN_MS - Date.now()) / 1000));
+      const next = countdownSeconds(roomData.countdownStartedAt + COUNTDOWN_MS);
       setCountdownDisplay(next);
       if (next > 0 && next !== lastBeepedRef.current) {
         lastBeepedRef.current = next;

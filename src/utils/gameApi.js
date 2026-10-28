@@ -1,3 +1,5 @@
+import { beginServerTiming, updateServerClock } from './serverClock.js';
+
 export const SERVER_XOX_ENABLED = import.meta.env?.VITE_SERVER_XOX_ENABLED === 'true';
 export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP_ENABLED === 'true';
 export const SERVER_OKEY_ENABLED = import.meta.env?.VITE_SERVER_OKEY_ENABLED === 'true';
@@ -37,6 +39,7 @@ export function createGameApi(getToken, fetcher = fetch) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12_000);
       try {
+        const timing = beginServerTiming();
         const response = await fetcher('/api/room-action', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body, signal: controller.signal, keepalive,
@@ -55,6 +58,7 @@ export function createGameApi(getToken, fetcher = fetch) {
             || 'service_unavailable';
           throw new GameApiError(typeof result?.error === 'string' ? result.error : fallback);
         }
+        updateServerClock(result.serverNow, timing);
         return result;
       } catch (error) {
         if (error instanceof GameApiError) throw error;

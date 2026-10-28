@@ -1,5 +1,6 @@
 import { createGameApi, randomRequestId } from '../utils/gameApi.js';
-import { HEARTBEAT_MS, estimatePresenceClock } from '../utils/presenceProtocol.js';
+import { HEARTBEAT_MS } from '../utils/presenceProtocol.js';
+import { beginServerTiming, updateServerClock } from '../utils/serverClock.js';
 
 // Only the lifecycle is local. UID, room membership, time and public counts are
 // derived by the existing authenticated server, never by these request fields.
@@ -10,11 +11,11 @@ export function startServerPresence({ getToken, roomCode, onError, api = createG
     const session = current;
     if (!session || session.stopped || session.writing) return;
     session.writing = true;
-    const sentAt = Date.now();
+    const timing = beginServerTiming();
     try {
       const result = await api({ type: 'presence.heartbeat', sessionId: session.id, roomCode: roomCode || null });
       if (!session.stopped && !disposed) {
-        estimatePresenceClock(result.serverNow, sentAt);
+        updateServerClock(result.serverNow, timing);
         if (result.retired) { session.stopped = true; resume(); }
       }
     } catch (error) { if (!session.stopped && !disposed) onError(error); }

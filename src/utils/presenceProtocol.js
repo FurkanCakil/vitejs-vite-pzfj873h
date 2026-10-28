@@ -1,13 +1,10 @@
+import { serverNow } from './serverClock.js';
+
 export const PRESENCE_SHARDS = 16;
 export const HEARTBEAT_MS = 20_000;
 export const FRESH_MS = 75_000;
 
-let clockOffset = 0;
-export const presenceNow = () => Date.now() + clockOffset;
-export function estimatePresenceClock(serverNow, sentAt, receivedAt = Date.now()) {
-  if (Number.isFinite(serverNow) && Number.isFinite(sentAt) && receivedAt >= sentAt
-    && receivedAt - sentAt <= 30_000) clockOffset = serverNow - (sentAt + receivedAt) / 2;
-}
+export const presenceNow = serverNow;
 
 // Server shards contain one authenticated identity, not a chosen display ID.
 // Per-room timestamps expire independently of the identity's other tabs.

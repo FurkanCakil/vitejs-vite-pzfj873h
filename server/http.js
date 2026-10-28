@@ -43,7 +43,8 @@ export function createActionHandler({ enabled, verifyToken, applyAction, allowed
       }
       requireAction(typeof identity?.uid === 'string' && identity.uid.length > 0, 401, 'invalid_token');
       const result = await applyAction(identity.uid, action);
-      return response.status(200).json({ ok: true, ...result });
+      // A replayed receipt must calibrate against response time, not old time.
+      return response.status(200).json({ ok: true, ...result, serverNow: Date.now() });
     } catch (error) {
       if (error instanceof ActionError) {
         if (error.status === 405) response.setHeader('Allow', 'POST');

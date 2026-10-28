@@ -82,7 +82,7 @@ test('room and rematch requests cannot choose identities, seats, scores or visib
   ];
   for (const input of examples) {
     assert.equal(validateAction(input).type, input.type);
-    for (const forged of ['uid', 'players', 'scores', 'board', 'host', 'createdAt']) {
+    for (const forged of ['uid', 'players', 'scores', 'board', 'host', 'createdAt', 'serverNow']) {
       fails('invalid_fields', () => validateAction({ ...input, [forged]: 'forged' }));
     }
   }
@@ -148,6 +148,21 @@ test('HTTP rejects unauthenticated, cross-site, oversized and malformed requests
     assert.equal(res.statusCode, expected);
   }
   assert.equal(writes, 0);
+});
+
+test('safe action replays return current response time instead of a stale receipt clock', async t => {
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const handler = createActionHandler({
+    enabled: () => true, allowedOrigins: new Set(['https://game.example']),
+    verifyToken: async () => ({ uid: 'alice' }),
+    applyAction: async () => ({ roomId: 'ABC123', version: 7, serverNow: 100 }),
+  });
+  const first = response(); await handler(request(), first);
+  assert.equal(first.body.serverNow, 1_000_000);
+  now += 5000;
+  const replay = response(); await handler(request(), replay);
+  assert.equal(replay.body.version, 7); assert.equal(replay.body.serverNow, 1_005_000);
 });
 
 test('HTTP denies expired/forged tokens and hides underlying SDK errors', async () => {
