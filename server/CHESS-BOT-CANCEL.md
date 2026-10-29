@@ -1,6 +1,6 @@
 # Satranç botunda iptal ve durum temizliği — 29 Ekim 2026
 
-Genel denetimin bu dar aşaması, satranç botunun artık geçerli olmayan aramasını ve düşünme durumunu temizler. Canlı kabul henüz tamamlanmadı. Stockfish 18 dosyaları, kolay/orta/zor Skill Level ve depth değerleri, kolayın mevcut rastgele hamle oranı, normal 1,1–2 saniyelik asgari düşünme süresi ve tahta/notasyon/CSS değişmez. Yeni API, Firebase kuralı, IAM, ayar, anahtar, ücret veya zamanlanmış iş yok.
+Genel denetimin bu dar aşaması, satranç botunun artık geçerli olmayan aramasını ve düşünme durumunu temizler. Kaynak `5b7278e`, 29 Ekim 00:17:31 GMT+3'te Production Ready oldu; canlı kabul ve kesinti sonrası son kontrol tamamlandı. Stockfish 18 dosyaları, kolay/orta/zor Skill Level ve depth değerleri, kolayın mevcut rastgele hamle oranı, normal 1,1–2 saniyelik asgari düşünme süresi ve tahta/notasyon/CSS değişmez. Yeni API, Firebase kuralı, IAM, ayar, anahtar, ücret veya zamanlanmış iş yok.
 
 ## Bulgular ve karar
 
@@ -28,7 +28,19 @@ Ayrı temiz gerçek bileşen sekmesinde normal Teslim Ol→Emin misin?→Yeniden
 
 Mevcut 175 otomatik test geçti; 13 emülatör üst testi normal komutta bilerek atlanır. Kontrollü tarayıcı/motor kontrolleri otomatik test sayısına eklenmedi. Lint sıfır hata/36 mevcut uyarı, mevcut TypeScript kontrolü ve bütün istemci oyun/sayaç bayrakları açık üretim derlemesi geçti. App.tsx mevcut tür kontrolü sınırı sürer. Sunucu/kural değişmediğinden birleşik sunucu paketi yeniden çalıştırılmadı; önceki lobi aşamasının 101 senaryo/13 üst testle 114 sonucu tarihsel kanıttır. Geçici fixture'lar push öncesi kaldırıldı; gerçek Stockfish test sekmesi kapanınca worker temizlendi ve geliştirme sunucusu kapatıldı. Tavla kancasının istek kimliği/zaman aşımı/unmount akışı da incelendi; bu aşamada yeni bir doğrulanmış Tavla hatası veya değişikliği yok.
 
-Canlı kabul tamamlandığında aşağıya kaydedilir.
+## Canlı kabul — 29 Ekim 2026
+
+Kaynak `5b7278effa71427d975cc2b82bb7144d6a5f823c`, [Vercel Production ayrıntısında](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/Ep93hajueciPQwXeKSrsJmPNqNUL) 00:17:31 GMT+3'te Ready olarak doğrulandı. Kesinti sonrası kaynağın Ready olduğu ve canlı ana JS/CSS/Satranç parçasının test edilen yerel açık üretim çıktısıyla aynı kaldığı tekrar kontrol edildi:
+
+| Dosya | Bayt | SHA256 |
+| --- | --- | --- |
+| `/assets/index-C69f5u0L.js` | 554173 | `687403426536c078ca19e0f9fb5e8727cedfb666ee68123c7365726237f50f4b` |
+| `/assets/ChessGame-DUS35U02.js` | 40136 | `5cc6f10a553edf0d76c599ac392835bd371d714bc233d044b93229b4e3fbfdb4` |
+| `/assets/index-8Qk80MEt.css` | 65596 | `e433d184fe814b48bbd3a2f331e6595ce5925eb5f99cbf781b56cc573c0c1c2b` |
+
+Canlı sitenin yerel Orta bot modunda e4→e6 ve d4→d5, normal teslim ve iki ardışık rövanşta renk/sıra değişimi ve 0:2 skor korunumu gözlendi. İnsan başlayan sonraki tur Senin Sıran gösterdi. Teslim onayına kadar botun bazı hamleleri tamamlanmıştı; bütün canlı denemelerde bestmove öncesi kesin durdurma yapıldığı iddia edilmez. İptal yarışının kanıtı yukarıdaki kontrollü Worker ve gerçek depth 40 motor testidir.
+
+Kesinti nedeniyle sonucu kaydedilmeyen son adım yeni temiz canlı bot masasında tamamlandı: e4'e c5 karşılığı geldi, notasyon ve insan sırası güncellendi, gözlenen konsol temizdi. Normal çıkışla lobiye dönüldü ve sayaç bir gösterdi; test sekmesi kapatıldı. Çevrimiçi oda/başka oyuncu verisi değiştirilmedi; bot oyun durumu yereldir. Bu tam maç, bütün cihazlar veya yeni çevrimiçi oyun kabulü değildir. Canlı ekran ve tam dosya teslimiyle aşama kapatılır; genel denetim aşağıdaki sınırlar nedeniyle sürer.
 
 ## Tahmini etki ve açık sınırlar
 
