@@ -19,7 +19,11 @@ HTML'nin yeniden doğrulanması, API'nin kendi `no-store` başlığı ve hash i�
 - Taze `npm test`: 175 başarılı, 0 başarısız, emülatör gerektiren 13 üst test atlandı. Bu değişiklikte sunucu emülatör paketi tekrar çalıştırılmadı; 28 Ekim'deki 101 senaryo/13 üst test/114 sonuç tarihsel kanıttır.
 - Lint 0 hata/36 mevcut uyarı; TypeScript ve tüm Production istemci bayrakları açık derleme geçti. `App.tsx` içindeki mevcut `@ts-nocheck` nedeniyle tüm uygulama için tür güvenliği iddiası yoktur.
 - Ana JS `index-C69f5u0L.js` (554173 bayt), CSS `index-8Qk80MEt.css` (65596 bayt) ve Satranç parçası `ChessGame-DUS35U02.js` (40136 bayt) önceki çıktıyla SHA256 düzeyinde aynı. Ana parça için 500 kB derleme uyarısı sürer.
-- Yayın kabulü henüz yapılmadı; Ready, gerçek HTTP ve tarayıcı sonuçları aşağıya eklenecek.
+- [2c226f5 Production yayını](https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/7vzykyDi3SXKVB9GNvn5fEGRAD73), 29 Ekim 19:10:29 GMT+3'te Ready oldu. Vercel yeni yapılandırmayı kabul etti; gerçek alan adındaki 14 sürümlü dosyanın tümü GET ile yerel çıktıyla birebir eşleşti ve immutable başlığını taşıdı.
+- Canlı HTML 200 ve `max-age=0, must-revalidate`; Stockfish JS/WASM ve favicon 200, doğru MIME türü ve önceki yeniden doğrulama ayarıyla döndü. API GET 405 ve izinli Origin ile tokensız POST 401 verdi; ikisinde de `no-store` korundu. Genel dört koruma başlığı bu yanıtlarda doğrulandı. `/assets/` altındaki olmayan bir test yolu hâlâ 404 verdi; dizin kuralı bu yanıta da uzun önbellek başlığı ekler. Bu dizin yalnız Vite'ın değişmez içerik hash'li çıktılarına ayrılmalıdır; elle değişen dosyalar buraya konmamalıdır.
+- Canlı tarayıcıda lobi/sayaç, gerçek Stockfish motorunun yüklenmesi, Orta botun beyazla e3 hamlesi/notasyon/insan sırası ve normal çıkış geçti. Gözlenen konsolda hata/uyarı yoktu. Bütün oyunlarda yeni tam maç veya gerçek cihaz testi yapıldığı iddia edilmez; oyun kaynakları ve CSS değişmedi.
+
+Bu başlık tamamlandı. HTTP kabul kaydı `yukleme-baslik-kontrolu-2026-10-29.json`, canlı ekran `yukleme-baslik-canli-2026-10-29.png`; tüm değişen dosyalar gerekçeleriyle ZIP ve kopyalanabilir TXT olarak teslim edilir. `vercel.json` güvenli yanıt/önbellek davranışını ekler; bu belge kalan işi ve doğrulama sınırlarını sabitler; iki mevcut giriş belgesi yeni sonucu görünür kılar.
 
 ### Tahmini hız etkisi
 
