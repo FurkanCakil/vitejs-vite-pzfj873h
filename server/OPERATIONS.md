@@ -44,6 +44,7 @@ Bir oda ailesinde `roomsV2/{roomId}/playerData`, `serverRoomPresence`, `serverBa
 | Orta | Doğrudan Firestore okumalarında anlık token iptali yok | Üyelik ve özel belge kuralları var; API ek hesap kontrolü ve sınırlı önbellek kullanıyor. Bütün kanalları anında kesmek ayrı iptal metadatası/kural tasarımı gerektirir. |
 | Orta | Anonim UID/IP değiştirme ve dağıtık trafik | Sunucuda UID sınırları ve Production API önünde IP sınırı var; tekil kişi veya botnet engeli değildir. Gerçek kötüye kullanım ölçümü olmadan NAT arkasındaki normal oyuncuları kesecek eşik düşürülmez. |
 | Orta | Spark kota ve biriken eski veri | Temel trafik modeli yukarıda; yeni saklama/temizleme görevi çalışmıyor. Ücretsiz plan kapasitesi yük testinden geçmiş sayılmaz. |
+| Açık gözlem | Tek 500 / INTERNAL_FUNCTION_INVOCATION_FAILED | 29 Ekim 19:30:05 GMT+3 isteği Vercel Request Logs'da görüldü; sonraki çağrılar 200. Ek Runtime hata ayrıntısı yok; kod/ortam/kota kök nedeni kesinleştirilmedi. Tekrarında aynı zaman/istek tanısıyla incele; yeni kurtarma düzeltmesiyle kapatılmış sayma. |
 | Doğrulama eksiği | Gerçek Safari/Firefox/iOS, fiziksel dokunmatik, çok saatli arka plan ve yük/heap profili | Masaüstü Chromium'daki dar ekran ve kısa oturum kabulü bu ortamların yerine geçmez. Test edilmemiştir; “sızıntı yok” veya kapasite sayısı verilmez. |
 | Düşük | 36 lint uyarısı, App tür kontrolü sınırı ve ana parça boyutu | 0 lint hatası ve derleme mevcut kapsamda geçer; `@ts-nocheck` tam tür güvenliği sağlamaz. Efekt bağımlılıklarını körlemesine değiştirmek oyun davranışını bozabilir. |
 
