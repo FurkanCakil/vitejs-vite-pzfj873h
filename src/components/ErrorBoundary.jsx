@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertCircle } from 'lucide-react';
+import { resetSavedRoom } from '../utils/savedRoomRecovery.js';
 
 // Bir oyun bileşeni çökerse tüm sayfayı beyaz ekrana düşürmek yerine burada
 // yakalanır. HATANIN GERÇEK METNİ de gösterilir: telefonda konsola bakma imkânı
@@ -11,28 +12,9 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) { console.error("Kritik Oyun Hatası:", error, errorInfo); }
 
-  // "Yerel Verileri Temizle": tarayıcıda kalmış eski oda kaydı / bozuk oturum
-  // verisi yüzünden oyun açılmıyorsa (gizli sekmede sorun çıkmayıp normal
-  // sekmede çıkmasının tipik sebebi) her şeyi sıfırlayıp yeniden başlatır.
-  hardReset = () => {
-    // DÜZELTME: "aktif oda" kaydı `localStorage`'dan `sessionStorage`'a taşındı
-    // (bkz. App.tsx#sessionRoomStorage) ama bu buton yalnızca localStorage'ı
-    // siliyordu — yani asıl temizlemesi gereken bayat oda kaydına HİÇ
-    // dokunmuyor, sayfa yenilendiğinde kullanıcıyı yine aynı bozuk odaya
-    // düşürüyordu. Artık ikisi de silinir (localStorage yalnızca ESKİ
-    // sürümlerden kalmış olabilecek kayıt için).
-    try { sessionStorage.removeItem('activeRoom'); } catch { /* yok say */ }
-    try { localStorage.removeItem('activeRoom'); } catch { /* yok say */ }
-    try {
-      if (window.indexedDB?.databases) {
-        window.indexedDB.databases().then((dbs) => {
-          dbs.forEach((d) => { if (d.name?.includes('firebase')) window.indexedDB.deleteDatabase(d.name); });
-        }).catch(() => {}).finally(() => window.location.reload());
-        return;
-      }
-    } catch { /* yok say */ }
-    window.location.reload();
-  };
+  // Lobiden yeniden katılmayı sağlar; kimlik ve diğer sekmelerin Firebase
+  // bağlantıları korunur. Gerçek oda üyeliğini sunucu doğrulamaya devam eder.
+  hardReset = () => resetSavedRoom();
 
   render() {
     if (this.state.hasError) {
@@ -45,7 +27,7 @@ export default class ErrorBoundary extends React.Component {
           <pre className="w-full max-h-32 overflow-auto text-left text-[11px] text-red-300 bg-black/40 border border-red-500/30 rounded-lg p-2 mb-5 whitespace-pre-wrap break-words">{detail}</pre>
           <div className="flex flex-col sm:flex-row gap-2 w-full">
             <button onClick={() => window.location.reload()} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-lg">Masaya Geri Dön</button>
-            <button onClick={this.hardReset} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-6 py-3 rounded-xl font-bold transition-all">Yerel Verileri Temizle</button>
+            <button onClick={this.hardReset} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-6 py-3 rounded-xl font-bold transition-all">Oda Kaydını Temizle</button>
           </div>
         </div>
       );

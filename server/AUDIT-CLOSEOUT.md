@@ -31,12 +31,48 @@ Bu başlık tamamlandı. HTTP kabul kaydı `yukleme-baslik-kontrolu-2026-10-29.j
 2. **Orta potansiyel, uygulanmadı:** Yaklaşık 7,30 MB Stockfish WASM için içerik hash'iyle sürümleme gelecekte tekrar ziyaret indirmesini azaltabilir. Aynı adlı JS/WASM çiftine uzun immutable önbellek verilmedi; sürüm uyuşmazlığı riski vardır.
 3. **Düşük/orta potansiyel, uygulanmadı:** Ana parçayı daha fazla bölmek ilk yükü azaltabilir; mevcut oyun tembel yüklemesi korunur. Ölçüm olmadan büyük paket düzenlemesi yapılmadı.
 
-## Kalan üç kapanış başlığı
+## Kapanış başlıklarının güncel durumu
 
-2. **Uyumluluk ve uzun oturum:** Mevcut dar ekran/oyun kabul kayıtlarını tek matriste birleştirmek; erişilebilir tarayıcıda kalan menü/gezinme/uzun oturum ve bellek gözlemlerini tamamlamak. Gerçek iPhone/Safari, Firefox ve fiziksel dokunmatik test edilmeden geçti sayılmayacak. Kısa masaüstü testinden uzun süre/yük garantisi çıkarılmaz.
-3. **Bağımlılıklar, oturum ve kötüye kullanım:** 29 Ekim'deki taze npm taraması 0 yüksek/kritik ve aynı 8 orta kayıt gösterir; Admin/Google Cloud zincirindeki UUID uyarısı açıktır. Admin 14.5 önceki ayrı uyumluluk denemesinde başlamadığı için zorla yükseltilmez. API oturum kontrolü doğrudan Firestore dinleyicilerinin token iptalini anında kesmez; anonim UID/IP dolaşımı ve dağıtık yük kalan sınırlardır. Bunlar çalışır kabul edilen korumalarla birlikte açıkça raporlanacak; çözülmemiş riskler kapalı gösterilmeyecek.
-4. **İşletim ve son teslim:** Spark/Hobby kota ve veri saklama/izleme seçeneklerini mevcut mimariye göre belgelemek; son bulgu/kanıt ve tam dosya paketlerini birleştirmek. Yeni zamanlanmış iş, veri silme veya ücretli hizmet ayrıca yetkilendirilmeden açılmaz.
+2. **Uyumluluk:** Erişilebilir Chromium'da mevcut sonuçlarla aşağıdaki yeni kontroller birleştirildi. Gerçek iPhone/Safari, Firefox, fiziksel dokunmatik ve çok saatli/yüklü bellek doğrulaması **açıktır**; kısa gezinme oturumuyla bu boşluklar kapatılmaz.
+3. **Bağımlılıklar, oturum ve kötüye kullanım:** İnceleme ve kalan risk kaydı tamamlandı; risklerin kendisi çözülmüş sayılmadı. 29 Ekim taramasındaki 8 orta UUID zinciri, doğrudan Firestore token iptali ve anonim UID/IP dolaşımı için mevcut koruma ve sonraki koşul [OPERATIONS.md](OPERATIONS.md) içinde. Admin 14.5'in önceki başlatma hatası nedeniyle zorla ana sürüm yükseltilmedi.
+4. **İşletim ve teslim:** Kota modeli, izleme/arıza sırası, saklama ve güvenli temizlik önkoşulları [OPERATIONS.md](OPERATIONS.md) içinde tamamlandı. Yeni alarm, zamanlanmış iş, veri silme veya ücretli hizmet açılmadı. Temizleme süresi onaylanmış politika değildir; mevcut veri korunur.
 
-Bu üç başlık yeni üç büyük oyun geçişi demek değildir. İnceleme sonunda somut yeni hata çıkarsa küçük düzeltme ve ilgili kabul eklenir; erişilemeyen ortamlar ve mimari sınırlar açık maddelerle teslim edilir.
+Bu kapanış, denetim ve yapılabilen doğrulamaların teslimidir; açık güvenlik ve dış ortam testlerini gizleyen bir “bütün site hatasız/güvenli” kabulü değildir. Bundan sonraki iş açık risk/ortam maddelerine göre seçilir; yeni bir büyük yeniden yazım varsayılmaz.
+
+## 2. Hata kurtarmada oyuncu kimliği ve mobil kabul
+
+### Bulgu, değişiklik ve nedenler
+
+- **Kritik:** Bu aşamada yeni kritik bulgu yok.
+- **Orta, düzeltildi:** Hata ekranındaki eski “Yerel Verileri Temizle”, adında firebase bulunan IndexedDB veritabanlarını silmeye çalışıyordu. Anonim kimliği kaybetmek oda koltuğuna dönüşü engelleyebilir; açık SDK bağlantıları silmeyi bekletebilir. Eski gerçek metot yalnız sahte veritabanı API'siyle çalıştırıldığında 1 silme girişimi, yeni işlevle 0 görüldü; canlı kimlik/veritabanı silinmedi.
+- `src/components/ErrorBoundary.jsx`: Kurtarma yalnız oda kaydı temizliğine bağlanır; düğme “Oda Kaydını Temizle” olarak yaptığı işi söyler. Diğer “Masaya Geri Dön” yenilemesi korunur.
+- `src/utils/savedRoomRecovery.js`: Aktif oda için sessionStorage ve eski localStorage kaydını korumalı siler, sonra yeniler; Firebase IndexedDB'ye veya isim/ses tercihlerine dokunmaz.
+- `src/utils/savedRoomRecovery.test.js`: İki yeni test kimlik veritabanına hiç erişilmemesini, ilgisiz verilerin korunmasını ve iki depolamanın erişim/silme hatalarından sonra yeniden yüklemeyi sınar.
+- Mevcut `roomRecovery.js` ve eski iki oda toparlama testi korunmuştur. Yeni yardımcı ayrı adla tutulur; isim çakışması yerelde fark edilip yayın öncesi giderildi.
+
+### Doğrulama
+
+- Yalıtılmış yerel gerçek ErrorBoundary ekranında düğmeye basıp yenileme sonrası iki oda kaydı null; IndexedDB kimlik işareti, isim ve ses tercihi aynı kaldı. Bu gerçek Firebase hesabı testi değil, gerçek tarayıcı depolaması ve gerçek bileşen testidir. 320 pikselde yatay taşma olmadı; kontrollü hata günlüğü fixture'ın beklenen sonucudur.
+- Yeni toplam **177 otomatik test**, 0 başarısız; normal komutta emülatör gerektiren 13 üst test atlandı. Önceki 175 test korunur. Lint 0 hata/36 mevcut uyarı, tür kontrolü ve tüm Production istemci bayrakları açık derleme başarılı. Sunucu/kural değişmediği için birleşik emülatör paketi bu aşamada yeniden çalıştırılmadı; önceki 114 sonuç tarihsel kanıttır.
+- Yeni ana JS `index-Dhdlowt6.js`, yaklaşık 553,96 kB / gzip 172,36 kB; CSS `index-8Qk80MEt.css` aynı. Oyun tahtası, CSS, seviye, kurallar ve Stockfish dosyaları değiştirilmedi. Kurtarma yolunda gereksiz veritabanı listeleme/silme kalktı (**düşük** kaynak etkisi); normal oyun hızı/yüzde kazancı ölçülmedi.
+
+### Uyumluluk matrisi
+
+| Ekran/akış | Bu turdaki kapsam | Sonuç / sınır |
+| --- | --- | --- |
+| Lobi ve 7 oyunlu eşleşme seçicisi | Canlı 320 piksel; sunucudan onaylı boş kuyruklar | Yatay taşma yok; seçici kapatılıp normal oyuna geçildi |
+| XOX | Canlı yerel Kolay bot, 320/390; merkez hamlesi ve normal çıkış | 9 kare oranını korudu; tam maç tekrarı değil |
+| Tavla | Canlı yerel Kolay bot açılışı, 320/390; zar düğmesi ve çıkış | Açılış kontrolleri taşmadı; bu tur tam maç yapılmadı |
+| Dama | Canlı yerel Kolay bot tahtası, 320/390; çıkış | Ekran taşmadı; tam maç/taş alma kabulü önceki kayıtlardır |
+| Connect 4 | Canlı yerel Kolay bot tahtası, 320/390; çıkış | Ekran taşmadı; tam maç tekrarı değil |
+| Amiral Battı | Canlı yerel bot filo yerleştirme ekranı, 320/390; çıkış | Ekran taşmadı; önceki sürükleme/iptal kabulü tarihsel kayıt |
+| Satranç | Canlı Orta bot, e4 ve bot yanıtı, 320/390 normal/tam ekran geçişi | 64 kare eş oran; tam ekranda notasyon gizli, çıkınca geri; oyun seviyeleri aynı |
+| Okey | Yeni özel test odası/botlu masa, 320/390 ve 844×390 yatay; yenileme ve normal çıkış | Lobi/masa taşmadı; 30 ıstaka yuvasının içeriği yenilemeden sonra aynı; çıkışla lobi/sayaç geri geldi |
+
+Canlı ölçüm dosyası `genel-denetim-mobil-kontrol-2026-10-29.json` içinde ekran/viewport genişliği tutulur. Bu, gerçek cihaz dokunma veya heap profili değildir. Kaynakta incelenen abonelik/interval/resize/worker temizliği için tek bir oturumdan “bellek sızıntısı yok” sonucu çıkarılmaz; fiziksel cihaz, çok saatli uyku ve yük/heap ölçümü kalan doğrulama işidir. Bu turdaki mevcut canlı sürümde Okey sırasında tek `service_unavailable` bağlantı uyarısı görüldü; sonrasında normal çıkış ve lobi sayacı çalıştı. Konsol tamamen temiz diye sunulmaz; uyarının kök nedeni kanıtlanmadı ve kalıcı uygulama hatası veya kota aşımı diye yorumlanmadı.
+
+### Yayın kabulü
+
+Yeni kaynak henüz yayımlanmadı; Ready, gerçek çıktı eşleşmesi ve temiz normal akış aşağıya eklenecek.
 
 Kaynaklar (29 Ekim 2026): [Vercel headers yapılandırması](https://vercel.com/docs/project-configuration/vercel-json), [Vercel önbellek başlıkları](https://vercel.com/docs/caching/cache-control-headers), [MDN frame-ancestors](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/frame-ancestors), [UUID bildirimi](https://github.com/advisories/GHSA-w5hq-g745-h8pq). Canlı sonuçlar kaynak belgelerden çıkarım değildir; aşağıdaki kabul kaydıyla doğrulanır.
