@@ -21,6 +21,8 @@ Oyun durumu değişmeyen, kuyrukta beklemeyen bir XOX odasında normal oda bildi
 
 ## İzleme ve arıza sırası
 
+29 Ekim güncellemesi: Uygulamanın yakaladığı sunucu hataları artık `game_api_failure` sabit etiketiyle, yalnız güvenli aşama/kategori içererek sınırlı kaydedilir. Bir süreçte aynı aşama/kategori dakikada bir, toplam en fazla sekiz kayıt; dağıtım geneli sınır değildir. Normal yanıt, 4xx ve kapalı Preview kaydı oluşturmaz. Önceki hatanın kök nedeni bulunmuş sayılmaz; platformun uygulamaya ulaşmayan hatalarını garanti etmez. [Kapsam ve canlı kabul](DIAGNOSTICS.md).
+
 1. Firebase Console → Firestore → Usage üzerinden günlük okuma/yazma/silme ve saklama miktarını kontrol et. Eşiklere yaklaşınca o günkü oyuncu/süre bilgisiyle karşılaştır; tek başına aktif sayaç günlük kullanım değildir.
 2. Vercel takım Usage ve proje Runtime Logs/Observability üzerinden function çağrısı, hata ve süreyi incele. Özellikle normal oyuncuda yinelenen 429/503, artan yanıt süresi ve yayın sonrası 401/403 değişimi araştırılmalı; tek bir beklenen yetkisiz istek hata patlaması sayılmaz.
 3. Sorunu kaydederken oyun, yerel saat, yayın sürümü ve kullanıcıya görünen hata kodu yeterlidir. Ham token, gizli el/filo, IAM anahtarı veya tam istek gövdesini loglama. Kısa log saklama süresi nedeniyle olay incelenirken gizli bilgilerden arındırılmış bulgu kaydı tutulmalı.

@@ -1,5 +1,7 @@
 # Genel denetim kapanış kapsamı
 
+29 Ekim son güncelleme: Kullanıcının açık yayın yetkisiyle sınırlı sunucu tanısı canlıya alındı; 183 otomatik test ve aynı kaynakla tamamlanmış 114 birleşik emülatör sonucu doğrulandı. Canlı API retleri, yeni özel XOX/Okey oda/çıkış/kapalı oda reddi başarılı; uygulama dosyaları aynı. Bu yeni bir genel cihaz kabulü veya eski tek 500 olayının çözümü değildir. Ayrıntılar [DIAGNOSTICS.md](DIAGNOSTICS.md) içinde; aşağıdaki önceki kapanış sayıları tarihsel kapsamlarını korur.
+
 29 Ekim 2026. Yedi oyunun sunucu doğrulaması, özel el/filo gizliliği, skor koruması ve eski oda/sayaç erişiminin kapatılması önceki canlı kabullerde tamamlandı. Bu kayıt, genel denetimin son dört başlığını ve doğrulama sınırlarını sabitler; yüzde veya bütün olası hataların bulunması garantisi değildir.
 
 ## 1. Dosya yolları ve HTTP yükleme ayarları
