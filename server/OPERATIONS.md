@@ -1,5 +1,7 @@
 # Oyun Portalı işletim ve kalan riskler
 
+30 Ekim ek kontrol: Yerel süreli XOX/sayaç yük denemesi 602,25 saniyede 160 maç / 2.420 işlemle geçti; sonuç ve tekrar komutu aşağıdadır. Bu kısmi yük kabulü gerçek Vercel kapasitesi, bütün oyunların yükü veya çok saatli/telefon belleği kontrolü değildir. Çalışan oyun kodu değişmedi.
+
 29 Ekim 2026. Mevcut Firebase Spark / Vercel Hobby mimarisine göre kapanış notudur. Yeni ücret, IAM, veritabanı kuralı, veri silme veya zamanlanmış iş açmaz. Canlı kullanım miktarı bu kayıtta ölçülmedi; planın kotası ile mevcut tüketim birbirinden ayrılır.
 
 ## Kota ve bağlantı maliyeti
@@ -60,3 +62,29 @@ Firebase ID token'ları kısa ömürlüdür; iptal durumunu ek kontrol olmadan h
 4. **Düşük/orta potansiyel — uygulanmadı:** Ana parçayı ölçümle daha fazla bölmek. Oyun ekranları zaten ayrı yüklenir; tahta/CSS veya rastgele bağımlılık yükseltmesi yapılmamalı.
 
 Bu notlar işletim incelemesini tamamlar; açık maddeleri çözülmüş göstermez. Mevcut site denetiminin kabul kapsamı ve yeni kurtarma düzeltmesi [AUDIT-CLOSEOUT.md](AUDIT-CLOSEOUT.md) içindedir.
+
+## Yerel süreli yük kontrolünü tekrar çalıştırma
+
+`scripts/server-soak.mjs`, sunucu işlemlerini canlıya trafik göndermeden süreli olarak sınar. Normal `npm test` veya derleme tarafından çalıştırılmaz. Önce demo emülatörlerini başlatan aşağıdaki komutu kullan:
+
+```sh
+npx --yes --package firebase-tools@15.34.0 firebase emulators:exec --only firestore,auth --project demo-oyun-portali --config firebase.emulator.json "node --expose-gc scripts/server-soak.mjs --seconds=600 --rooms=4 --output=soak-result.local"
+```
+
+Araç yalnız `demo-oyun-portali` ve 127.0.0.1:8180/9199'u kabul eder; Production ortamı veya hizmet hesabı dosyasıyla başlatılırsa veritabanı istemcisini oluşturmadan durur. Süre 30–1800 saniye, oda sayısı 1–8 ile sınırlıdır. Açık emülatör zaten varsa önce onu normal biçimde kapat; portları kullanan başka süreci körlemesine sonlandırma. Test her seferinde ayrı bir demo belge alanı kullanır, saat ileri sarmaz ve hız sınırlarını kapatmaz.
+
+- Aynı oyuncular dört özel XOX odasında maç/rövanş yapar; eşzamanlı farklı hamlelerden yalnız biri işlenir ve üç kez gönderilen kazandıran hamle yalnız bir puan getirir.
+- Oda ve sayaç bildirimleri birlikte sürer; üye olmayan hamle reddi, oyuncu başına en çok 32 işlem makbuzu ve 8 sayaç makbuzu, tek etkin sekme kontrol edilir.
+- Normal çıkış sonunda odaların kapanması, tekrar katılımın reddi ve aktiflik özetinin boşalması doğrulanır; yöneticiyle belge silinmez.
+- Sonuç JSON'u çağrı sürelerini, beklenen ret sayılarını ve her turdan sonra açıkça çöp toplama çalıştırılmış Node heap/RSS örneklerini içerir. Aracın ve Firestore SDK'sının belleği birlikte ölçülür; emülatör JVM'i ve tarayıcı ölçüme dahil değildir.
+
+Bu test API HTTP katmanı, gerçek Firebase kimliği, WAF, Vercel/Google ağ gecikmesi veya yedi oyunun tamamının yük testi değildir. Sonuçları canlı oyuncu kapasitesi, telefon belleği ya da saatlerce sızıntısız çalışma garantisi olarak kullanma. Yeni araç denetimi tekrarlanabilir kılar; canlı oyun kodunu veya performansını değiştirmez.
+
+### 30 Ekim 2026 sonucu
+
+- **Kritik / Orta:** Bu sınanan senaryoda yeni oyun doğruluğu hatası bulunmadı. Önceki açık güvenlik maddeleri kapanmış sayılmaz. **Düşük:** Tekrarlanabilir süreli yerel ölçüm aracı yoktu; `scripts/server-soak.mjs` bu boşluğu kısmen kapatır. Bu belge yöntemi ve sınırları açıklar.
+- Önce 30 saniyelik deneme, ardından tek 602,25 saniyelik gerçek zamanlı çalışma: 4 oda, aynı 8 oyuncu, 40 tur / **160 tamamlanmış maç**, **2.420 sunucu işlem çağrısı**, tepe 12 eşzamanlı çağrı. 160 beklenen stale_version, 160 not_a_player ve 4 room_closed reddi geçti; beklenmeyen başarısızlık yok. Her kazandıran hamle üç kez eşzamanlı gönderildi; skor yalnız bir arttı. Dört oda normal çıkışlarla kapandı ve sayaç özeti boşaldı; emülatörler normal kapandı.
+- Açık çöp toplama sonrası Node heap başlangıçta 30,38 MiB, 10. turda 37,08 MiB, son 10 oyun turunda **37,49–37,91 MiB**, kapanışta 37,66 MiB. Bu örneklerde ısınma sonrası sürekli heap büyümesi görülmedi. Toplam süreç RSS tepe değeri **237,94 MiB**; heap toplam süreç belleği değildir. Sızıntı olmadığı veya tarayıcı/Vercel belleğinin bu kadar olduğu iddia edilmez.
+- Yerel çağrı süreleri p50 41,86 ms, p95 3.465,04 ms, en yüksek 7.773,37 ms. Bilerek çakıştırılan transaction'ların SDK tekrar/beklemeleri ve beklenen retler dahil; bunlar canlı gecikme ya da oyuncu kapasitesi sayısı değildir. Yeni araç bir hızlandırma uygulamaz, ölçülmüş hız kazancı yoktur.
+- Ham ölçüm `sunucu-yuk-sonucu-2026-10-30.json` teslim dosyasında; geçici yerel günlükler kaldırılır. Taze standart paket 183 başarılı / 13 emülatör üst testi atlanmış, 0 başarısız; yeni aracın sözdizimi ve kendi lint kontrolü temiz. Önceki 114 birleşik emülatör sonucu bu tur yeniden çalıştırılmış gibi sayılmaz. Yalnız test aracı ve bu işletim README'si değiştiğinden istemci derlemesi veya oyun kodu değişikliği yoktur.
+- Bağımlılık taraması tekrar 8 orta / 0 yüksek / 0 kritik. Kayıt sürümleri hâlâ Admin 14.5.0 ve jwks-rsa 4.1.0; önceki uyumsuz yükseltme zorlanmadı. [Admin ESM hata kaydı](https://github.com/firebase/firebase-admin-node/issues/3181) hâlâ açık. Kota panelleri salt okunur kontrol edildi; tarihli kullanım bulgusu kanonik Notion denetim kaydında, anlık değerler `kullanim-kontrolu-2026-10-30.json` tesliminde tutulur. Veri silme, kural/IAM değişikliği veya zamanlanmış iş yoktur.
