@@ -47,6 +47,15 @@ test('summary uses nearest-rank percentiles, separates outcomes, and retains mis
   assert.equal(summary[1].outcome, 'error'); assert.equal(summary[1].n, 1);
 });
 
+test('failure exports retain only allowlisted reason codes', () => {
+  const perf = createGamePerformance({ enabled: true });
+  perf.fail(perf.start('xox.move'), 'stale_version');
+  perf.fail(perf.start('xox.move'), 'private-uid-and-token');
+  assert.equal(perf.report().samples[0].error, 'stale_version');
+  assert.equal(perf.report().samples[1].error, 'other');
+  assert.doesNotMatch(JSON.stringify(perf.report()), /private-uid-and-token/);
+});
+
 test('API measurement is opt-in; payload/retry identity stays identical and telemetry never enters action JSON', async () => {
   try {
     for (const enabled of [false, true]) {

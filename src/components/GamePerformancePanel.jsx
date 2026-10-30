@@ -11,6 +11,13 @@ export default function GamePerformancePanel() {
       <button onClick={() => { gamePerformance.setEnabled(!enabled); setEnabled(!enabled); }}>{enabled ? 'Ölçümü durdur' : 'Ölçümü aç'}</button>
       <button onClick={() => { gamePerformance.clear(); setReport(null); }}>Ölçümleri temizle</button>
       <button onClick={() => setReport(gamePerformance.report())}>Ölçüm raporunu yenile</button>
+      <button onClick={() => {
+        const data = gamePerformance.report(); setReport(data);
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+        const link = document.createElement('a'); link.href = url; link.download = 'game-performance.json';
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}>Ölçüm JSON indir</button>
     </div>
     {report && <textarea aria-label="Performans ölçüm raporu" readOnly value={JSON.stringify(report)} className="w-full h-40 bg-slate-900" />}
   </details>;

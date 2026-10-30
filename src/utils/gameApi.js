@@ -38,8 +38,8 @@ export function createGameApi(getToken, fetcher = fetch) {
       gamePerformance.add(trace, 'attempts', 1);
       try { token = await getToken(attempt > 0); }
       catch (error) {
-        gamePerformance.fail(trace);
         const invalidSession = ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token', 'auth/user-not-found'].includes(error?.code);
+        gamePerformance.fail(trace, invalidSession ? 'invalid_token' : 'authentication_unavailable');
         throw new GameApiError(invalidSession ? 'invalid_token' : 'authentication_unavailable');
       }
       finally { if (trace) gamePerformance.add(trace, 'client_token_ms', performance.now() - tokenAt); }
@@ -73,8 +73,8 @@ export function createGameApi(getToken, fetcher = fetch) {
         gamePerformance.response(trace, result);
         return result;
       } catch (error) {
-        if (error instanceof GameApiError) { gamePerformance.fail(trace); throw error; }
-        if (attempt === 1 || keepalive) { gamePerformance.fail(trace); throw new GameApiError('connection_failed'); }
+        if (error instanceof GameApiError) { gamePerformance.fail(trace, error.code); throw error; }
+        if (attempt === 1 || keepalive) { gamePerformance.fail(trace, 'connection_failed'); throw new GameApiError('connection_failed'); }
         // Retries retain the same action ID, including after a lost response.
       } finally {
         clearTimeout(timeout);

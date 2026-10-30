@@ -15,7 +15,8 @@ heartbeat intervals, matching, optimistic updates and board sizes are unchanged.
 - At most 256 retained samples, 32 pending commands, eight transient room keys
   and 64 observations per stream/room. Data is in memory; refresh clears it.
 - The panel refreshes only on demand, without periodic report renders. Copy its
-  readonly JSON when needed. No telemetry service, DB collection or log sink.
+  readonly JSON or use the JSON download button when needed. No telemetry service,
+  DB collection or log sink. Error reasons are retained only from a fixed allowlist.
 - No payload, tile, token, user identity, nickname, room ID or round ID appears in
   exports. Transient room/version keys only correlate the already-authorized
   local streams. Server headers contain fixed numeric fields and a region code.

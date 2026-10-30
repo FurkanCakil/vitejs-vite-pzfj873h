@@ -79,7 +79,7 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
         const drawnTileId = type === 'okey.draw' ? latest.current.own?.rack?.find(tile => tile && !oldTileIds.has(tile.id))?.id : null;
         return { success: true, ...result, drawnTileId };
       } catch (issue) {
-        gamePerformance.fail(trace);
+        gamePerformance.fail(trace, issue.code);
         if (!stopped.current && (!quiet || !['too_early', 'stale_version', 'stale_round', 'round_finished', 'game_not_playing'].includes(issue.code))) setError(gameErrorMessage(issue));
         return { success: false };
       } finally { if (interactive && !stopped.current) setBusy(false); }

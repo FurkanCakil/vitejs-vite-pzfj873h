@@ -3,6 +3,8 @@ const supportedAction = type => /^(?:xox\.|okey\.)/.test(type)
   || ['room.create', 'room.match', 'room.join', 'room.spectate'].includes(type);
 const serverKeys = new Set(['auth_ms', 'auth_verify_ms', 'auth_session_ms', 'action_ms', 'server_ms', 'db_read_ms',
   'db_write_enqueue_ms', 'tx_ms', 'tx_compute_ms', 'tx_begin_ms', 'tx_retry_wait_ms', 'tx_finalize_ms', 'tx_attempts', 'db_reads', 'db_writes']);
+const errorCodes = new Set(['stale_version', 'stale_round', 'stale_turn', 'not_your_turn', 'occupied_cell', 'too_many_actions',
+  'connection_failed', 'authentication_unavailable', 'invalid_token', 'service_unavailable', 'round_finished', 'player_disconnected']);
 const percentile = (values, fraction) => values.length ? values[Math.max(0, Math.ceil(values.length * fraction) - 1)] : null;
 
 export function summarizePerformance(rows) {
@@ -108,8 +110,11 @@ export function createGamePerformance({ now = () => performance.now(), enabled =
       trace.row.metrics.api_total_ms = now() - trace.started;
       reconcile(trace);
     },
-    fail(trace) {
-      if (trace && pending.has(trace)) { trace.row.outcome = 'error'; trace.row.metrics.api_total_ms = now() - trace.started; record(trace); }
+    fail(trace, code) {
+      if (trace && pending.has(trace)) {
+        trace.row.outcome = 'error'; trace.row.error = errorCodes.has(code) ? code : 'other';
+        trace.row.metrics.api_total_ms = now() - trace.started; record(trace);
+      }
     },
     snapshot(roomId, data, uid, fromCache) {
       for (const trace of pending) if (trace.roomId === roomId && data?.gameId) {
