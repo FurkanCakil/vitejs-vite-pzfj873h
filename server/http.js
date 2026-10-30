@@ -1,12 +1,15 @@
 import { ActionError, requireAction } from './errors.js';
 import { validateAction } from './room-actions.js';
 import { reportServerFailure } from './diagnostics.js';
+import { createPerformance, measuredAction } from './performance.js';
 
 const MAX_BODY_BYTES = 2048;
 
-export function createActionHandler({ enabled, verifyToken, applyAction, allowedOrigins, allowUnsignedEmulatorTokens = false, reportFailure = reportServerFailure }) {
+export function createActionHandler({ enabled, verifyToken, applyAction, allowedOrigins, allowUnsignedEmulatorTokens = false, reportFailure = reportServerFailure,
+  performanceEnabled = () => process.env.GAME_PERF_ENABLED === 'true' }) {
   return async function handler(request, response) {
     let phase = 'request';
+    let metrics;
     const report = error => { try { reportFailure(phase, error); } catch { /* preserve the response */ } };
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -36,9 +39,15 @@ export function createActionHandler({ enabled, verifyToken, applyAction, allowed
         requireAction(Buffer.byteLength(JSON.stringify(body ?? null)) <= MAX_BODY_BYTES, 413, 'body_too_large');
       }
       const action = validateAction(body);
+      if (request.headers['x-game-perf'] === '1' && measuredAction(action.type) && performanceEnabled()) {
+        metrics = createPerformance();
+        if (action.type.startsWith('okey.')) metrics.selectGame('okey101');
+        else if (action.type.startsWith('xox.') || ['room.create', 'room.match'].includes(action.type)) metrics.selectGame('xox');
+      }
       let identity;
       phase = 'authentication';
-      try { identity = await verifyToken(authorization.slice(7)); }
+      try { identity = metrics ? await metrics.measure('auth_ms', () => verifyToken(authorization.slice(7), metrics))
+        : await verifyToken(authorization.slice(7)); }
       catch (error) {
         // A failed account-state backend is an availability error, not an
         // expired identity. Keep the response generic and skip every write.
@@ -47,11 +56,14 @@ export function createActionHandler({ enabled, verifyToken, applyAction, allowed
       }
       requireAction(typeof identity?.uid === 'string' && identity.uid.length > 0, 401, 'invalid_token');
       phase = 'action';
-      const result = await applyAction(identity.uid, action);
+      const result = metrics ? await metrics.measure('action_ms', () => applyAction(identity.uid, action, metrics))
+        : await applyAction(identity.uid, action);
       // A replayed receipt must calibrate against response time, not old time.
       phase = 'response';
+      metrics?.headers(response);
       return response.status(200).json({ ok: true, ...result, serverNow: Date.now() });
     } catch (error) {
+      metrics?.headers(response);
       if (error instanceof ActionError) {
         if (error.status >= 500 && error.code !== 'server_not_enabled') report(error);
         if (error.status === 405) response.setHeader('Allow', 'POST');

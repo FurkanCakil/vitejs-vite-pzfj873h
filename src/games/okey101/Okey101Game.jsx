@@ -1048,8 +1048,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // birleştirilerek yazılır (bkz. mergeRackLayout). Böylece bir düzenleme,
   // aynı anda sunucuya yazılmış bir çekme/işleme sonucunu asla ezip taş
   // kaybettiremez.
-  const handleUpdateRack = async (newRack, newGroups) => {
-    if (sendAction) return sendAction('okey.layout', { rack: newRack.map(tile => tile?.id ?? null), groups: newGroups });
+  const handleUpdateRack = async (newRack, newGroups, measurement) => {
+    if (sendAction) return sendAction('okey.layout', { rack: newRack.map(tile => tile?.id ?? null), groups: newGroups }, false, measurement);
     await runTransaction(db, async (t) => {
       const snap = await t.get(roomRef);
       if (!snap.exists()) return;

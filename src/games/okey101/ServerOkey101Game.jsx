@@ -4,6 +4,8 @@ import { Loader2 } from 'lucide-react';
 import { gameErrorMessage } from '../../utils/gameApi.js';
 import Okey101Game from './Okey101Game.jsx';
 import { okeyAutoAction } from './okeyTiming.js';
+import { gamePerformance } from '../../utils/gamePerformance.js';
+import { useGamePerformance } from '../../hooks/useGamePerformance.js';
 
 export default function ServerOkey101Game({ roomData, roomCode, user, db, appId, leaveRoom, sendAction }) {
   const [own, setOwn] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -13,6 +15,7 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
   const isPlayer = roomData.players.includes(user.uid);
   const coherent = !roomData.hasDealt || !isPlayer || (own?.roundId === roomData.roundId
     && own.handVersion === roomData.handVersions?.[user.uid]);
+  useGamePerformance(roomCode, 'okey101', roomData.version, coherent);
   useEffect(() => {
     stopped.current = false;
     const pending = waiters.current;
@@ -22,7 +25,11 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
     setOwn(null);
     if (!isPlayer) return undefined;
     return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'roomsV2', roomCode, 'playerData', user.uid),
-      snapshot => { setOwn(snapshot.exists() ? snapshot.data() : null); },
+      snapshot => {
+        const data = snapshot.exists() ? snapshot.data() : null;
+        gamePerformance.privateSnapshot(roomCode, data, snapshot.metadata.fromCache);
+        setOwn(data);
+      },
       issue => { if (!stopped.current) setError(gameErrorMessage(issue)); });
   }, [db, appId, roomCode, user.uid, isPlayer]);
   useEffect(() => {
@@ -44,10 +51,12 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
       const timer = setTimeout(finish, 6000); waiters.current.add(check);
     });
   };
-  const send = useCallback((type, fields = {}, quiet = false) => {
+  const send = useCallback((type, fields = {}, quiet = false, suppliedTrace = null) => {
+    const trace = suppliedTrace ?? gamePerformance.start(type, roomCode);
     const roundId = latest.current.roomData.roundId, turnNumber = latest.current.roomData.turnNumber;
     const job = async () => {
-      if (stopped.current) return { success: false };
+      if (stopped.current) { gamePerformance.cancel(trace); return { success: false }; }
+      gamePerformance.execute(trace);
       const interactive = !['okey.layout', 'okey.tick', 'okey.start'].includes(type);
       if (interactive) setBusy(true);
       if (!quiet) setError('');
@@ -62,12 +71,15 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
         if (type === 'okey.open') {
           payload.melds = fields.groupIds.map(id => current.own?.groups?.[id] ?? []); delete payload.groupIds;
         }
-        const result = await current.sendAction(type, payload);
+        const result = await current.sendAction(type, payload, { trace });
+        const waitAt = trace ? performance.now() : 0;
         await waitForSnapshot(result.version);
+        if (trace) gamePerformance.add(trace, 'command_snapshot_barrier_ms', performance.now() - waitAt);
         if (!stopped.current && result.penalized) setError('Açılış barajına ulaşamadın. +101 ceza yazıldı.');
         const drawnTileId = type === 'okey.draw' ? latest.current.own?.rack?.find(tile => tile && !oldTileIds.has(tile.id))?.id : null;
         return { success: true, ...result, drawnTileId };
       } catch (issue) {
+        gamePerformance.fail(trace);
         if (!stopped.current && (!quiet || !['too_early', 'stale_version', 'stale_round', 'round_finished', 'game_not_playing'].includes(issue.code))) setError(gameErrorMessage(issue));
         return { success: false };
       } finally { if (interactive && !stopped.current) setBusy(false); }

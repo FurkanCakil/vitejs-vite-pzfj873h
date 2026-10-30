@@ -6,6 +6,7 @@ import { BOT_UID, checkWinner, getBotMove, DIFFICULTY_LABELS } from './bot.js';
 import useViewport from '../../hooks/useViewport.js';
 import useBoardScale from '../../hooks/useBoardScale.js';
 import { gameErrorMessage } from '../../utils/gameApi.js';
+import { gamePerformance } from '../../utils/gamePerformance.js';
 
 export default function TicTacToeGame({ roomData, roomCode, user, db, appId, leaveRoom, isBot = false, botDifficulty = 'medium', setLocalRoomData, sendAction }) {
   // Rules of Hooks: bu hook'lar aşağıdaki `roomData` erken return'ünden ÖNCE,
@@ -35,8 +36,9 @@ export default function TicTacToeGame({ roomData, roomCode, user, db, appId, lea
   }, [roomData?.winner, sendAction]);
   const submitServer = async (type, fields = {}) => {
     if (isSubmitting) return;
+    const trace = gamePerformance.start(type, roomCode);
     setIsSubmitting(true); setActionError('');
-    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }); return true; }
+    try { await sendAction(type, { expectedVersion: roomData.version, ...fields }, { trace }); return true; }
     catch (error) { setActionError(gameErrorMessage(error)); return false; }
     finally { setIsSubmitting(false); }
   };

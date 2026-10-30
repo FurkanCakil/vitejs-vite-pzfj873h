@@ -55,7 +55,7 @@ function freshGame(players, scores, starter = players[0], game = 'xox', roundId,
 export async function executeRoomAction(db, projectId, uid, input, now = Date.now(), codeSupplier = newCode,
   { battleshipEnabled = process.env.BATTLESHIP_API_ENABLED === 'true', okeyEnabled = process.env.OKEY_API_ENABLED === 'true',
     connect4Enabled = process.env.CONNECT4_API_ENABLED === 'true', checkersEnabled = process.env.CHECKERS_API_ENABLED === 'true',
-    chessEnabled = process.env.CHESS_API_ENABLED === 'true', tavlaEnabled = process.env.TAVLA_API_ENABLED === 'true' } = {}) {
+    chessEnabled = process.env.CHESS_API_ENABLED === 'true', tavlaEnabled = process.env.TAVLA_API_ENABLED === 'true', metrics } = {}) {
   const action = validateAction(input);
   requireAction(typeof uid === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(uid), 401, 'invalid_identity');
   const fingerprint = createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -99,6 +99,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
       data = saved.data(); game = data.gameType;
       connections = pruneConnections(presence.data()?.connections, now);
     }
+    metrics?.selectGame(game);
     if (game === 'okey101') {
       requireAction(okeyEnabled, 503, 'server_not_enabled');
       const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor });

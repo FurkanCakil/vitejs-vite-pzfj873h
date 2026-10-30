@@ -11,6 +11,8 @@ import { SERVER_ROOMS_ENABLED, serverGameEnabled, serverCreateType, serverMatchT
 import { subscribeXoxRoom, xoxApi, xoxSessionId } from './hooks/serverXoxRoom.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 import usePresence from './hooks/usePresence.js';
+import { useGamePerformance } from './hooks/useGamePerformance.js';
+import GamePerformancePanel from './components/GamePerformancePanel.jsx';
 
 import useViewport from './hooks/useViewport.js';
 
@@ -110,6 +112,7 @@ export default function App() {
 
   const [isBotGame, setIsBotGame] = useState(false);
   const [isServerRoom, setIsServerRoom] = useState(false);
+  useGamePerformance(roomCode, isServerRoom && roomData?.gameId === 'xox' ? 'xox' : null, roomData?.version);
   // Matchmaking uses server queues; presence never advertises legacy room codes.
   usePresence(user?.uid);
   const [botDifficulty, setBotDifficulty] = useState('medium');
@@ -224,7 +227,7 @@ export default function App() {
     setRoomCode(result.roomId); sessionRoomStorage.set(result.roomId); sessionRoomStorage.protocol('v2');
     setCurrentView('room'); setJoinCodeInput(''); setErrorMsg(''); setDisconnectCountdown(null);
   };
-  const sendXoxAction = (type, fields = {}) => xoxApi(user)({ type, roomId: roomCode, ...fields });
+  const sendXoxAction = (type, fields = {}, options) => xoxApi(user)({ type, roomId: roomCode, ...fields }, options);
 
   const waitForOpponent = async () => {
     if (!isServerRoom) { leaveRoomLocal(); return; }
@@ -619,6 +622,7 @@ export default function App() {
         </div>
       )}
 
+      <GamePerformancePanel />
       {currentView === 'lobby' ? (
         <Lobby isCreatingRoom={isCreatingRoom} nickname={nickname} setNickname={setNickname} joinCodeInput={joinCodeInput} setJoinCodeInput={setJoinCodeInput} joinRoom={joinRoom} createRoom={createRoom} startBotGame={startBotGame} findMatch={findMatch} matchmakingGameId={matchmakingGameId} userId={user?.uid} />
       ) : (

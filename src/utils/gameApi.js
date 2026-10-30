@@ -1,4 +1,5 @@
 import { beginServerTiming, updateServerClock } from './serverClock.js';
+import { gamePerformance } from './gamePerformance.js';
 
 export const SERVER_XOX_ENABLED = import.meta.env?.VITE_SERVER_XOX_ENABLED === 'true';
 export const SERVER_BATTLESHIP_ENABLED = import.meta.env?.VITE_SERVER_BATTLESHIP_ENABLED === 'true';
@@ -27,21 +28,30 @@ export function randomRequestId() {
 }
 
 export function createGameApi(getToken, fetcher = fetch) {
-  return async function send(fields, { keepalive = false } = {}) {
+  return async function send(fields, { keepalive = false, trace: suppliedTrace } = {}) {
+    const trace = suppliedTrace ?? gamePerformance.start(fields.type, fields.roomId);
+    gamePerformance.execute(trace);
     const body = JSON.stringify({ ...fields, actionId: randomRequestId() });
     for (let attempt = 0; attempt < 2; attempt++) {
       let token;
+      const tokenAt = trace ? performance.now() : 0;
+      gamePerformance.add(trace, 'attempts', 1);
       try { token = await getToken(attempt > 0); }
       catch (error) {
+        gamePerformance.fail(trace);
         const invalidSession = ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token', 'auth/user-not-found'].includes(error?.code);
         throw new GameApiError(invalidSession ? 'invalid_token' : 'authentication_unavailable');
       }
+      finally { if (trace) gamePerformance.add(trace, 'client_token_ms', performance.now() - tokenAt); }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12_000);
+      const httpAt = trace ? performance.now() : 0;
       try {
         const timing = beginServerTiming();
+        const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+        if (trace && gamePerformance.isEnabled()) headers['X-Game-Perf'] = '1';
         const response = await fetcher('/api/room-action', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          method: 'POST', headers,
           body, signal: controller.signal, keepalive,
         });
         let result;
@@ -52,6 +62,7 @@ export function createGameApi(getToken, fetcher = fetch) {
           // Preserve lost-success recovery with the original action ID.
           if (response.ok) throw error;
         }
+        gamePerformance.server(trace, response.headers);
         if (response.status === 401 && attempt === 0) continue;
         if (!response.ok || result?.ok !== true) {
           const fallback = { 401: 'invalid_token', 403: 'security_check_required', 429: 'too_many_actions' }[response.status]
@@ -59,12 +70,16 @@ export function createGameApi(getToken, fetcher = fetch) {
           throw new GameApiError(typeof result?.error === 'string' ? result.error : fallback);
         }
         updateServerClock(result.serverNow, timing);
+        gamePerformance.response(trace, result);
         return result;
       } catch (error) {
-        if (error instanceof GameApiError) throw error;
-        if (attempt === 1 || keepalive) throw new GameApiError('connection_failed');
+        if (error instanceof GameApiError) { gamePerformance.fail(trace); throw error; }
+        if (attempt === 1 || keepalive) { gamePerformance.fail(trace); throw new GameApiError('connection_failed'); }
         // Retries retain the same action ID, including after a lost response.
-      } finally { clearTimeout(timeout); }
+      } finally {
+        clearTimeout(timeout);
+        if (trace) gamePerformance.add(trace, 'http_ms', performance.now() - httpAt);
+      }
     }
     throw new GameApiError('invalid_token');
   };

@@ -19,7 +19,9 @@ export function emulatorMiddleware() {
   const handler = createActionHandler({ enabled: () => true, allowUnsignedEmulatorTokens: true,
     allowedOrigins: new Set(['http://localhost:5173', 'http://127.0.0.1:5173']),
     verifyToken: token => getAuth(app).verifyIdToken(token),
-    applyAction: (uid, action) => applyRoomAction(db, projectId, uid, action),
+    applyAction: (uid, action, metrics) => metrics
+      ? applyRoomAction(metrics.wrapDb(db), projectId, uid, action, undefined, undefined, { metrics })
+      : applyRoomAction(db, projectId, uid, action),
   });
   return async (request, response) => {
     let bytes = 0;

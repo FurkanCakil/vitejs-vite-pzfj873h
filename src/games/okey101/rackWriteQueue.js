@@ -1,6 +1,6 @@
 // One write at a time; retain only the newest layout while a write is pending.
 // flush() is a barrier for the whole drain, including coalesced follow-up writes.
-export function createRackWriteQueue({ write, onIdle, onError, delay = 140 }) {
+export function createRackWriteQueue({ write, onIdle, onError, delay = 140, onQueued, onCancelled }) {
   let pending = null, running = null, timer = null, stopped = false;
   const cancelTimer = () => { clearTimeout(timer); timer = null; };
   const flush = () => {
@@ -13,7 +13,7 @@ export function createRackWriteQueue({ write, onIdle, onError, delay = 140 }) {
       while (!stopped && pending) {
         const next = pending; pending = null;
         try {
-          const result = await write(next.rack, next.groups);
+          const result = await write(next.rack, next.groups, next.measurement);
           if (result?.success === false) succeeded = false;
         } catch (error) { succeeded = false; onError(error); }
       }
@@ -29,13 +29,14 @@ export function createRackWriteQueue({ write, onIdle, onError, delay = 140 }) {
   return {
     enqueue(layout, { immediate = false } = {}) {
       if (stopped) return;
-      pending = layout;
+      if (pending) onCancelled?.(pending.measurement, 'coalesced');
+      pending = { ...layout, measurement: onQueued?.() };
       cancelTimer();
       if (immediate) void flush();
       else timer = setTimeout(flush, delay);
     },
     flush,
     isIdle: () => !timer && !pending && !running,
-    stop() { stopped = true; cancelTimer(); pending = null; },
+    stop() { stopped = true; cancelTimer(); if (pending) onCancelled?.(pending.measurement, 'cancelled'); pending = null; },
   };
 }

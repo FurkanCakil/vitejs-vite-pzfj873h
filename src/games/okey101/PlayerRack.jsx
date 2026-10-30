@@ -8,6 +8,7 @@ import { findNearestSlotIndex } from './nearestSlot.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 import { createRackWriteQueue } from './rackWriteQueue.js';
+import { gamePerformance } from '../../utils/gamePerformance.js';
 
 const DRAG_THRESHOLD_PX = 6;
 const TACK_HOVER_COLOR = 'rgba(251,191,36,0.55)';
@@ -284,7 +285,9 @@ export default function PlayerRack({
   const [writeSettleTick, setWriteSettleTick] = useState(0);
   useEffect(() => {
     const queue = createRackWriteQueue({
-      write: (rack, groups) => latestUpdateRack.current(rack, groups),
+      write: (rack, groups, measurement) => latestUpdateRack.current(rack, groups, measurement),
+      onQueued: () => gamePerformance.start('okey.layout'),
+      onCancelled: (measurement, outcome) => gamePerformance.cancel(measurement, outcome),
       onIdle: () => setWriteSettleTick(n => n + 1),
       onError: err => console.error('Okey101 ıstaka senkron hatası:', err),
     });
