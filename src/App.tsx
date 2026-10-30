@@ -114,7 +114,7 @@ export default function App() {
   const [isServerRoom, setIsServerRoom] = useState(false);
   useGamePerformance(roomCode, isServerRoom && roomData?.gameId === 'xox' ? 'xox' : null, roomData?.version);
   // Matchmaking uses server queues; presence never advertises legacy room codes.
-  usePresence(user?.uid);
+  usePresence(user?.uid, isServerRoom ? roomCode : null);
   const [botDifficulty, setBotDifficulty] = useState('medium');
 
   const authInitiatedRef = useRef(false);

@@ -91,6 +91,20 @@ read-cost tradeoff; replayed commands still do not run or write a second time.
 These are application-level read stages, not a measured latency improvement.
 Heartbeat storage and retry diagnostics are separate follow-up work.
 
+## Okey lease separation (31 October 2026)
+
+Healthy room heartbeats renew only the room lease plus the existing bounded
+receipt/rate records; they do not read the private Okey state or lobby queue.
+Expired-seat recovery still uses the atomic game-state repair path. Gameplay
+commands read leases for authorization but no longer rewrite them: a successful
+draw/discard/layout now queues five writes instead of six. Actor receipt/rate
+records remain shared to preserve their existing replay and abuse boundaries.
+
+Okey queue entries are structural hints. Server matching validates their room
+leases; the picker combines lease-managed entries with the existing verified
+public presence stream. Waiting-room heartbeats no longer rewrite the queue.
+Older entries retain the old timestamp interpretation in the picker.
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid

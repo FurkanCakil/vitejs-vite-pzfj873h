@@ -58,14 +58,33 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   const secretRef = id => db.doc(`${root}/serverOkeyRooms/${id}`);
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const queueRef = db.doc(`${root}/public/data/okeyLobby/queue`);
-  const touchesQueue = !action.type.startsWith('okey.') || ['okey.create', 'okey.match'].includes(action.type) || lobbyActions.has(action.type);
+  const touchesQueue = action.type !== 'room.heartbeat' && (!action.type.startsWith('okey.') || ['okey.create', 'okey.match'].includes(action.type) || lobbyActions.has(action.type));
+  if (publicData && action.type === 'room.heartbeat') {
+    requireAction(publicData.schemaVersion === 2, 409, 'unsupported_room');
+    const player = publicData.players.includes(uid) && !bot(publicData, uid);
+    requireAction(player || publicData.spectators.includes(uid), 403, 'not_a_player');
+    requireAction(publicData.status !== 'closed', 410, 'room_closed');
+    const sessions = connections[uid] ?? {};
+    requireAction(Object.hasOwn(sessions, action.sessionId) || Object.keys(sessions).length < 8, 429, 'too_many_tabs');
+    const renewed = { ...connections, [uid]: { ...sessions, [action.sessionId]: monotonicServerTime(sessions[action.sessionId], now) } };
+    const needsRepair = (publicData.hasDealt && publicData.players.some(id => !bot(publicData, id) && !connected(renewed, id)))
+      || publicData.spectators.some(id => !connected(renewed, id)) || publicData.status === 'abandoned';
+    // Ordinary lease renewal never reads the closed deck or writes game state.
+    // Actual seat retirement/recovery still uses the atomic repair path below.
+    if (!needsRepair) {
+      tx.set(presenceRef(action.roomId), { connections: renewed });
+      return { roomId: action.roomId, version: publicData.version, serverNow: now };
+    }
+  }
   // Generic room commands learn the game from the public room first. Once known,
   // the queue and private state are independent and can share the next batch.
   const needsSecret = publicData && !okeySnapshot;
   const refs = [...(touchesQueue ? [queueRef] : []), ...(needsSecret ? [secretRef(action.roomId)] : [])];
   const snapshots = refs.length ? await tx.getAll(...refs) : [];
   const queue = touchesQueue ? (snapshots.shift().data()?.entries ?? []) : [];
-  let entries = queue.filter(entry => live(entry.updatedAt, now));
+  // Queue membership is structural; room leases, not queue rewrites, prove life.
+  const queuedPresence = touchesQueue && queue.length ? await tx.getAll(...queue.map(entry => presenceRef(entry.roomId))) : [];
+  let entries = queue.filter((entry, index) => connected(prune(queuedPresence[index]?.data()?.connections, now), entry.host));
   const creatingAction = action.type === 'okey.create', matchAction = action.type === 'okey.match';
   let id = action.roomId, data;
   if (publicData) {
@@ -240,7 +259,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   entries = entries.filter(entry => entry.roomId !== id);
   if (touchesQueue && data.isPublic && data.status === 'waiting' && data.players.length < 4 && connected(connections, data.host)) {
     requireAction(entries.length < 30, 503, 'match_queue_full');
-    entries.push({ roomId: id, host: data.host, players: data.players.length, updatedAt: Math.max(now, ...Object.values(connections[data.host])) });
+    entries.push({ roomId: id, host: data.host, players: data.players.length, leaseManaged: true, updatedAt: Math.max(now, ...Object.values(connections[data.host])) });
   }
   if (changed || creating) {
     tx.set(secretRef(id), data); tx.set(roomRef(id), publicOkeyState(data));
@@ -249,7 +268,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
       tx.delete(roomRef(id).collection('playerData').doc(retired));
     }
   }
-  tx.set(presenceRef(id), { connections });
+  if (creating || joining || action.type.startsWith('room.')) tx.set(presenceRef(id), { connections });
   if (touchesQueue && JSON.stringify(entries) !== JSON.stringify(queue)) tx.set(queueRef, { entries });
   return { roomId: id, version: data.version, serverNow: now, ...outcome };
 }

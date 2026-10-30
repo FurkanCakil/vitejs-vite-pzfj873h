@@ -1,4 +1,5 @@
 import { onSnapshot } from 'firebase/firestore';
+import { livePlayersByRoom } from '../utils/presence.js';
 
 // Summaries are hints for people choosing a game, never game authority.
 export function subscribeServerSummary(ref, read, onData, onError, listen = onSnapshot) {
@@ -14,11 +15,14 @@ export function queueEntries(snapshot) {
   return Array.isArray(entries) ? entries : undefined;
 }
 
-export function waitingCount(entries, userId, now, countPlayers = false) {
+export function waitingCount(entries, userId, now, countPlayers = false, sessions = null) {
   if (entries === null) return null;
   if (!Array.isArray(entries)) return undefined;
+  if (entries.some(entry => entry?.leaseManaged) && sessions === null) return null;
+  const liveRooms = livePlayersByRoom(sessions, now);
   const fresh = entries.filter(entry => typeof entry?.host === 'string' && entry.host && entry.host !== userId
-    && Number.isFinite(entry.updatedAt) && now >= entry.updatedAt && now - entry.updatedAt < 60_000);
+    && (entry.leaseManaged ? liveRooms.get(entry.roomId)?.has(entry.host)
+      : Number.isFinite(entry.updatedAt) && now >= entry.updatedAt && now - entry.updatedAt < 60_000));
   if (!countPlayers) return fresh.length;
   return fresh.reduce((total, entry) => {
     const players = entry.players ?? 1;

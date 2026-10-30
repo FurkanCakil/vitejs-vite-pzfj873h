@@ -53,3 +53,9 @@ test('freshness, self exclusion and Okey player counts retain their boundaries w
   assert.equal(waitingCount([{ host: 'other', updatedAt: 1000 }], 'self', 1000, true), 1);
   assert.equal(waitingCount([{ host: 'other', updatedAt: 1000, players: '3' }], 'self', 1000, true), 0);
 });
+test('lease-managed Okey queues use verified room presence rather than an old queue timestamp', () => {
+  const entries = [{ roomId: 'LIVE12', host: 'other', players: 2, leaseManaged: true, updatedAt: 1 }];
+  assert.equal(waitingCount(entries, 'self', 100_000, true), null);
+  assert.equal(waitingCount(entries, 'self', 100_000, true, { one: { uid: 'other', roomCode: 'LIVE12', lastSeen: 99_000 } }), 2);
+  assert.equal(waitingCount(entries, 'self', 100_000, true, {}), 0);
+});

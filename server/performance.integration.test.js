@@ -62,7 +62,7 @@ test('performance observes real SDK XOX and Okey transactions without changing t
       [rack[0], rack[29]] = [rack[29], rack[0]];
       const layout = await run(uid, 'okey.layout', { roomId: 'PFOK12', roundId: state.roundId, rack, groups: {} }, undefined, true);
       assert.match(layout.headers['Server-Timing'], /db_reads;dur=5\.000/);
-      assert.match(layout.headers['Server-Timing'], /db_writes;dur=6\.000/);
+      assert.match(layout.headers['Server-Timing'], /db_writes;dur=5\.000/);
       assert.deepEqual(layout.batches.map(batch => batch.length), [5]);
       const publicRoom = (await db.doc(`${root}/public/data/roomsV2/PFOK12`).get()).data();
       const own = (await db.doc(`${root}/public/data/roomsV2/PFOK12/playerData/${uid}`).get()).data();

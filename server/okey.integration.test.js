@@ -60,6 +60,33 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
     return state;
   }
   try {
+    await t.test('healthy heartbeats renew only leases and live waiting rooms survive without queue rewrites', async () => {
+      const isolated = 'test-okey-quiet', base = `artifacts/${isolated}`;
+      const act = (uid, input, code) => executeRoomAction(db, isolated, uid, input, clock, () => code, { okeyEnabled: true });
+      clock += 100_000;
+      await act('quiet-a', request('okey.create', { nickname: 'Quiet A', sessionId, isPublic: true }), 'OKQT12');
+      const queueRef = db.doc(`${base}/public/data/okeyLobby/queue`);
+      const roomRef = db.doc(`${base}/public/data/roomsV2/OKQT12`);
+      const queued = (await queueRef.get()).data();
+      const before = (await roomRef.get()).data();
+      const reads = [], writes = [];
+      const observed = { doc: path => db.doc(path), runTransaction: work => db.runTransaction(tx => work(new Proxy(tx, { get(target, key) {
+        if (key === 'get' || key === 'getAll') return (...refs) => { reads.push(...refs.map(ref => ref.path)); return target[key](...refs); };
+        if (key === 'set') return (...args) => { writes.push(args[0].path); return target.set(...args); };
+        const value = target[key]; return typeof value === 'function' ? value.bind(target) : value;
+      } }))) };
+      for (let i = 0; i < 3; i++) {
+        clock += 30_000;
+        await executeRoomAction(observed, isolated, 'quiet-a', request('room.heartbeat', { roomId: 'OKQT12', sessionId }), clock,
+          undefined, { okeyEnabled: true });
+      }
+      assert.deepEqual((await queueRef.get()).data(), queued);
+      assert.deepEqual((await roomRef.get()).data(), before);
+      assert.equal(reads.some(path => path.includes('/serverOkeyRooms/') || path.includes('/okeyLobby/')), false);
+      assert.equal(writes.some(path => path.includes('/roomsV2/') || path.includes('/serverOkeyRooms/') || path.includes('/okeyLobby/')), false);
+      const matched = await act('quiet-b', request('okey.match', { nickname: 'Quiet B', sessionId }), 'OKQT13');
+      assert.equal(matched.roomId, 'OKQT12');
+    });
     await t.test('closed rollout cannot create or join an Okey room', async () => {
       await rejects(run('ok-off', request('okey.create', { sessionId, nickname: 'Off', isPublic: false }), 'OKOF12', false), 'server_not_enabled');
       assert.equal((await pub('OKOF12').get()).exists, false);

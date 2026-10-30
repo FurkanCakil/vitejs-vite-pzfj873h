@@ -83,13 +83,13 @@ export default function Lobby({ isCreatingRoom, nickname, setNickname, joinCodeI
     return {
       xox: SERVER_XOX_ENABLED ? waitingCount(serverQueue, userId, nowTick) : undefined,
       amiralbatti: SERVER_BATTLESHIP_ENABLED ? waitingCount(battleQueue, userId, nowTick) : undefined,
-      okey101: SERVER_OKEY_ENABLED ? waitingCount(okeyQueue, userId, nowTick, true) : undefined,
+      okey101: SERVER_OKEY_ENABLED ? waitingCount(okeyQueue, userId, nowTick, true, sessions) : undefined,
       connect4: SERVER_CONNECT4_ENABLED ? waitingCount(connect4Queue, userId, nowTick) : undefined,
       dama: SERVER_CHECKERS_ENABLED ? waitingCount(checkersQueue, userId, nowTick) : undefined,
       satranc: SERVER_CHESS_ENABLED ? waitingCount(chessQueue, userId, nowTick) : undefined,
       tavla: SERVER_TAVLA_ENABLED ? waitingCount(tavlaQueue, userId, nowTick) : undefined,
     };
-  }, [userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue]);
+  }, [userId, nowTick, serverQueue, battleQueue, okeyQueue, connect4Queue, checkersQueue, chessQueue, tavlaQueue, sessions]);
   useEffect(() => {
     if (!SERVER_TAVLA_ENABLED || !pickerOpen || !userId) return undefined;
     return subscribeServerSummary(doc(db, 'artifacts', appId, 'public', 'data', 'tavlaLobby', 'queue'),
