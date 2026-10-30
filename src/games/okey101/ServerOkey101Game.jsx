@@ -68,7 +68,7 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
           payload.turnNumber = turnNumber; payload.expectedPlayVersion = current.roomData.playVersion;
         }
         if (['okey.rules', 'okey.team', 'okey.distribute', 'okey.bots', 'okey.start', 'okey.tick', 'okey.seat.resolve'].includes(type)) payload.expectedVersion = current.roomData.version;
-        if (type === 'okey.open') {
+        if (type === 'okey.open' && fields.groupIds) {
           payload.melds = fields.groupIds.map(id => current.own?.groups?.[id] ?? []); delete payload.groupIds;
         }
         const result = await current.sendAction(type, payload, { trace });

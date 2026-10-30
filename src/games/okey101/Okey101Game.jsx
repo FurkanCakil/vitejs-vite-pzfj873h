@@ -1590,8 +1590,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
 
   // "Seri Aç": seçili her per KATI şekilde geçerli bir SET/SERİ olmalı (sadece
   // toplam yetmez). Herhangi biri geçersizse toplam ne olursa olsun reddedilir.
-  const handleOpenSeries = async (selectedGroupIds) => {
-    if (sendAction) return serverAction('okey.open', { mode: 'series', groupIds: selectedGroupIds });
+  const handleOpenSeries = async (selectedGroupIds, melds) => {
+    if (sendAction) return serverAction('okey.open', { mode: 'series', melds });
     if (!mustDiscard || selectedGroupIds.length === 0) return;
     let outcome = null;
     await runTransaction(db, async (t) => {
@@ -1764,8 +1764,8 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   //   - ÇİFT ile açmış oyuncu: kalan çiftlerini (1+) masaya sürebilir.
   //   - SERİ/SET ile açmış oyuncu: elindeki çiftleri ANCAK masada çift açmış
   //     bir oyuncu varsa sürebilir; bu onu "çift açan" yapmaz (cezası değişmez).
-  const handleOpenPairs = async (selectedGroupIds) => {
-    if (sendAction) return serverAction('okey.open', { mode: 'pairs', groupIds: selectedGroupIds });
+  const handleOpenPairs = async (selectedGroupIds, melds) => {
+    if (sendAction) return serverAction('okey.open', { mode: 'pairs', melds });
     if (!mustDiscard || selectedGroupIds.length === 0) return;
     let outcome = null;
     await runTransaction(db, async (t) => {
@@ -2819,6 +2819,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
       >
         {isPlayer ? (
           <PlayerRack
+            directOpening={!!sendAction}
             compact={isCompact}
             rack={myRack}
             groups={myGroups}

@@ -125,6 +125,7 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       clock += 100_000; await create('draw-a', 'OKDR12'); await fillStart('draw-a', 'OKDR12');
       const tiles = createTileSet(); let state = await fixture('OKDR12', 'draw-a', [tiles[0], tiles[2], tiles[4], tiles[28]]);
       const input = request('okey.open', { roomId: 'OKDR12', roundId: state.roundId, turnNumber: state.turnNumber, expectedPlayVersion: state.playVersion, mode: 'series', melds: [['T0', 'T2', 'T4']] });
+      assert.deepEqual(state.groups['draw-a'], {}); // No prerequisite layout write.
       const results = await Promise.all([run('draw-a', input), run('draw-a', input)]);
       assert.deepEqual(results[0], results[1]); assert.equal((await load('OKDR12')).scores['draw-a'], -101);
       for (let i = 0; i < 33; i++) { clock += 600; await heartbeat('draw-a', 'OKDR12'); }

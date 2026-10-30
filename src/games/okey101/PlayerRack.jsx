@@ -180,7 +180,7 @@ export default function PlayerRack({
   assisted = false, tackableTileIds = null, sideTakeTileId = null, onCancelSideTake = null,
   pendingDraw = null, flipTileId = null, compact = false,
   flippedTileIds = null, onToggleFlippedTile = null, indicator = null,
-  onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast,
+  onDiscardTile, onOpenSeries, onOpenPairs, onTackTile, showToast, directOpening = false,
 }) {
   const safeRack = useMemo(() => normalizeRack(rack), [rack]);
   const safeGroups = groups || {}; // SUNUCU-onaylı groups — sadece iyimser kopyanın "yakalandığını" tespit etmek için kullanılır.
@@ -707,33 +707,39 @@ export default function PlayerRack({
 
   const assistedOpenSeries = async () => {
     if (assistedMeldGroupIds.length === 0 || !canAct || !canOpenMeldsRule || !onOpenSeries || assistedMeldsWouldEmptyRack) return;
-    if (!await flushRackWrite()) return;
-    await onOpenSeries(assistedMeldGroupIds);
+    await submitOpening(onOpenSeries, assistedMeldGroupIds);
   };
 
   const assistedOpenPairs = async () => {
     if (assistedPairGroupIds.length === 0 || !canAct || !canOpenPairsRule || !onOpenPairs || assistedPairsWouldEmptyRack) return;
-    if (!await flushRackWrite()) return;
-    await onOpenPairs(assistedPairGroupIds);
+    await submitOpening(onOpenPairs, assistedPairGroupIds);
   };
 
-  // NOT: `onOpenSeries`/`onOpenPairs`, sunucudaki (debounce'lanmış olabilecek)
-  // `groups` alanını okuyup seçili grup id'lerini ORADA arar. Debounce henüz
-  // gönderilmemiş bir per varsa, açmadan ÖNCE `flushRackWrite` ile hemen (ve
-  // varsa önceki yazımların sırasını koruyarak) sunucuya yazdırılır — aksi
-  // halde sunucu o per'i henüz bilmediği için açma sessizce başarısız olurdu.
+  // Capture selected tile IDs now. The authoritative API validates ownership
+  // and meld rules directly; a saved visual group is not a prerequisite.
+  const submitOpening = async (handler, ids) => {
+    const melds = ids.map(id => [...(baseGroups[id] ?? [])]);
+    if (!directOpening) {
+      if (!await flushRackWrite()) return;
+      return handler(ids, melds);
+    }
+    const pending = writeQueueRef.current?.cancelPending();
+    const result = await handler(ids, melds);
+    // A refused/penalized attempt did not consume these tiles. Retain its
+    // personal arrangement; a successful opening must not resend removed IDs.
+    if (!result?.opened && pending) writeQueueRef.current?.enqueue(pending, { immediate: true });
+    return result;
+  };
   const openSeries = async () => {
     if (!canOpenSeries || !onOpenSeries) return;
     setSelected(new Set());
-    if (!await flushRackWrite()) return;
-    await onOpenSeries(selectedGroupIds);
+    await submitOpening(onOpenSeries, selectedGroupIds);
   };
 
   const openPairs = async () => {
     if (!canOpenPairs || !onOpenPairs) return;
     setSelected(new Set());
-    if (!await flushRackWrite()) return;
-    await onOpenPairs(selectedGroupIds);
+    await submitOpening(onOpenPairs, selectedGroupIds);
   };
 
   const clearTackHover = () => {

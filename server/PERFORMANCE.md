@@ -105,6 +105,15 @@ leases; the picker combines lease-managed entries with the existing verified
 public presence stream. Waiting-room heartbeats no longer rewrite the queue.
 Older entries retain the old timestamp interpretation in the picker.
 
+## Direct opening (31 October 2026)
+
+The online rack submits the selected groups as tile-ID arrays. The server's
+existing ownership, uniqueness, opening-mode, threshold and side-tile checks
+remain authoritative. An unsent visual layout is cancelled instead of flushed
+before opening; already-running commands retain their ordering. If opening is
+refused or penalized, the pending visual layout is retained for later saving.
+The legacy local-game opening barrier remains unchanged.
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid

@@ -16,6 +16,18 @@ function setup(t) {
 }
 const layout = rack => ({ rack, groups: { confirmed: rack } });
 
+test('a direct opening cancels only the unsent layout and keeps an in-flight write serialized', async t => {
+  const s = setup(t);
+  s.queue.enqueue(layout('A'), { immediate: true }); await turn();
+  s.queue.enqueue(layout('B'));
+  assert.equal(s.queue.cancelPending().rack, 'B');
+  t.mock.timers.tick(1000); await turn();
+  assert.deepEqual(s.calls.map(call => call.rack), ['A']);
+  assert.equal(s.queue.isIdle(), false);
+  s.pending[0].resolve({ success: true }); await turn();
+  assert.equal(s.queue.isIdle(), true);
+});
+
 test('opening waits for the newest confirmed layout, not just the first write', async t => {
   const s = setup(t);
   s.queue.enqueue(layout('A'), { immediate: true }); await turn();

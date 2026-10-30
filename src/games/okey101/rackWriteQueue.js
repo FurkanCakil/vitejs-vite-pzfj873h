@@ -36,6 +36,13 @@ export function createRackWriteQueue({ write, onIdle, onError, delay = 140, onQu
       else timer = setTimeout(flush, delay);
     },
     flush,
+    cancelPending() {
+      cancelTimer();
+      const previous = pending; pending = null;
+      if (previous) onCancelled?.(previous.measurement, 'coalesced');
+      if (!running) onIdle();
+      return previous;
+    },
     isIdle: () => !timer && !pending && !running,
     stop() { stopped = true; cancelTimer(); if (pending) onCancelled?.(pending.measurement, 'cancelled'); pending = null; },
   };
