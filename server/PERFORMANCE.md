@@ -74,6 +74,23 @@ two-client capture; these local metrics describe the initiating tab.
    Compare the same scenarios before any subsequent optimization. Do not use
    local emulator or Node microbenchmarks as production UI measurements.
 
+## Read batching (step a, 30 October 2026)
+
+For existing rooms, the action receipt, rate record, public room and connection
+record now share one transaction `getAll`. Direct Okey commands also include
+the private state in this batch. Successful XOX moves therefore go from two
+sequential read batches to one; Okey draw/discard/layout go from three to one.
+Their document counts remain four and five respectively, with unchanged writes.
+Generic room commands need the room's game type first; Okey then reads its queue
+and private state together. Match candidate selection remains bounded/ordered.
+
+Saved receipts are still checked before room validation, even if the room has
+since been removed. A replay or rate-rejected request now also reads the batched
+room records instead of stopping after just the two actor/rate reads. This is a
+read-cost tradeoff; replayed commands still do not run or write a second time.
+These are application-level read stages, not a measured latency improvement.
+Heartbeat storage and retry diagnostics are separate follow-up work.
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid

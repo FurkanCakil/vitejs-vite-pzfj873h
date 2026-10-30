@@ -51,7 +51,7 @@ function waitingState(data, players) {
 
 // Called inside the shared action transaction after identity, receipt and rate
 // checks. All reads precede all writes, including four-player quick matching.
-export async function executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data: publicData, connections, actor }) {
+export async function executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data: publicData, connections, actor, okeySnapshot }) {
   requireAction(action.type.startsWith('okey.') || action.type.startsWith('room.'), 409, 'unsupported_room');
   requireAction(!['room.create', 'room.match'].includes(action.type), 409, 'unsupported_room');
   const roomRef = id => db.doc(`${root}/public/data/roomsV2/${id}`);
@@ -59,13 +59,18 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const queueRef = db.doc(`${root}/public/data/okeyLobby/queue`);
   const touchesQueue = !action.type.startsWith('okey.') || ['okey.create', 'okey.match'].includes(action.type) || lobbyActions.has(action.type);
-  const queue = touchesQueue ? ((await tx.get(queueRef)).data()?.entries ?? []) : [];
+  // Generic room commands learn the game from the public room first. Once known,
+  // the queue and private state are independent and can share the next batch.
+  const needsSecret = publicData && !okeySnapshot;
+  const refs = [...(touchesQueue ? [queueRef] : []), ...(needsSecret ? [secretRef(action.roomId)] : [])];
+  const snapshots = refs.length ? await tx.getAll(...refs) : [];
+  const queue = touchesQueue ? (snapshots.shift().data()?.entries ?? []) : [];
   let entries = queue.filter(entry => live(entry.updatedAt, now));
   const creatingAction = action.type === 'okey.create', matchAction = action.type === 'okey.match';
   let id = action.roomId, data;
   if (publicData) {
     requireAction(publicData.gameType === 'okey101' && publicData.schemaVersion === 2, 409, 'unsupported_room');
-    data = (await tx.get(secretRef(id))).data();
+    data = (okeySnapshot ?? snapshots.shift()).data();
     requireAction(data, 503, 'service_unavailable');
   }
   if (matchAction) for (const entry of entries) {

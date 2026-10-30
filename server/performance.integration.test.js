@@ -17,11 +17,23 @@ test('performance observes real SDK XOX and Okey transactions without changing t
     const sid = 'perf_session_0001';
     const run = async (uid, type, fields, code = 'PFXO12', measured = false) => {
       const metrics = measured ? createPerformance({ region: 'local' }) : null;
+      const batches = [];
+      const observedDb = {
+        doc: path => db.doc(path),
+        runTransaction: work => db.runTransaction(tx => work(new Proxy(tx, { get(target, key) {
+          if (key === 'get' || key === 'getAll') return (...args) => {
+            batches.push(args.map(ref => ref.path));
+            return target[key](...args);
+          };
+          const value = target[key];
+          return typeof value === 'function' ? value.bind(target) : value;
+        } }))),
+      };
       const action = { type, actionId: `perf_action_${String(++sequence).padStart(8, '0')}`, ...fields };
-      const result = await executeRoomAction(metrics ? metrics.wrapDb(db) : db, projectId, uid, action, clock, () => code,
+      const result = await executeRoomAction(metrics ? metrics.wrapDb(observedDb) : db, projectId, uid, action, clock, () => code,
         { okeyEnabled: true, metrics });
       const headers = {}; metrics?.headers({ setHeader: (key, value) => { headers[key] = value; } });
-      return { result, headers };
+      return { result, headers, action, batches };
     };
     try {
       await run('perf-a', 'room.create', { sessionId: sid, nickname: 'Perf', isPublic: false });
@@ -30,9 +42,15 @@ test('performance observes real SDK XOX and Okey transactions without changing t
       assert.equal(moved.headers['X-Game-Perf-Game'], 'xox');
       assert.match(moved.headers['Server-Timing'], /db_reads;dur=4\.000/);
       assert.match(moved.headers['Server-Timing'], /db_writes;dur=4\.000/);
+      assert.deepEqual(moved.batches.map(batch => batch.length), [4]);
       const room = (await db.doc(`${root}/public/data/roomsV2/PFXO12`).get()).data();
       assert.equal(room.board[4], 'X'); assert.equal(room.version, 2);
       assert.equal(Object.hasOwn(room, 'metrics'), false);
+      // A batched read must not move room validation ahead of saved receipts.
+      await db.doc(`${root}/public/data/roomsV2/PFXO12`).delete();
+      assert.deepEqual(await executeRoomAction(db, projectId, 'perf-a', moved.action, clock), moved.result);
+      await assert.rejects(executeRoomAction(db, projectId, 'perf-a', { ...moved.action, cell: 5 }, clock),
+        issue => issue.code === 'action_id_reused');
 
       await run('perf-a', 'okey.create', { sessionId: sid, nickname: 'Perf', isPublic: false }, 'PFOK12');
       for (const uid of ['perf-b', 'perf-c', 'perf-d']) await run(uid, 'room.join', { sessionId: sid, nickname: 'Perf', roomId: 'PFOK12' });
@@ -45,12 +63,17 @@ test('performance observes real SDK XOX and Okey transactions without changing t
       const layout = await run(uid, 'okey.layout', { roomId: 'PFOK12', roundId: state.roundId, rack, groups: {} }, undefined, true);
       assert.match(layout.headers['Server-Timing'], /db_reads;dur=5\.000/);
       assert.match(layout.headers['Server-Timing'], /db_writes;dur=6\.000/);
+      assert.deepEqual(layout.batches.map(batch => batch.length), [5]);
       const publicRoom = (await db.doc(`${root}/public/data/roomsV2/PFOK12`).get()).data();
       const own = (await db.doc(`${root}/public/data/roomsV2/PFOK12/playerData/${uid}`).get()).data();
       assert.equal(own.rack[29].id, state.racks[uid][0].id);
       assert.equal(publicRoom.handVersions[uid], own.handVersion);
       for (const key of ['racks', 'drawPile', 'metrics', 'performance']) assert.equal(Object.hasOwn(publicRoom, key), false);
       assert.doesNotMatch(JSON.stringify(layout.headers), /perf-a|PFOK12|roundId|rack/);
+      await db.doc(`${root}/public/data/roomsV2/PFOK12`).delete();
+      await secretRef.delete();
+      assert.deepEqual(await executeRoomAction(db, projectId, uid, layout.action, clock, undefined,
+        { okeyEnabled: true }), layout.result);
     } finally {
       await db.recursiveDelete(db.doc(`${root}/public/data/roomsV2/PFXO12`));
       await db.recursiveDelete(db.doc(`${root}/public/data/roomsV2/PFOK12`));

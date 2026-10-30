@@ -75,7 +75,16 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
   if (candidateCode) requireAction(/^[A-Z0-9]{6}$/.test(candidateCode), 500, 'invalid_generated_code');
 
   return db.runTransaction(async tx => {
-    const [actorSnap, rateSnap] = await tx.getAll(actorRef, rateRef);
+    // These paths are already known from the validated command. One read batch
+    // keeps the receipt, rate, room and lease in the same transaction snapshot.
+    // Check receipts before interpreting room data, including for retired rooms.
+    const existingRoom = !createAction && !matchAction;
+    const directOkey = existingRoom && action.type.startsWith('okey.');
+    const [actorSnap, rateSnap, saved, presence, okeySnapshot] = await tx.getAll(
+      actorRef, rateRef,
+      ...(existingRoom ? [roomRef(action.roomId), presenceRef(action.roomId)] : []),
+      ...(directOkey ? [db.doc(`${root}/serverOkeyRooms/${action.roomId}`)] : []),
+    );
     const actor = actorSnap.data() ?? {};
     const recent = actor.recent ?? [];
     const receipt = recent.find(item => item.actionId === action.actionId);
@@ -94,7 +103,6 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     let game = action.type.startsWith('okey.') ? 'okey101' : action.type.startsWith('battleship.') ? 'amiralbatti'
       : action.type.startsWith('connect4.') ? 'connect4' : action.type.startsWith('checkers.') ? 'dama' : action.type.startsWith('chess.') ? 'satranc' : action.type.startsWith('tavla.') ? 'tavla' : 'xox';
     if (!createAction && !matchAction) {
-      const [saved, presence] = await tx.getAll(roomRef(id), presenceRef(id));
       requireAction(saved.exists, 404, 'room_not_found');
       data = saved.data(); game = data.gameType;
       connections = pruneConnections(presence.data()?.connections, now);
@@ -102,7 +110,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     metrics?.selectGame(game);
     if (game === 'okey101') {
       requireAction(okeyEnabled, 503, 'server_not_enabled');
-      const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor });
+      const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor, okeySnapshot });
       tx.set(actorRef, { ...actor, recent: [...recent.slice(-31), { actionId: action.actionId, fingerprint, result }] });
       tx.set(rateRef, { windowStart: sameWindow ? rate.windowStart : now, count: count + 1 });
       return result;
