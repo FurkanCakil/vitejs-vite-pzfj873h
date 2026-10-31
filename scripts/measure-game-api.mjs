@@ -5,11 +5,15 @@ import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { summarizePerformance } from '../src/utils/gamePerformance.js';
 
-if (!process.argv.includes('--production-private-baseline')) throw Error('Explicit --production-private-baseline is required');
-process.loadEnvFile('.env');
+const europePreview = process.argv.includes('--europe-preview-private-baseline');
+if (!europePreview && !process.argv.includes('--production-private-baseline')) throw Error('An explicit private baseline target is required');
+if (europePreview && process.argv.includes('--production-private-baseline')) throw Error('Choose exactly one target');
+process.loadEnvFile(europePreview ? '.env.europe.local' : '.env');
 const project = process.env.VITE_FIREBASE_PROJECT_ID, key = process.env.VITE_FIREBASE_API_KEY;
-if (project !== 'oyun-odasi-8ecee' || !key) throw Error('Expected project client configuration is required');
-const base = 'https://www.xn--oyunportal-6ub.com.tr', rows = [], actors = [], held = [];
+if (project !== (europePreview ? 'oyun-portali-avrupa' : 'oyun-odasi-8ecee') || !key) throw Error('Expected project client configuration is required');
+const base = europePreview ? process.env.EUROPE_PREVIEW_URL : 'https://www.xn--oyunportal-6ub.com.tr';
+if (europePreview && !/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(base ?? '')) throw Error('Expected isolated HTTPS Preview URL');
+const rows = [], actors = [], held = [];
 let sequence = 0;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const decode = value => {
@@ -118,9 +122,9 @@ try {
   for (const room of held.filter(item => !item.closed)) for (const actor of room.actors) {
     try { await send(actor, room.game, 'room.leave', { roomId: room.id, sessionId: actor.sessionId }, false); } catch { /* report cleanup below */ }
   }
-  const report = { capturedAt: new Date().toISOString(), scenario: 'production-private-rest-client',
+  const report = { capturedAt: new Date().toISOString(), scenario: europePreview ? 'europe-preview-private-rest-client' : 'production-private-rest-client',
     node: process.version, okeyMode: 'four real anonymous identities, assisted, no bot search', layoutAction: process.argv.includes('--isolated-layout') ? 'okey.arrange' : 'okey.layout', failure,
     samples: rows, summary: summarizePerformance(rows) };
-  await writeFile('performance-api-baseline.local', JSON.stringify(report, null, 2));
+  await writeFile(europePreview ? 'performance-europe-preview.local' : 'performance-api-baseline.local', JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ failure, n: rows.length, summary: report.summary.filter(item => ['xox.move', 'okey.draw', 'okey.discard', 'okey.layout'].includes(item.action)) }));
 }

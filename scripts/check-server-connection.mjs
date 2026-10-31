@@ -1,8 +1,8 @@
-import { createProductionFirestore } from '../server/firebase.js';
+import { createProductionFirestore, isEuropePreview } from '../server/firebase.js';
 
 // During rollout, verify the production identity without enabling any game
-// endpoint or changing game data. Preview/local builds have no database access.
-if (process.env.VERCEL_ENV === 'production' && process.env.GCP_PROJECT_ID) {
+// endpoint or changing game data. Only the isolated Europe Preview opts in.
+if ((process.env.VERCEL_ENV === 'production' || isEuropePreview()) && process.env.GCP_PROJECT_ID) {
   let db;
   try {
     if (process.env.AUTH_SESSION_CHECK_ENABLED === 'true'

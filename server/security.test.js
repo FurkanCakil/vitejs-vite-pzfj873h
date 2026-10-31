@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { applyXoxMove } from './games/xox.js';
 import { validateAction } from './room-actions.js';
 import { createActionHandler } from './http.js';
-import { federationConfig, serverEnabled } from './firebase.js';
+import { federationConfig, serverEnabled, serverOrigins } from './firebase.js';
 import { ActionError } from './errors.js';
 
 const room = (patch = {}) => ({
@@ -218,4 +218,25 @@ test('federation pins Google endpoints and rejects unexpected service accounts',
   assert.deepEqual(config.options.scopes, ['https://www.googleapis.com/auth/datastore']);
   assert.throws(() => federationConfig({ ...env, GCP_SERVICE_ACCOUNT_EMAIL: 'game-server@another-project.iam.gserviceaccount.com' }));
   assert.throws(() => federationConfig({ ...env, GCP_WORKLOAD_IDENTITY_POOL_ID: '../evil' }));
+});
+
+test('Europe Preview cannot inherit production identity, another branch or mismatched client configuration', () => {
+  const preview = { VERCEL_ENV: 'preview', GAME_API_ENABLED: 'true', GAME_PREVIEW_ENABLED: 'true',
+    VERCEL_GIT_COMMIT_REF: 'codex/europe-preview', GAME_PREVIEW_PROJECT_ID: 'oyun-portali-avrupa',
+    GCP_PROJECT_ID: 'oyun-portali-avrupa', VITE_FIREBASE_PROJECT_ID: 'oyun-portali-avrupa',
+    VERCEL_URL: 'europe-build-yap-ai.vercel.app', VERCEL_BRANCH_URL: 'europe-branch-yap-ai.vercel.app' };
+  assert.equal(serverEnabled(preview), true);
+  for (const patch of [{ GAME_PREVIEW_ENABLED: '' }, { VERCEL_GIT_COMMIT_REF: 'main' },
+    { GCP_PROJECT_ID: 'oyun-odasi-8ecee' }, { VITE_FIREBASE_PROJECT_ID: 'oyun-odasi-8ecee' },
+    { GAME_PREVIEW_PROJECT_ID: 'another-project', GCP_PROJECT_ID: 'another-project', VITE_FIREBASE_PROJECT_ID: 'another-project' },
+    { VERCEL_ENV: 'development' }, { FIRESTORE_EMULATOR_HOST: 'localhost:8180' }]) {
+    assert.equal(serverEnabled({ ...preview, ...patch }), false);
+  }
+  const origins = serverOrigins(preview);
+  assert.equal(origins.has('https://europe-build-yap-ai.vercel.app'), true);
+  assert.equal(origins.has('https://europe-branch-yap-ai.vercel.app'), true);
+  assert.equal(origins.has('https://other.vercel.app'), false);
+  assert.equal(origins.has('https://www.xn--oyunportal-6ub.com.tr'), false);
+  assert.equal(serverOrigins({ ...preview, VERCEL_BRANCH_URL: 'bad.vercel.app/path' }).size, 1);
+  assert.equal(serverOrigins({ ...preview, GCP_PROJECT_ID: 'oyun-odasi-8ecee' }).size, 0);
 });

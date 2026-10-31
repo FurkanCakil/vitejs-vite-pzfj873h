@@ -35,19 +35,35 @@ export function federationConfig(env) {
   };
 }
 
-function isProductionServer(env) {
-  // Neither a Preview build nor a local process can accidentally access the
-  // production database by inheriting the feature flag alone.
-  return env.VERCEL_ENV === 'production'
+export function isEuropePreview(env = process.env) {
+  // A branch-scoped opt-in never gives Preview access to the old project.
+  return env.VERCEL_ENV === 'preview' && env.GAME_PREVIEW_ENABLED === 'true'
+    && env.VERCEL_GIT_COMMIT_REF === 'codex/europe-preview'
+    && env.GAME_PREVIEW_PROJECT_ID === 'oyun-portali-avrupa'
+    && env.GCP_PROJECT_ID === env.GAME_PREVIEW_PROJECT_ID
+    && env.VITE_FIREBASE_PROJECT_ID === env.GAME_PREVIEW_PROJECT_ID
     && !env.FIRESTORE_EMULATOR_HOST && !env.FIREBASE_AUTH_EMULATOR_HOST;
 }
 
+function isAuthorizedServer(env) {
+  return !env.FIRESTORE_EMULATOR_HOST && !env.FIREBASE_AUTH_EMULATOR_HOST
+    && (env.VERCEL_ENV === 'production' || isEuropePreview(env));
+}
+
+export function serverOrigins(env = process.env) {
+  if (env.VERCEL_ENV === 'production') return new Set(['https://www.xn--oyunportal-6ub.com.tr', 'https://xn--oyunportal-6ub.com.tr']);
+  if (!isEuropePreview(env)) return new Set();
+  return new Set([env.VERCEL_URL, env.VERCEL_BRANCH_URL]
+    .filter(host => typeof host === 'string' && /^[a-z0-9-]+\.vercel\.app$/.test(host))
+    .map(host => `https://${host}`));
+}
+
 export function serverEnabled(env = process.env) {
-  return env.GAME_API_ENABLED === 'true' && isProductionServer(env);
+  return env.GAME_API_ENABLED === 'true' && isAuthorizedServer(env);
 }
 
 export function createProductionFirestore(env = process.env) {
-  if (!isProductionServer(env)) throw new Error('Production identity required');
+  if (!isAuthorizedServer(env)) throw new Error('Authorized Vercel identity required');
   const config = federationConfig(env);
   const authClient = new IdentityPoolClient({
     ...config.options,
