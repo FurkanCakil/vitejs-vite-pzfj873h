@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { summarizePerformance } from '../src/utils/gamePerformance.js';
+import { previewProtectionHeaders } from './europe-preview-target.mjs';
 
 const europePreview = process.argv.includes('--europe-preview-private-baseline');
 if (!europePreview && !process.argv.includes('--production-private-baseline')) throw Error('An explicit private baseline target is required');
@@ -14,6 +15,7 @@ if (project !== (europePreview ? 'oyun-portali-avrupa' : 'oyun-odasi-8ecee') || 
 const base = europePreview ? process.env.EUROPE_PREVIEW_URL : 'https://www.xn--oyunportal-6ub.com.tr';
 if (europePreview && !/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(base ?? '')) throw Error('Expected isolated HTTPS Preview URL');
 const rows = [], actors = [], held = [];
+const protection = europePreview ? await previewProtectionHeaders() : {};
 let sequence = 0;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const decode = value => {
@@ -39,7 +41,7 @@ const send = async (actor, game, type, fields, measure = true) => {
   actor.lastAt = performance.now();
   const at = performance.now();
   const response = await fetch(`${base}/api/room-action`, { method: 'POST', headers: {
-    Authorization: `Bearer ${actor.token}`, 'Content-Type': 'application/json', 'X-Game-Perf': '1',
+    ...protection, Authorization: `Bearer ${actor.token}`, 'Content-Type': 'application/json', 'X-Game-Perf': '1',
   }, body: JSON.stringify({ type, actionId: randomBytes(16).toString('hex'), ...fields }), signal: AbortSignal.timeout(20000) });
   const result = await response.json();
   const metrics = { http_ms: performance.now() - at, attempts: 1 };

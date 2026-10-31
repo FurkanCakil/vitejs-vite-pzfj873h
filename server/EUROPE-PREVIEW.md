@@ -1,0 +1,59 @@
+# Isolated Frankfurt Preview
+
+This branch is preparation only. Do not merge to main, promote a deployment,
+change Production environment variables, or modify the old Firebase project
+without the user's separate cutover approval.
+
+The new Spark project is `oyun-portali-avrupa`, default Firestore database in
+`europe-west3`. The branch's `vercel.json` selects `fra1`; Production keeps its
+existing `iad1` deployment. Firebase client settings already come from Vite
+environment variables, and server credentials from the existing `GCP_*` variables.
+The 31 Europe variables are scoped to Preview branch `codex/europe-preview` only.
+
+`server/firebase.js` additionally requires `GAME_PREVIEW_ENABLED=true`, the exact
+branch, `GAME_PREVIEW_PROJECT_ID=oyun-portali-avrupa`, and matching server/client
+project IDs. Other Preview builds remain disabled. Neither Preview path accepts
+the old Firebase project. Browser API origins are the deployment and branch URLs.
+
+Keyless federation is recorded in `gcp-europe-access-plan.json`. Google IAM admits
+only this Vercel project's Preview subject. Vercel OIDC has no documented branch
+claim; branch isolation is enforced by branch-scoped variables and application
+guards, not an invented Google IAM claim. The service account has only the
+default database's document role. Production federation is not granted yet.
+
+Production rules were compared to `firestore.rollout.rules` and copied unchanged.
+Both databases have no manual indexes and the three `firestore.indexes.json`
+exemptions; automatic collection/group defaults match. Firebase settings are
+separate from Vercel deployments. Anonymous sign-in is enabled without automatic
+account cleanup. Source authorized domains and the Europe Preview branch domain
+are configured; no Analytics, Hosting, billing or payment account was enabled.
+
+## Acceptance and latency
+
+Keep Firebase web settings and the branch URL in ignored `.env.europe.local`.
+Use the existing Vercel Trusted Sources rule with an official, short-lived CLI
+OIDC token in ignored `.europe-preview-oidc.local`. Do not create a public
+protection exception, long-lived bypass secret, or service-account key.
+
+`node scripts/verify-europe-preview.mjs --verify-europe-preview` creates only new
+private Europe rooms. Four normal SDK anonymous accounts verify all seven games,
+real moves, identical-request receipts, SDK snapshot reconnection, and private
+Okey/Battleship reads. Expected privacy denials are reported separately. No Admin
+SDK, state seeding, existing rooms or old project writes are allowed.
+
+`node scripts/measure-game-api.mjs --europe-preview-private-baseline --isolated-layout`
+uses the same 60 XOX moves, 36 Okey draws and 38 discards as the recorded production
+scenario. Output is `performance-europe-preview.local`. The old project must stay
+untouched, so comparison uses the existing 31 October production sample at
+`0f982fe`, rather than opening new production rooms. This is a different-time
+comparison, not a concurrent A/B experiment. OIDC protection overhead applies to
+Preview requests. Snapshot/render are not included in the REST timing table.
+
+These scripts do normal room-leave cleanup; no production data is migrated or
+deleted. Fresh Europe anonymous UIDs cannot resume old rooms or their scores.
+Nickname, displayed device ID and volume survive a same-origin cutover, but a
+Preview origin has separate storage. Old Auth persistence remains available for
+rollback because no old project accounts/settings are changed.
+
+The final measurement, cutover proposal and rollback decisions belong in the
+existing Notion project record. Cutover remains a separate approval gate.
