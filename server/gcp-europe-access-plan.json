@@ -1,5 +1,10 @@
 {
-  "status": "configured-preview-awaiting-build-and-live-acceptance",
+  "status": "verified-preview-cutover-not-authorized",
+  "verifiedAt": "2026-11-01",
+  "verificationTimeZone": "Europe/Istanbul",
+  "verificationDeployment": "https://vercel.com/yap-ai/vitejs-vite-pzfj873h-1hy2/E3ZUvVCCCZ6xyPBLtPL5Me7BqXpG",
+  "verificationCommit": "3dc5ff4265aae72e38a872339365b193431230fe",
+  "verifiedRuntimeRegion": "fra1",
   "projectId": "oyun-portali-avrupa",
   "projectNumber": "497390850636",
   "databaseId": "(default)",

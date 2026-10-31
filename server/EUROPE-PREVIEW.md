@@ -68,3 +68,16 @@ rollback because no old project accounts/settings are changed.
 
 The final measurement, cutover proposal and rollback decisions belong in the
 existing Notion project record. Cutover remains a separate approval gate.
+
+The browser acceptance and bounded measurement were verified against `3dc5ff4`
+in Ready Preview `E3ZUvVCCCZ6xyPBLtPL5Me7BqXpG` on 1 November 2026 (Turkey time).
+All seven games passed; the normal room-leave cleanup completed. The measurement
+reported `fra1` on every measured response. Anonymous output stays in ignored
+`.local` artifacts; the result table is in the Notion project record.
+
+Do not promote the Preview artifact directly to Production. It contains the
+Preview-only QA entry, Preview origins and Preview IAM settings. After cutover
+approval, authorize a Production identity only in the new Firebase project,
+set the new Production variables and perform a fresh Production build (QA entry
+excluded). The retained old Production deployment and original variables are the
+rollback target; a rollback must also restore `iad1` with the old database.
