@@ -30,10 +30,21 @@ are configured; no Analytics, Hosting, billing or payment account was enabled.
 
 ## Acceptance and latency
 
-Keep Firebase web settings and the branch URL in ignored `.env.europe.local`.
-Use the existing Vercel Trusted Sources rule with an official, short-lived CLI
-OIDC token in ignored `.europe-preview-oidc.local`. Do not create a public
-protection exception, long-lived bypass secret, or service-account key.
+The preferred test entry is the Preview URL with `?europeQa=1`. It runs the probes
+using the already authenticated browser's Vercel cookies, without a bypass secret
+or extra account login. This entry is compiled only when the deployment is Preview,
+the exact Europe branch and the new GCP project; a normal Production build excludes
+the QA component and probes. The app's ordinary route and game UI are unchanged.
+
+The browser probes use four independent, in-memory Firebase SDK anonymous accounts
+and the same REST action/read sequence. Browser fetch HTTP timings are identified
+as such; the recorded production reference used Node fetch. This transport and the
+different measurement times limit causal interpretation of the comparison.
+
+Optional CLI execution keeps Firebase web settings and the branch URL in ignored
+`.env.europe.local`. It can use the existing Vercel Trusted Sources rule with an
+official, short-lived CLI OIDC token in ignored `.europe-preview-oidc.local`. Do not
+create a public protection exception, long-lived bypass secret, or service-account key.
 
 `node scripts/verify-europe-preview.mjs --verify-europe-preview` creates only new
 private Europe rooms. Four normal SDK anonymous accounts verify all seven games,
