@@ -10,6 +10,7 @@ export const okeyFields = {
   'okey.seat.request': ['roomId', 'botUid', 'nickname'], 'okey.seat.cancel': ['roomId'],
   'okey.seat.resolve': ['roomId', 'expectedVersion', 'requesterUid', 'accept'],
   'okey.layout': ['roomId', 'roundId', 'rack', 'groups'],
+  'okey.arrange': ['roomId', 'roundId', 'rack', 'groups'],
   'okey.draw': ['roomId', 'roundId', 'turnNumber', 'expectedPlayVersion', 'source', 'targetIndex'],
   'okey.cancel': ['roomId', 'roundId', 'turnNumber', 'expectedPlayVersion'],
   'okey.discard': ['roomId', 'roundId', 'turnNumber', 'expectedPlayVersion', 'tileId'],
@@ -22,6 +23,7 @@ export function okeyCommand(action) {
   return Object.fromEntries(Object.entries(action).filter(([key]) => !['roomId', 'actionId', 'expectedVersion', 'expectedPlayVersion'].includes(key)));
 }
 export function validateOkeyFields(action) {
+  if (action.type === 'okey.arrange') validateOkeyCommand({ ...okeyCommand(action), type: 'okey.layout' });
   if (Object.hasOwn(action, 'expectedPlayVersion')) requireAction(Number.isSafeInteger(action.expectedPlayVersion)
     && action.expectedPlayVersion >= 0 && action.expectedPlayVersion < Number.MAX_SAFE_INTEGER, 400, 'invalid_version');
   if (gameplay.has(action.type)) validateOkeyCommand(okeyCommand(action));

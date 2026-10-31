@@ -114,6 +114,28 @@ before opening; already-running commands retain their ordering. If opening is
 refused or penalized, the pending visual layout is retained for later saving.
 The legacy local-game opening barrier remains unchanged.
 
+## Private arrangement and move feedback (31 October 2026)
+
+Updated clients send `okey.arrange`, storing only validated tile IDs/groups in
+their own `roomsV2/{room}/playerLayouts/{uid}` document, plus receipt/rate writes.
+It reads the authoritative own hand and never writes that hand, the shared room,
+the full private game or room leases. The existing legacy layout command remains
+available for older tabs. Visual writes have their own existing rack queue and
+no longer wait in the gameplay command chain.
+
+Actual game commands merge the actor's saved arrangement with owned tiles; a
+missing newly drawn tile is preserved, and removed/old-round tiles cannot return.
+Timer-driven discards also load the saved arrangement. Direct draw/discard read
+one additional personal document in the existing batch; that is a measured
+tradeoff for isolating each player's frequent visual writes. Updated measurement
+runs use `--isolated-layout` to perform the same 38 layouts via the new route.
+
+Move input locks immediately. Draws show a pending message without predicting a
+closed-deck tile. Discards preview only a tile already in the player's own hand;
+the preview never predicts score/winner/turn and clears on rejection or a changed
+authoritative version. Private-layout rules grant only the matching current
+member a single-document read; listing and all client writes remain denied.
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid

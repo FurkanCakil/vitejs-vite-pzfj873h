@@ -106,7 +106,7 @@ try {
     // Toggle two occupied slots to measure real changed layouts too.
     const rack = own.rack.map(tile => tile?.id ?? null), slots = rack.flatMap((tile, i) => tile ? [i] : []);
     [rack[slots[0]], rack[slots[1]]] = [rack[slots[1]], rack[slots[0]]];
-    await send(actor, 'okey101', 'okey.layout', { roomId: okey.roomId, roundId: state.roundId, rack, groups: {} });
+    await send(actor, 'okey101', process.argv.includes('--isolated-layout') ? 'okey.arrange' : 'okey.layout', { roomId: okey.roomId, roundId: state.roundId, rack, groups: {} });
     state = await read(actor, okey.roomId);
     await send(actor, 'okey101', 'okey.discard', { roomId: okey.roomId, roundId: state.roundId,
       expectedPlayVersion: state.playVersion, turnNumber: state.turnNumber, tileId: own.rack.find(Boolean).id }); discards++;
@@ -119,7 +119,7 @@ try {
     try { await send(actor, room.game, 'room.leave', { roomId: room.id, sessionId: actor.sessionId }, false); } catch { /* report cleanup below */ }
   }
   const report = { capturedAt: new Date().toISOString(), scenario: 'production-private-rest-client',
-    node: process.version, okeyMode: 'four real anonymous identities, assisted, no bot search', failure,
+    node: process.version, okeyMode: 'four real anonymous identities, assisted, no bot search', layoutAction: process.argv.includes('--isolated-layout') ? 'okey.arrange' : 'okey.layout', failure,
     samples: rows, summary: summarizePerformance(rows) };
   await writeFile('performance-api-baseline.local', JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ failure, n: rows.length, summary: report.summary.filter(item => ['xox.move', 'okey.draw', 'okey.discard', 'okey.layout'].includes(item.action)) }));

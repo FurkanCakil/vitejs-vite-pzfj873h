@@ -121,6 +121,32 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       clock += 3200; await command('team-a', 'OKTM12', 'okey.start');
       assert.deepEqual((await load('OKTM12')).players.slice(0, 4), [state.teams.A[0], state.teams.B[0], state.teams.A[1], state.teams.B[1]]);
     });
+    await t.test('personal arrangements are private, idempotent and do not write authoritative hand or room state', async () => {
+      clock += 100_000; await create('arr-a', 'OKAR12'); await fillStart('arr-a', 'OKAR12');
+      const state = await load('OKAR12'), publicBefore = (await pub('OKAR12').get()).data(), ownBefore = (await own('OKAR12', 'arr-a').get()).data();
+      const rack = ownBefore.rack.map(tile => tile?.id ?? null);
+      [rack[0], rack[29]] = [rack[29], rack[0]];
+      const input = request('okey.arrange', { roomId: 'OKAR12', roundId: state.roundId, rack, groups: {} });
+      const results = await Promise.all([run('arr-a', input), run('arr-a', input)]);
+      assert.deepEqual(results[0], results[1]);
+      assert.deepEqual(await load('OKAR12'), state);
+      assert.deepEqual((await pub('OKAR12').get()).data(), publicBefore);
+      assert.deepEqual((await own('OKAR12', 'arr-a').get()).data(), ownBefore);
+      const layout = (await pub('OKAR12').collection('playerLayouts').doc('arr-a').get()).data();
+      assert.equal(layout.rack[29], state.racks['arr-a'][0].id);
+      await rejects(run('arr-a', request('okey.arrange', { ...input, actionId: 'arrange_forged_0001', rack: ['T999', ...Array(29).fill(null)] })), 'invalid_layout');
+      await rejects(run('arr-a', request('okey.arrange', { ...input, actionId: 'arrange_oldround_01', roundId: '0'.repeat(24) })), 'stale_round');
+      state.turn = 'arr-a'; state.hasDrawnThisTurn = false; state.setupPhase = false; state.turnDeadline = clock + 45_000;
+      await secret('OKAR12').set(state); await pub('OKAR12').set(publicOkeyState(state));
+      await Promise.all([
+        run('arr-a', request('okey.arrange', { roomId: 'OKAR12', roundId: state.roundId, rack, groups: {} })),
+        command('arr-a', 'OKAR12', 'okey.draw', { source: 'pile', targetIndex: null }),
+      ]);
+      const drawn = await load('OKAR12');
+      assert.equal(drawn.racks['arr-a'].filter(Boolean).length, state.racks['arr-a'].filter(Boolean).length + 1);
+      assert.equal(drawn.drawPile.length, state.drawPile.length - 1);
+      assert.ok(state.racks['arr-a'].filter(Boolean).every(tile => drawn.racks['arr-a'].some(saved => saved?.id === tile.id)));
+    });
     await t.test('a repeated draw and penalized opening are applied only once, with coherent own views', async () => {
       clock += 100_000; await create('draw-a', 'OKDR12'); await fillStart('draw-a', 'OKDR12');
       const tiles = createTileSet(); let state = await fixture('OKDR12', 'draw-a', [tiles[0], tiles[2], tiles[4], tiles[28]]);
@@ -325,6 +351,14 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       const api = `http://127.0.0.1:8180/v1/projects/${projectId}/databases/(default)/documents/${root}`;
       const path = 'public/data/roomsV2/OKAU12', headers = token => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' });
       assert.equal((await fetch(`${api}/${path}/playerData/${a.localId}`, { headers: headers(a.idToken) })).status, 200);
+      const hand = (await own('OKAU12', a.localId).get()).data();
+      await run(a.localId, request('okey.arrange', { roomId: 'OKAU12', roundId: hand.roundId, rack: hand.rack.map(tile => tile?.id ?? null), groups: {} }));
+      const layoutPath = `${api}/${path}/playerLayouts/${a.localId}`;
+      assert.equal((await fetch(layoutPath, { headers: headers(a.idToken) })).status, 200);
+      for (const token of [b.idToken, c.idToken]) assert.equal((await fetch(layoutPath, { headers: headers(token) })).status, 403);
+      assert.equal((await fetch(layoutPath)).status, 403);
+      assert.equal((await fetch(layoutPath, { method: 'PATCH', headers: headers(a.idToken), body: '{"fields":{}}' })).status, 403);
+      assert.equal((await fetch(`${api}/${path}/playerLayouts`, { headers: headers(a.idToken) })).status, 403);
       for (const token of [b.idToken, c.idToken]) assert.equal((await fetch(`${api}/${path}/playerData/${a.localId}`, { headers: headers(token) })).status, 403);
       for (const blocked of [`${path}/playerData`, 'serverOkeyRooms/OKAU12']) assert.equal((await fetch(`${api}/${blocked}`, { headers: headers(a.idToken) })).status, 403);
       assert.equal((await fetch(`${api}/${path}`, { method: 'PATCH', headers: headers(a.idToken), body: '{"fields":{}}' })).status, 403);

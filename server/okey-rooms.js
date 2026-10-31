@@ -6,6 +6,7 @@ import { okeyCommand } from './okey-schema.js';
 import { createBotPlayers } from '../src/games/okey101/botPlayers.js';
 import { buildSeatSwapUpdate } from '../src/games/okey101/gameLogic.js';
 import { TURN_DURATION_MS } from '../src/games/okey101/tiles.js';
+import { personalHand } from '../src/games/okey101/personalLayout.js';
 
 const live = (at, now) => freshServerTime(at, now, 60_000);
 const prune = (connections, now) => Object.fromEntries(Object.entries(connections ?? {}).map(([uid, sessions]) =>
@@ -51,13 +52,27 @@ function waitingState(data, players) {
 
 // Called inside the shared action transaction after identity, receipt and rate
 // checks. All reads precede all writes, including four-player quick matching.
-export async function executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data: publicData, connections, actor, okeySnapshot }) {
+export async function executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data: publicData, connections, actor, okeySnapshot, arrangementSnapshot }) {
   requireAction(action.type.startsWith('okey.') || action.type.startsWith('room.'), 409, 'unsupported_room');
   requireAction(!['room.create', 'room.match'].includes(action.type), 409, 'unsupported_room');
   const roomRef = id => db.doc(`${root}/public/data/roomsV2/${id}`);
   const secretRef = id => db.doc(`${root}/serverOkeyRooms/${id}`);
   const presenceRef = id => db.doc(`${root}/serverRoomPresence/${id}`);
   const queueRef = db.doc(`${root}/public/data/okeyLobby/queue`);
+  if (action.type === 'okey.arrange') {
+    requireAction(publicData?.schemaVersion === 2 && publicData.players.includes(uid) && !bot(publicData, uid), 403, 'not_a_player');
+    requireAction(publicData.status === 'playing' && !publicData.roundEnded, 409, 'game_not_playing');
+    requireAction(connected(connections, uid), 409, 'player_disconnected');
+    requireAction(publicData.roundId === action.roundId, 409, 'stale_round');
+    const hand = okeySnapshot.data();
+    requireAction(hand?.roundId === action.roundId && hand.handVersion === publicData.handVersions[uid], 503, 'service_unavailable');
+    const owned = new Set(hand.rack.filter(Boolean).map(tile => tile.id));
+    requireAction(action.rack.every(id => id === null || owned.has(id)), 409, 'tile_not_owned');
+    tx.set(roomRef(action.roomId).collection('playerLayouts').doc(uid), {
+      roundId: action.roundId, rack: action.rack, groups: action.groups,
+    });
+    return { roomId: action.roomId, version: publicData.version, serverNow: now };
+  }
   const touchesQueue = action.type !== 'room.heartbeat' && (!action.type.startsWith('okey.') || ['okey.create', 'okey.match'].includes(action.type) || lobbyActions.has(action.type));
   if (publicData && action.type === 'room.heartbeat') {
     requireAction(publicData.schemaVersion === 2, 409, 'unsupported_room');
@@ -113,6 +128,15 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
   }
   requireAction(data?.gameType === 'okey101', 409, 'unsupported_room');
   const before = structuredClone(data);
+  // Personal arrangements are merged only when a real game command needs them.
+  // Timer-driven discards retain the player's saved grouping preferences too.
+  const arrangedUid = action.type === 'okey.tick' ? data.turn : uid;
+  if (data.racks && data.players.includes(arrangedUid) && !bot(data, arrangedUid) && action.type.startsWith('okey.') && action.type !== 'okey.layout') {
+    const savedLayout = action.type === 'okey.tick'
+      ? await tx.get(roomRef(id).collection('playerLayouts').doc(arrangedUid)) : arrangementSnapshot;
+    const hand = personalHand({ roundId: data.roundId, rack: data.racks[arrangedUid], groups: data.groups[arrangedUid] }, savedLayout?.data());
+    data.racks[arrangedUid] = hand.rack; data.groups[arrangedUid] = hand.groups;
+  }
   const player = data.players.includes(uid) && !bot(data, uid), spectator = data.spectators.includes(uid);
   const joining = ['room.join', 'room.spectate'].includes(action.type) || matchAction;
   requireAction(creating || joining || player || spectator, 403, 'not_a_player');
@@ -266,6 +290,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
     for (const [uid, view] of handWrites) tx.set(roomRef(id).collection('playerData').doc(uid), view);
     for (const retired of humanPlayers(before).filter(uid => !data.players.includes(uid))) {
       tx.delete(roomRef(id).collection('playerData').doc(retired));
+      tx.delete(roomRef(id).collection('playerLayouts').doc(retired));
     }
   }
   if (creating || joining || action.type.startsWith('room.')) tx.set(presenceRef(id), { connections });

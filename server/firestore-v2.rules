@@ -46,6 +46,11 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/roomsV2/$(roomId)).data.players;
       allow list, write: if false;
     }
+    match /artifacts/{appId}/public/data/roomsV2/{roomId}/playerLayouts/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid
+        && request.auth.uid in get(/databases/$(database)/documents/artifacts/$(appId)/public/data/roomsV2/$(roomId)).data.players;
+      allow list, write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

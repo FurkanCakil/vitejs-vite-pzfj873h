@@ -80,10 +80,14 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     // Check receipts before interpreting room data, including for retired rooms.
     const existingRoom = !createAction && !matchAction;
     const directOkey = existingRoom && action.type.startsWith('okey.');
-    const [actorSnap, rateSnap, saved, presence, okeySnapshot] = await tx.getAll(
+    const arranging = action.type === 'okey.arrange';
+    const withArrangement = directOkey && !arranging && !['okey.layout', 'okey.tick'].includes(action.type);
+    const [actorSnap, rateSnap, saved, presence, okeySnapshot, arrangementSnapshot] = await tx.getAll(
       actorRef, rateRef,
       ...(existingRoom ? [roomRef(action.roomId), presenceRef(action.roomId)] : []),
-      ...(directOkey ? [db.doc(`${root}/serverOkeyRooms/${action.roomId}`)] : []),
+      ...(directOkey ? [arranging ? roomRef(action.roomId).collection('playerData').doc(uid)
+        : db.doc(`${root}/serverOkeyRooms/${action.roomId}`)] : []),
+      ...(withArrangement ? [roomRef(action.roomId).collection('playerLayouts').doc(uid)] : []),
     );
     const actor = actorSnap.data() ?? {};
     const recent = actor.recent ?? [];
@@ -110,7 +114,7 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     metrics?.selectGame(game);
     if (game === 'okey101') {
       requireAction(okeyEnabled, 503, 'server_not_enabled');
-      const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor, okeySnapshot });
+      const result = await executeOkeyTransaction({ tx, db, root, uid, action, now, candidateCode, data, connections, actor, okeySnapshot, arrangementSnapshot });
       tx.set(actorRef, { ...actor, recent: [...recent.slice(-31), { actionId: action.actionId, fingerprint, result }] });
       tx.set(rateRef, { windowStart: sameWindow ? rate.windowStart : now, count: count + 1 });
       return result;
