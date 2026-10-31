@@ -60,6 +60,24 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
     return state;
   }
   try {
+    await t.test('batched Okey matching skips live-lease closed rooms without changing candidate order', async () => {
+      const namespace = 'test-okey-scan', base = `artifacts/${namespace}`;
+      const act = (uid, input, code = 'OTHER1') => executeRoomAction(db, namespace, uid, input, clock, () => code, { okeyEnabled: true });
+      await act('scan-host', request('okey.create', { nickname: 'Scan', isPublic: true, sessionId }), 'GOOD12');
+      const q = db.doc(`${base}/public/data/okeyLobby/queue`), valid = (await q.get()).data().entries;
+      const stale = [];
+      for (let i = 0; i < 9; i++) {
+        const roomId = `A${String(i).padStart(5, '0')}`, host = `stale-${i}`;
+        await db.doc(`${base}/serverOkeyRooms/${roomId}`).set({ status: 'closed', host, isPublic: true, players: [host] });
+        await db.doc(`${base}/serverRoomPresence/${roomId}`).set({ connections: { [host]: { [sessionId]: clock } } });
+        stale.push({ roomId, host, updatedAt: clock });
+      }
+      await q.set({ entries: [...stale, ...valid] });
+      const result = await act('scan-guest', request('okey.match', { nickname: 'Scan Guest', sessionId }));
+      assert.equal(result.roomId, 'GOOD12');
+      assert.equal((await db.doc(`${base}/serverOkeyRooms/GOOD12`).get()).data().players.length, 2);
+      assert.deepEqual((await q.get()).data().entries.map(e => e.roomId), ['GOOD12']);
+    });
     await t.test('healthy heartbeats renew only leases and live waiting rooms survive without queue rewrites', async () => {
       const isolated = 'test-okey-quiet', base = `artifacts/${isolated}`;
       const act = (uid, input, code) => executeRoomAction(db, isolated, uid, input, clock, () => code, { okeyEnabled: true });

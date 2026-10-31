@@ -7,6 +7,7 @@ import { createBotPlayers } from '../src/games/okey101/botPlayers.js';
 import { buildSeatSwapUpdate } from '../src/games/okey101/gameLogic.js';
 import { TURN_DURATION_MS } from '../src/games/okey101/tiles.js';
 import { personalHand } from '../src/games/okey101/personalLayout.js';
+import { scanMatchQueue } from './match-queue.js';
 
 const live = (at, now) => freshServerTime(at, now, 60_000);
 const prune = (connections, now) => Object.fromEntries(Object.entries(connections ?? {}).map(([uid, sessions]) =>
@@ -107,13 +108,17 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
     data = (okeySnapshot ?? snapshots.shift()).data();
     requireAction(data, 503, 'service_unavailable');
   }
-  if (matchAction) for (const entry of entries) {
-    const [saved, presence] = await tx.getAll(secretRef(entry.roomId), presenceRef(entry.roomId));
+  if (matchAction) {
+    const scanned = await scanMatchQueue(tx, entries,
+      entry => [secretRef(entry.roomId), presenceRef(entry.roomId)], (_entry, [saved, presence]) => {
     const candidate = saved.data(), sessions = prune(presence.data()?.connections, now);
     if (candidate?.status === 'waiting' && candidate.isPublic && candidate.players.length < 4 && connected(sessions, candidate.host)) {
-      id = entry.roomId; data = candidate; connections = sessions; break;
+      return { data: candidate, connections: sessions };
     }
-    entries = entries.filter(item => item.roomId !== entry.roomId);
+    return null;
+    });
+    entries = scanned.entries;
+    if (scanned.match) { id = scanned.match.entry.roomId; ({ data, connections } = scanned.match.value); }
   }
   let creating = false;
   if (creatingAction || (matchAction && !id)) {

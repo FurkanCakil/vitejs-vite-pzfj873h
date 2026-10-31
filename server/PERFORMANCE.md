@@ -136,6 +136,15 @@ the preview never predicts score/winner/turn and clears on rejection or a change
 authoritative version. Private-layout rules grant only the matching current
 member a single-document read; listing and all client writes remain denied.
 
+## Match scanning (31 October 2026)
+
+All seven games keep a single atomic bounded queue and its original order. The
+first candidate still reads only its two documents. After an invalid first
+candidate, reads cover up to five candidates per batch. Thirty invalid candidates
+now require at most seven candidate-read stages instead of thirty, still at most
+sixty candidate documents. A near-front match may prefetch unused candidates;
+this limited extra read cost avoids unbounded parallel reads or reordered seats.
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid

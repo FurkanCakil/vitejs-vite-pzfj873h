@@ -9,6 +9,7 @@ import { freshTavla, rollTavla, resetTavlaOpening, moveTavla, undoTavla, cubeTav
 import { freshBattle, validateFleet, applyBattleShot } from './games/battleship.js';
 import { validateAction } from './room-schema.js';
 import { executeOkeyTransaction } from './okey-rooms.js';
+import { scanMatchQueue } from './match-queue.js';
 
 export const CONNECTION_TTL = 60_000;
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -138,16 +139,17 @@ export async function executeRoomAction(db, projectId, uid, input, now = Date.no
     if (matchAction) {
       // A single bounded queue document serializes simultaneous match requests;
       // two users cannot both miss an empty query and create separate rooms.
-      for (const entry of entries) {
-        const [saved, presence] = await tx.getAll(roomRef(entry.roomId), presenceRef(entry.roomId));
+      const scanned = await scanMatchQueue(tx, entries,
+        entry => [roomRef(entry.roomId), presenceRef(entry.roomId)], (_entry, [saved, presence]) => {
         const room = saved.data();
         const sessions = pruneConnections(presence.data()?.connections, now);
         if (room?.gameType === game && room.status === 'waiting' && room.isPublic && room.players?.length === 1 && connected(sessions, room.host)) {
-          if (room.host === uid) { id = entry.roomId; data = room; connections = sessions; break; }
-          id = entry.roomId; data = room; connections = sessions; break;
+          return { data: room, connections: sessions };
         }
-        entries = entries.filter(item => item.roomId !== entry.roomId);
-      }
+        return null;
+      });
+      entries = scanned.entries;
+      if (scanned.match) { id = scanned.match.entry.roomId; ({ data, connections } = scanned.match.value); }
     }
     if (createAction || (matchAction && !id)) {
       id = candidateCode;

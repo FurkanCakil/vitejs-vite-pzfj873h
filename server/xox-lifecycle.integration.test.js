@@ -27,6 +27,24 @@ test('XOX lifecycle on Firestore emulator', { skip: !process.env.FIRESTORE_EMULA
   const join = (uid, roomId, time = now, tab = sessionId) => run(uid, action('room.join', { roomId, nickname: uid, sessionId: tab }), time);
   const rejects = (promise, code) => assert.rejects(promise, error => error.code === code);
   try {
+    await t.test('a stale multi-batch prefix cannot hide the first live waiting room', async () => {
+      const namespace = 'test-xox-scan', base = `artifacts/${namespace}`;
+      const act = (uid, input, code = 'OTHER1') => executeRoomAction(db, namespace, uid, input, now, () => code);
+      await act('scan-host', action('room.create', { nickname: 'Scan', isPublic: true, sessionId }), 'GOOD12');
+      const q = db.doc(`${base}/public/data/xoxLobby/queue`), valid = (await q.get()).data().entries;
+      const stale = [];
+      for (let i = 0; i < 9; i++) {
+        const roomId = `A${String(i).padStart(5, '0')}`, host = `stale-${i}`;
+        await db.doc(`${base}/public/data/roomsV2/${roomId}`).set({ gameType: 'xox', status: 'closed', host, isPublic: true, players: [host] });
+        await db.doc(`${base}/serverRoomPresence/${roomId}`).set({ connections: { [host]: { [sessionId]: now } } });
+        stale.push({ roomId, host, updatedAt: now });
+      }
+      await q.set({ entries: [...stale, ...valid] });
+      const result = await act('scan-guest', action('room.match', { nickname: 'Scan Guest', sessionId }));
+      assert.equal(result.roomId, 'GOOD12');
+      assert.equal((await db.doc(`${base}/public/data/roomsV2/GOOD12`).get()).data().players.length, 2);
+      assert.deepEqual((await q.get()).data().entries, []);
+    });
     await t.test('create retry is idempotent and collisions never overwrite rooms', async () => {
       const request = action('room.create', { nickname: 'Create', isPublic: false, sessionId });
       const first = await run('creator', request, now, 'CRTE12');
