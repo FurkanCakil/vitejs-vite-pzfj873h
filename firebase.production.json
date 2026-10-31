@@ -1,0 +1,6 @@
+{
+  "firestore": {
+    "rules": "firestore.rollout.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

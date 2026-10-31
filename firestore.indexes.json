@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "serverOkeyRooms", "fieldPath": "racks", "indexes": [] },
+    { "collectionGroup": "serverOkeyRooms", "fieldPath": "drawPile", "indexes": [] },
+    { "collectionGroup": "serverOkeyRooms", "fieldPath": "_history", "indexes": [] }
+  ]
+}

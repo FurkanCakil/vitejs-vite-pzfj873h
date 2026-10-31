@@ -145,6 +145,29 @@ now require at most seven candidate-read stages instead of thirty, still at most
 sixty candidate documents. A near-front match may prefetch unused candidates;
 this limited extra read cost avoids unbounded parallel reads or reordered seats.
 
+## Narrow index exemptions (31 October 2026)
+
+Before this rollout, the production Firebase console showed no manual indexes
+and no automatic exemptions. Collection-scope ascending, descending and array
+indexes were enabled; collection-group indexes were disabled. Only the large
+`serverOkeyRooms.racks`, `drawPile` and `_history` fields are exempted. Their
+documents are accessed by ID, never by field queries. Map descendants inherit
+the exemption; public room, lobby, presence and player-layout indexes retain
+their defaults. Future queries on these fields need explicit index review.
+
+`firestore.indexes.json` records this exact configuration, with an explicit
+`firebase.production.json` for Firestore deploys. Vercel does not deploy Firebase
+indexes or rules. The index-only CLI equivalent is `firebase deploy --only
+firestore:indexes --project oyun-odasi-8ecee --config firebase.production.json`;
+inspect current console settings before a future deployment to preserve any
+subsequently added indexes. This rollout uses the authenticated Firebase console.
+
+Rollback requires restoring automatic indexing for these three fields in the
+console (remove only these exemptions), in addition to reverting the commit.
+A Vercel rollback alone cannot revert Firestore settings. No data is deleted;
+restored indexes can take time to rebuild. See [Firebase index best practices](https://firebase.google.com/docs/firestore/best-practices#indexes)
+and [map-field inheritance](https://firebase.google.com/docs/firestore/query-data/index-overview#single-field_index_exemptions).
+
 ## Region observation (30 October 2026)
 
 Vercel Functions settings selected `iad1` (Washington, D.C., USA) with Fluid
