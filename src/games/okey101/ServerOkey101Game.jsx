@@ -8,6 +8,7 @@ import { gamePerformance } from '../../utils/gamePerformance.js';
 import { useGamePerformance } from '../../hooks/useGamePerformance.js';
 import { personalHand, previewDiscard } from './personalLayout.js';
 import { pruneGroups } from './tiles.js';
+import { playOkeySound } from '../../utils/okeySound.js';
 
 export default function ServerOkey101Game({ roomData, roomCode, user, db, appId, leaveRoom, sendAction }) {
   const [own, setOwn] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -67,6 +68,9 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
     if (moving) {
       if (moveLock.current) return Promise.resolve({ success: false });
       moveLock.current = true;
+      // A quiet local draw acknowledgement; the existing discard preview
+      // already plays its drop sound, so do not double it.
+      if (type === 'okey.draw') playOkeySound('tile');
       setBusy(true);
       const data = latest.current.roomData;
       setPendingMove({ type, tileId: fields.tileId, roundId: data.roundId, playVersion: data.playVersion });
@@ -137,10 +141,9 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
   const confirmed = coherent ? merged : confirmedView.current?.roundId === roomData.roundId ? confirmedView.current : null;
   const display = previewDiscard(confirmed, user.uid, pendingMove?.type === 'okey.discard' ? pendingMove : null);
   return <>
-    {pendingMove && <div role="status" className="flex items-center gap-2 text-sm text-amber-200"><Loader2 className="w-4 h-4 animate-spin" />{pendingMove.type === 'okey.draw' ? 'Taş çekiliyor…' : 'Taş gönderiliyor…'}</div>}
     {error && <div role="alert" className="w-full max-w-3xl border border-amber-500/50 bg-amber-950/90 text-amber-100 rounded-xl p-3 text-sm">{error}</div>}
     {!display
       ? <div className="flex items-center gap-2 p-8 text-slate-300"><Loader2 className="w-5 h-5 animate-spin" /> Elin güncelleniyor…</div>
-      : <Okey101Game roomData={display} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={send} serverBusy={busy || !coherent} />}
+      : <Okey101Game roomData={display} roomCode={roomCode} user={user} db={db} appId={appId} leaveRoom={leaveRoom} sendAction={send} serverBusy={busy || !coherent} serverPendingMove={pendingMove?.type ?? null} />}
   </>;
 }

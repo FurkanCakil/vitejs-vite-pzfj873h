@@ -12,6 +12,7 @@ import useDrawDrag from './useDrawDrag.js';
 import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 import { serverNow } from '../../utils/serverClock.js';
+import { turnInstruction } from './turnFeedback.js';
 import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, TURN_TIMEOUT_GRACE_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
@@ -157,7 +158,7 @@ function buildDealSetup(racks, groups, okey, rules, isBotSeat) {
 // dizilim de doğru olmalı), Çift Açma (5 çift, 101 aranmaksızın), ve İşleme
 // (açık perlere tek taş ekleme/tacking). 3. Faz'ın tur/atma/ceza mimarisi
 // bozulmadan üzerine inşa edildi.
-export default function Okey101Game({ roomData, roomCode, user, db, appId, leaveRoom, sendAction = null, serverBusy = false }) {
+export default function Okey101Game({ roomData, roomCode, user, db, appId, leaveRoom, sendAction = null, serverBusy = false, serverPendingMove = null }) {
   const isHost = roomData.host === user.uid;
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
 
@@ -2539,8 +2540,11 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   // Tur bandı: masanın ORTASINDAN alınıp en üstteki oyuncunun üstüne taşındı
   // (bkz. OpponentStrip#turnBanner) — böylece ortada açılan perlere yer kalır.
   const turnBanner = setupPhase || view.roundEnded ? null : (
-    <div className={`flex items-center justify-center gap-2 text-center font-bold rounded-lg ${isCompact ? 'text-[11px] px-2 py-0.5' : 'text-xs sm:text-base px-3 py-1.5'} ${isMyTurn ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400'}`}>
-      <span>{isMyTurn ? (mustDraw ? 'Sıra Sende! Önce bir taş çek.' : 'Şimdi ıstakandan bir taş at.') : `${turnPlayerName} oynuyor...`}</span>
+    <div className={`flex items-center justify-center gap-2 text-center font-bold rounded-lg border ${isCompact ? 'text-[11px] px-2 py-0.5 min-h-7' : 'text-xs sm:text-base px-3 py-1.5 min-h-9'} ${isMyTurn ? 'text-amber-300 bg-amber-500/10 border-amber-400/40' : 'text-slate-300 border-transparent'}`}>
+      <span role="status" aria-live="polite" aria-atomic="true" className="flex items-center justify-center gap-1.5">
+        {serverPendingMove && <Loader2 aria-hidden="true" className="w-3.5 h-3.5 shrink-0 animate-spin motion-reduce:animate-none" />}
+        {turnInstruction({ pendingType: serverPendingMove, busy: serverBusy, isPlayer, isMyTurn, hasDrawn, turnPlayerName })}
+      </span>
       {/* bkz. TurnCountdown: sayaç kendi bileşeninde tıklar, masayı yeniden çizmez. */}
       <TurnCountdown deadline={roomData.turnDeadline} active={!setupPhase} warn={isMyTurn} />
     </div>

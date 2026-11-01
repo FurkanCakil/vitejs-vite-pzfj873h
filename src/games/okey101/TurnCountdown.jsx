@@ -51,8 +51,8 @@ export default function TurnCountdown({ deadline, active, warn = false }) {
   if (remaining === null) return null;
 
   return (
-    <span className={`font-mono text-[10px] sm:text-xs px-2 py-0.5 rounded-full border tabular-nums ${remaining <= 10 ? 'text-red-300 border-red-500/50 bg-red-500/10' : 'text-slate-400 border-slate-600 bg-slate-900/50'}`}>
-      {remaining}s
+    <span aria-label={`Kalan süre: ${remaining} saniye`} className={`font-mono font-bold shrink-0 text-xs sm:text-sm px-2 py-0.5 rounded-full border tabular-nums ${remaining <= 10 ? 'text-red-200 border-red-500/60 bg-red-500/15' : warn ? 'text-amber-200 border-amber-400/50 bg-amber-500/10' : 'text-slate-300 border-slate-600 bg-slate-900/50'}`}>
+      {remaining} sn
     </span>
   );
 }
