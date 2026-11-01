@@ -1,8 +1,8 @@
 # Isolated Frankfurt Preview
 
-This branch is preparation only. Do not merge to main, promote a deployment,
-change Production environment variables, or modify the old Firebase project
-without the user's separate cutover approval.
+The user explicitly approved cutover on 1 November 2026. The Preview preparation
+below is historical; the authorized Production configuration is described at the
+end of this file. The old Firebase project must still remain untouched.
 
 The new Spark project is `oyun-portali-avrupa`, default Firestore database in
 `europe-west3`. The branch's `vercel.json` selects `fra1`; Production keeps its
@@ -81,3 +81,42 @@ approval, authorize a Production identity only in the new Firebase project,
 set the new Production variables and perform a fresh Production build (QA entry
 excluded). The retained old Production deployment and original variables are the
 rollback target; a rollback must also restore `iad1` with the old database.
+
+## Authorized Production cutover
+
+Production uses its own keyless service account `oyun-portali-production` in the
+new project, with the default-DB-only document role. The `vercel-production`
+provider in the Europe pool accepts only the exact Vercel project + Production
+environment/subject. Preview cannot impersonate this account. No private key is
+created. `gcp-europe-production-access-plan.json` records the non-secret access
+configuration.
+
+The original six public `VITE_FIREBASE_*` values are legacy immutable Vercel
+Secret entries shared with general Preview. Vercel rejects edits to public-prefix
+Secret entries and does not permit changing their type. They are preserved for
+rollback, without deletion or changes to other branches. Production instead sets
+six public `EUROPE_FIREBASE_*` Config values and
+`FIREBASE_CLIENT_TARGET=oyun-portali-avrupa`. `europeClientOverrides` requires the
+new client/server project IDs to match, then Vite compiles these values into the
+normal client configuration. The server session lookup uses the same selected
+API key. Incomplete/mismatched configuration stops the build. No admin credential
+is included in the client. The five `GCP_*` Production values select the new
+Production service account/provider. Game flags remain enabled as before.
+
+Build a fresh Production artifact on main with `fra1`; do not promote Preview.
+The QA UI is excluded from Production. Live validation uses the explicit bounded
+Node commands `node scripts/verify-europe-production.mjs --verify-europe-production`
+and `node scripts/verify-europe-production.mjs --measure-europe-production`.
+These are pinned to the new project and canonical live origin; only new private
+test rooms are created. Reports are ignored `.local` files. All seven games,
+replay, real SDK reconnect and Okey privacy/draw/discard are checked. The bounded
+latency scenario is unchanged; report Node transport accurately.
+
+Rollback: route the custom domains back to Ready `0f982fe` / deployment
+`8ByUXWdzPQksitcYQBq7jf5it169`, restore the five original `GCP_*` values from the
+ignored `production-env-rollback.local`, clear `FIREBASE_CLIENT_TARGET`, and restore
+`iad1` in source (revert the transition commits without rewriting main history).
+Original client values remain intact. Retain both Firebase projects. New Europe
+rooms/scores are not automatically copied back. Old open tabs/deployment URLs may
+still access the preserved old project; the no-old-write verification concerns
+the newly built Production and its test requests, not all historical clients.

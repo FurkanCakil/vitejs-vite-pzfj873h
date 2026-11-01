@@ -13,10 +13,13 @@ const assert = Object.assign(check, {
   deepEqual: (a,b) => check(JSON.stringify(canonical(a)) === JSON.stringify(canonical(b)), 'state_check_failed'),
   rejects: async (work,predicate) => { let caught; try { await work; } catch(error) { caught=error; } check(caught && predicate(caught), 'expected_rejection_missing'); },
 });
-function guard({base, projectId, config}) {
+function guard({base, projectId, config, mode}) {
   const url = new URL(base);
+  const allowedHost = mode === 'europe-production'
+    ? url.hostname === 'www.xn--oyunportal-6ub.com.tr'
+    : /^[a-z0-9-]+\.vercel\.app$/.test(url.hostname);
   if (projectId !== 'oyun-portali-avrupa' || config.projectId !== projectId
-    || url.protocol !== 'https:' || !/^[a-z0-9-]+\.vercel\.app$/.test(url.hostname)
+    || url.protocol !== 'https:' || !allowedHost
     || base !== url.origin) throw Error('Isolated Europe Preview required');
 }
 export async function runEuropeAcceptance(target, progress = () => {}) {

@@ -1,0 +1,24 @@
+{
+  "status": "production-identity-prepared-cutover-authorized",
+  "verifiedAt": "2026-11-01",
+  "verificationTimeZone": "Europe/Istanbul",
+  "projectId": "oyun-portali-avrupa",
+  "projectNumber": "497390850636",
+  "databaseId": "(default)",
+  "databaseLocation": "europe-west3",
+  "poolId": "oyun-portali-eu-preview",
+  "providerId": "vercel-production",
+  "issuer": "https://oidc.vercel.com/yap-ai",
+  "audience": "https://iam.googleapis.com/projects/497390850636/locations/global/workloadIdentityPools/oyun-portali-eu-preview/providers/vercel-production",
+  "attributeMapping": {
+    "google.subject": "assertion.sub"
+  },
+  "attributeCondition": "assertion.project_id == 'prj_kJxTPQxJkEQsyretAt1moHkeGumz' && assertion.environment == 'production' && assertion.sub == 'owner:yap-ai:project:vitejs-vite-pzfj873h-1hy2:environment:production'",
+  "serviceAccount": "oyun-portali-production@oyun-portali-avrupa.iam.gserviceaccount.com",
+  "serviceAccountRole": "roles/datastore.user",
+  "databaseCondition": "resource.name == 'projects/oyun-portali-avrupa/databases/(default)'",
+  "impersonationRole": "roles/iam.workloadIdentityUser",
+  "principal": "principal://iam.googleapis.com/projects/497390850636/locations/global/workloadIdentityPools/oyun-portali-eu-preview/subject/owner:yap-ai:project:vitejs-vite-pzfj873h-1hy2:environment:production",
+  "keysCreated": false,
+  "productionAccessGranted": true
+}

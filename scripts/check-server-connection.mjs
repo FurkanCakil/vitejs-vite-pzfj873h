@@ -1,12 +1,14 @@
 import { createProductionFirestore, isEuropePreview } from '../server/firebase.js';
+import { sessionApiKey, europeClientOverrides } from '../server/firebase-client-config.js';
 
 // During rollout, verify the production identity without enabling any game
 // endpoint or changing game data. Only the isolated Europe Preview opts in.
 if ((process.env.VERCEL_ENV === 'production' || isEuropePreview()) && process.env.GCP_PROJECT_ID) {
   let db;
   try {
+    europeClientOverrides();
     if (process.env.AUTH_SESSION_CHECK_ENABLED === 'true'
-      && (typeof process.env.VITE_FIREBASE_API_KEY !== 'string' || !/^AIza[A-Za-z0-9_-]{20,}$/.test(process.env.VITE_FIREBASE_API_KEY))) {
+      && (typeof sessionApiKey() !== 'string' || !/^AIza[A-Za-z0-9_-]{20,}$/.test(sessionApiKey()))) {
       throw new Error('Session account check configuration is missing');
     }
     const connection = createProductionFirestore();
