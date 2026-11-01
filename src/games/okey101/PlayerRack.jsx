@@ -1164,7 +1164,7 @@ export default function PlayerRack({
           ${canDiscard ? (hoverDiscard ? 'border-red-400 bg-red-500/30 scale-110' : 'border-amber-400 bg-amber-400/10 animate-pulse') : 'border-slate-600/70 bg-slate-900/40'}`}
       >
         {lastDiscardTile
-          ? <Tile tile={lastDiscardTile} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canDiscard} />
+          ? <div key={lastDiscardTile.id} className="okey-discard-arrive"><Tile tile={lastDiscardTile} width={sideTileW} okeyInfo={okeyInfo} dimmed={!canDiscard} /></div>
           : canDiscard
             ? <span className="text-[8px] font-bold text-amber-300/90 text-center leading-tight px-0.5">AT</span>
             : null}

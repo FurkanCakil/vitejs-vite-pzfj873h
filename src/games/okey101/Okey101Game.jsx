@@ -13,6 +13,7 @@ import useViewport from '../../hooks/useViewport.js';
 import { playOkeySound } from '../../utils/okeySound.js';
 import { serverNow } from '../../utils/serverClock.js';
 import { turnInstruction } from './turnFeedback.js';
+import './motion.css';
 import { dealTiles, SETUP_DURATION_MS, TURN_DURATION_MS, TURN_TIMEOUT_GRACE_MS, computeOkeyInfo, isOkeyTile, effectiveTile, mergeRackLayout, pruneGroups, COLOR_LABELS } from './tiles.js';
 import { isBotUid } from './botPlayers.js';
 import { buildSeriesArrangement, findOkeyTileIds } from './assist.js';
@@ -2551,7 +2552,7 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
   );
 
   return (
-    <div className={`w-full flex flex-col items-center relative ${isCompact ? 'gap-1 h-[100dvh] max-h-[100dvh] overflow-hidden' : 'gap-2 sm:gap-3'} ${isFullscreenView ? 'max-w-[1500px]' : 'max-w-6xl'}`}>
+    <div className={`okey-table w-full flex flex-col items-center relative ${isCompact ? 'gap-1 h-[100dvh] max-h-[100dvh] overflow-hidden' : 'gap-2 sm:gap-3'} ${isFullscreenView ? 'max-w-[1500px]' : 'max-w-6xl'}`}>
       {toast && (
         <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[5000] text-white px-4 py-2.5 sm:px-6 sm:py-3 rounded-xl shadow-2xl font-bold border text-center text-xs sm:text-sm w-[92%] max-w-sm ${toastColors[toast.tone] || toastColors.red}`}>
           {toast.msg}
@@ -2629,11 +2630,21 @@ export default function Okey101Game({ roomData, roomCode, user, db, appId, leave
         <div className={`flex items-center flex-wrap justify-center ${isCompact ? 'gap-3' : 'gap-3 sm:gap-8'}`}>
           <div
             {...pileDrag.handlers}
+            role="button"
+            tabIndex={mustDraw ? 0 : -1}
+            aria-label={serverPendingMove === 'okey.draw' ? 'Taş çekiliyor' : 'Desteden taş çek'}
+            aria-disabled={!mustDraw}
+            aria-busy={serverPendingMove === 'okey.draw'}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              if (mustDraw && !event.repeat) performDraw('pile', null);
+            }}
             title={mustDraw ? 'Desteden çek (tıkla ya da ıstakaya sürükle)' : undefined}
-            className={`flex items-center bg-slate-900/70 border-2 rounded-xl transition-colors touch-none select-none ${isCompact ? 'gap-1.5 px-2 py-1.5' : 'gap-2 sm:gap-3 px-3 py-2.5 sm:px-5 sm:py-3'} ${mustDraw ? 'cursor-pointer border-amber-400 ring-4 ring-amber-400/40 animate-pulse' : 'border-slate-700 opacity-80'}`}
+            className={`flex items-center bg-slate-900/70 border-2 rounded-xl transition-colors touch-none select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-300 ${serverPendingMove === 'okey.draw' ? 'okey-draw-pending' : ''} ${isCompact ? 'gap-1.5 px-2 py-1.5' : 'gap-2 sm:gap-3 px-3 py-2.5 sm:px-5 sm:py-3'} ${mustDraw ? 'cursor-pointer border-amber-400 ring-4 ring-amber-400/40 animate-pulse' : 'border-slate-700 opacity-80'}`}
           >
             <span className={`text-slate-400 font-bold uppercase tracking-widest ${isCompact ? 'text-[9px]' : 'text-[10px] sm:text-xs'}`}>Deste</span>
-            <TileBack size={isCompact ? 'small' : 'normal'} />
+            <TileBack className="okey-deck-back" size={isCompact ? 'small' : 'normal'} />
             <span className={`font-mono font-bold text-slate-200 ${isCompact ? 'text-xs' : 'text-sm sm:text-lg'}`}>{view.drawPile?.length ?? 0}</span>
           </div>
 

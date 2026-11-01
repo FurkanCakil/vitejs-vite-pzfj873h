@@ -84,7 +84,7 @@ function DiscardSlot({ tile, okeyInfo, compact }) {
       style={{ width: `${slotW}px`, height: `${slotH}px` }}
       className="rounded-lg border-2 border-dashed border-slate-600/70 bg-slate-900/40 flex items-center justify-center shrink-0"
     >
-      {tile && <Tile tile={tile} width={tileW} okeyInfo={okeyInfo} />}
+      {tile && <div key={tile.id} className="okey-discard-arrive"><Tile tile={tile} width={tileW} okeyInfo={okeyInfo} /></div>}
     </div>
   );
 }
