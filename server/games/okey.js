@@ -19,6 +19,7 @@ import {
 
 // The room service transactionally persists state, projections and receipts;
 // the Okey route remains disabled unless its separate rollout flag is enabled.
+export const BOT_PAUSE_MS = 900;
 const tileId = id => typeof id === 'string' && /^T(?:[0-9]|[1-9][0-9]|10[0-5])$/.test(id);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -133,7 +134,7 @@ export function dealOkeyRound(room, now = Date.now(), starter = null) {
     roundStartScores: { ...data.scores }, setupPhase,
     setupEndsAt: setupPhase ? now + SETUP_DURATION_MS : null,
     turnDeadline: now + (setupPhase ? SETUP_DURATION_MS : 0) + TURN_DURATION_MS,
-    botReadyAt: now + (setupPhase ? SETUP_DURATION_MS : 0) + 2000,
+    botReadyAt: now + (setupPhase ? SETUP_DURATION_MS : 0) + BOT_PAUSE_MS,
     turn: starter, starterUid: starter, hasDrawnThisTurn: true,
     sideTake: null, forcedPileDraw: false, roundEnded: false, roundResult: null,
     centerDiscard: null, openedBeforeCurrentTurn: false, tackHint: null,
@@ -210,7 +211,7 @@ function discard(data, uid, id, now) {
     data.turn = getNextTurnUid(data.players, uid); data.turnNumber++;
     data.hasDrawnThisTurn = false; data.sideTake = null; data.forcedPileDraw = false;
     data.openedBeforeCurrentTurn = !!data.hasOpened[data.turn];
-    data.turnDeadline = now + TURN_DURATION_MS; data.botReadyAt = now + 2000;
+    data.turnDeadline = now + TURN_DURATION_MS; data.botReadyAt = now + BOT_PAUSE_MS;
     data.tackHint = spots.length ? { tileId: id, spots, expiresAt: now + 2800 } : null;
   }
   return { discardedOkey, discardedTackable: !!spots.length };

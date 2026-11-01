@@ -3,7 +3,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { Loader2 } from 'lucide-react';
 import { gameErrorMessage } from '../../utils/gameApi.js';
 import Okey101Game from './Okey101Game.jsx';
-import { okeyAutoAction } from './okeyTiming.js';
+import { startOkeyAutoAdvance } from './okeyAutoAdvance.js';
 import { gamePerformance } from '../../utils/gamePerformance.js';
 import { useGamePerformance } from '../../hooks/useGamePerformance.js';
 import { personalHand, previewDiscard } from './personalLayout.js';
@@ -14,7 +14,7 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
   const [arrangement, setArrangement] = useState(null), [pendingMove, setPendingMove] = useState(null);
   const moveLock = useRef(false);
   const latest = useRef({ roomData, own, sendAction }); latest.current = { roomData, own, sendAction };
-  const chain = useRef(Promise.resolve()), inFlight = useRef(false), stopped = useRef(false), waiters = useRef(new Set());
+  const chain = useRef(Promise.resolve()), stopped = useRef(false), waiters = useRef(new Set()), autoAdvance = useRef(null);
   const confirmedView = useRef(null);
   const isPlayer = roomData.players.includes(user.uid);
   const coherent = !roomData.hasDealt || !isPlayer || (own?.roundId === roomData.roundId
@@ -121,15 +121,11 @@ export default function ServerOkey101Game({ roomData, roomCode, user, db, appId,
   }, []);
   useEffect(() => {
     if (!isPlayer) return undefined;
-    const advance = () => {
-      const data = latest.current.roomData;
-      if (stopped.current || inFlight.current || document.visibilityState === 'hidden') return;
-      const type = okeyAutoAction(data, user.uid);
-      if (type) { inFlight.current = true; send(type, {}, true).finally(() => { inFlight.current = false; }); }
-    };
-    advance(); const timer = setInterval(advance, 1000);
-    return () => clearInterval(timer);
+    const scheduler = startOkeyAutoAdvance({ read: () => latest.current.roomData, uid: user.uid, send: type => send(type, {}, true) });
+    autoAdvance.current = scheduler;
+    return () => { scheduler.stop(); autoAdvance.current = null; };
   }, [isPlayer, user.uid, send]);
+  useEffect(() => { autoAdvance.current?.notify(); }, [roomData.version]);
   const arranged = personalHand(own, arrangement);
   const merged = { ...roomData,
     // Placeholder deck slots carry counts only; no tile identities are known.

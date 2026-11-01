@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTileSet, TURN_DURATION_MS, TURN_TIMEOUT_GRACE_MS, SETUP_DURATION_MS } from '../../src/games/okey101/tiles.js';
-import { applyOkeyAction, dealOkeyRound, publicOkeyState, privateOkeyView, validateOkeyCommand } from './okey.js';
+import { applyOkeyAction, dealOkeyRound, publicOkeyState, privateOkeyView, validateOkeyCommand, BOT_PAUSE_MS } from './okey.js';
 
 const now = 1_000_000;
 const players = ['a', 'b', 'c', 'd'];
@@ -41,6 +41,18 @@ function conservation(state) {
   for (const t of all) assert.deepEqual(t, canonical.get(t.id));
 }
 const series = (color, start, count = 3) => Array.from({ length: count }, (_, i) => tile(color, start + i));
+
+test('shorter bot pause still rejects early ticks and advances one conserved turn', () => {
+  const state = dealOkeyRound(room({ isBotPlayer: { b: true } }), now, 'b');
+  assert.equal(state.botReadyAt, now + BOT_PAUSE_MS);
+  fail('too_early', () => act(state, 'a', 'tick', {}, state.botReadyAt - 1));
+  const after = act(state, 'a', 'tick', {}, state.botReadyAt).state;
+  conservation(after);
+  assert.equal(after.turnNumber, state.turnNumber + 1);
+  assert.equal(after.turnDeadline, state.botReadyAt + TURN_DURATION_MS);
+  assert.equal(after.botReadyAt, state.botReadyAt + BOT_PAUSE_MS);
+  assert.equal(state.turn, 'b');
+});
 
 test('secure deals conserve all 106 canonical tiles and give only the starter 22', () => {
   const original = room(), before = structuredClone(original);

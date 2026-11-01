@@ -22,7 +22,10 @@ test('automatic start/tick preserve stagger, phase, spectator and round-end boun
   Object.assign(data, { status: 'playing', hasDealt: true, setupPhase: true, setupEndsAt: 5000 });
   assert.equal(okeyAutoAction(data, 'a', 5199), null); assert.equal(okeyAutoAction(data, 'a', 5200), 'okey.tick');
   Object.assign(data, { setupPhase: false, turn: 'bot', isBotPlayer: { bot: true }, botReadyAt: 6000 });
-  assert.equal(okeyAutoAction(data, 'a', 6200), 'okey.tick');
+  assert.equal(okeyAutoAction(data, 'a', 6079), null);
+  assert.equal(okeyAutoAction(data, 'a', 6080), 'okey.tick');
+  assert.equal(okeyAutoAction(data, 'b', 6199), null);
+  assert.equal(okeyAutoAction(data, 'b', 6200), 'okey.tick');
   Object.assign(data, { turn: 'a', turnDeadline: 7000 });
   assert.equal(okeyAutoAction(data, 'a', 7200 + TURN_TIMEOUT_GRACE_MS - 1), null);
   assert.equal(okeyAutoAction(data, 'a', 7200 + TURN_TIMEOUT_GRACE_MS), 'okey.tick');
