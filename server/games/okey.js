@@ -19,7 +19,7 @@ import {
 
 // The room service transactionally persists state, projections and receipts;
 // the Okey route remains disabled unless its separate rollout flag is enabled.
-export const BOT_PAUSE_MS = 900;
+export const BOT_PAUSE_MS = 1450;
 const tileId = id => typeof id === 'string' && /^T(?:[0-9]|[1-9][0-9]|10[0-5])$/.test(id);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
   && [Object.prototype, null].includes(Object.getPrototypeOf(value));
