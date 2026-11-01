@@ -136,6 +136,12 @@ test('Okey room lifecycle, atomic play and private hands', { skip: !process.env.
       await rejects(command('team-b', 'OKTM12', 'okey.team', { targetUid: 'team-c', team: 'B' }), 'invalid_team');
       await command('team-a', 'OKTM12', 'okey.bots');
       const state = await load('OKTM12'); assert.equal(state.teams.A.length, 2); assert.equal(state.teams.B.length, 2);
+      for (const [type, fields] of [
+        ['okey.rules', { rules: { ...rules, foldingEnabled: false } }],
+        ['okey.team', { targetUid: 'team-a', team: null }],
+        ['okey.distribute', {}],
+      ]) await rejects(command('team-a', 'OKTM12', type, fields), 'lobby_locked');
+      assert.deepEqual(await load('OKTM12'), state);
       clock += 3200; await command('team-a', 'OKTM12', 'okey.start');
       assert.deepEqual((await load('OKTM12')).players.slice(0, 4), [state.teams.A[0], state.teams.B[0], state.teams.A[1], state.teams.B[1]]);
     });

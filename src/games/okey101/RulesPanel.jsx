@@ -21,6 +21,7 @@ function SegmentedControl({ value, options, onChange, disabled }) {
           key={o.value}
           type="button"
           disabled={disabled}
+          aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${value === o.value ? 'bg-indigo-600 text-white' : 'text-slate-400'} ${disabled ? 'cursor-not-allowed' : 'hover:text-slate-100'}`}
         >
@@ -36,6 +37,7 @@ function ToggleSwitch({ checked, onChange, onLabel, offLabel, disabled }) {
     <button
       type="button"
       disabled={disabled}
+      aria-pressed={!!checked}
       onClick={() => onChange(!checked)}
       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold border transition-colors shrink-0 ${checked ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50' : 'bg-slate-900 text-slate-400 border-slate-600'} ${disabled ? 'cursor-not-allowed' : ''}`}
     >
@@ -51,7 +53,7 @@ function ToggleSwitch({ checked, onChange, onLabel, offLabel, disabled }) {
 // NOT: "yandan taş alma -> elini aç ya da geri koy" kuralı ve buna bağlı ceza
 // (çekilen taşın 10/20 katı) artık koşulsuz uygulanır, bu yüzden burada ayrı
 // bir "Ceza Kuralı" ayarı YOKTUR.
-export default function RulesPanel({ rules, isHost, onChange }) {
+export default function RulesPanel({ rules, isHost, locked = false, onChange }) {
   const showFoldToPartner = rules.gameType === '2v2' && rules.foldingEnabled;
 
   return (
@@ -68,7 +70,7 @@ export default function RulesPanel({ rules, isHost, onChange }) {
       <div className="divide-y divide-slate-700/60">
         <RuleRow label="Oyun Türü">
           <SegmentedControl
-            disabled={!isHost}
+            disabled={!isHost || locked}
             value={rules.gameType}
             options={[{ value: 'ffa', label: 'Tekli' }, { value: '2v2', label: 'Eşli' }]}
             onChange={(v) => onChange('gameType', v)}
@@ -82,16 +84,16 @@ export default function RulesPanel({ rules, isHost, onChange }) {
             yüzden el de OTOMATİK dizili geldiği için ayrıca hazırlık süresi
             verilmez (bkz. Okey101Game). */}
         <RuleRow label="Yardımlı Mod" hint="İşlek taş işareti, per toplamı, otomatik seri/çift dizme ve Okey'in kendiliğinden ters dönmesi. El otomatik dizili geldiği için hazırlık süresi verilmez.">
-          <ToggleSwitch disabled={!isHost} checked={!!rules.assistedEnabled} onChange={(v) => onChange('assistedEnabled', v)} onLabel="Yardımlı" offLabel="Yardımsız" />
+          <ToggleSwitch disabled={!isHost || locked} checked={!!rules.assistedEnabled} onChange={(v) => onChange('assistedEnabled', v)} onLabel="Yardımlı" offLabel="Yardımsız" />
         </RuleRow>
 
         <RuleRow label="Katlama Kuralı">
-          <ToggleSwitch disabled={!isHost} checked={rules.foldingEnabled} onChange={(v) => onChange('foldingEnabled', v)} onLabel="Katlamalı" offLabel="Katlamasız" />
+          <ToggleSwitch disabled={!isHost || locked} checked={rules.foldingEnabled} onChange={(v) => onChange('foldingEnabled', v)} onLabel="Katlamalı" offLabel="Katlamasız" />
         </RuleRow>
 
         {showFoldToPartner && (
           <RuleRow label="Eşe Katlama">
-            <ToggleSwitch disabled={!isHost} checked={rules.foldToPartnerEnabled} onChange={(v) => onChange('foldToPartnerEnabled', v)} onLabel="Var" offLabel="Yok" />
+            <ToggleSwitch disabled={!isHost || locked} checked={rules.foldToPartnerEnabled} onChange={(v) => onChange('foldToPartnerEnabled', v)} onLabel="Var" offLabel="Yok" />
           </RuleRow>
         )}
 

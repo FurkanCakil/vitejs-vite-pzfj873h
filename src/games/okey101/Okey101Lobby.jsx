@@ -7,6 +7,7 @@ import PlayerList from './PlayerList.jsx';
 import { createBotPlayers, isBotUid } from './botPlayers.js';
 import { playSound } from '../../utils/sound.js';
 import { countdownSeconds } from './okeyTiming.js';
+import { createLobbySettings } from './lobbySettings.js';
 
 export const MAX_PLAYERS = 4;
 const COUNTDOWN_MS = 3000;
@@ -16,8 +17,21 @@ const DEFAULT_RULES = { gameType: 'ffa', assistedEnabled: false, foldingEnabled:
 
 export default function Okey101Lobby({ roomData, roomCode, user, db, appId, sendAction = null }) {
   const isHost = roomData.host === user.uid;
-  const rules = roomData.rules || DEFAULT_RULES;
+  const confirmedRules = roomData.rules || DEFAULT_RULES;
   const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+  const [, redrawSettings] = useState(0);
+  const latestSettings = useRef(null);
+  latestSettings.current = { ...roomData, rules: confirmedRules,
+    send: (type, fields) => type === 'okey.rules' ? saveRules(fields.rules) : fillWithBots() };
+  const settingsRef = useRef(null);
+  if (!settingsRef.current) settingsRef.current = createLobbySettings({
+    read: () => latestSettings.current,
+    send: (type, fields) => latestSettings.current.send(type, fields),
+    onChange: () => redrawSettings(value => value + 1),
+  });
+  const settings = settingsRef.current;
+  const { rules, saving, locked, starting } = settings.view();
+  useEffect(() => { settings.resume(); return () => settings.stop(); }, [settings]);
 
   const players = (roomData.players || []).map((uid) => ({
     uid,
@@ -27,18 +41,15 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
   const emptySeats = Math.max(0, MAX_PLAYERS - players.length);
 
   // ---- Kural güncelleme (sadece host) ----
-  const updateRule = async (key, value) => {
-    if (!isHost) return;
-    const nextRules = { ...rules, [key]: value };
-    // Bağımlı kural: 2v2 + katlamalı değilse "eşe katlama" anlamsızlaşır, otomatik kapat.
-    if (key === 'gameType' && value !== '2v2') nextRules.foldToPartnerEnabled = false;
-    if (key === 'foldingEnabled' && !value) nextRules.foldToPartnerEnabled = false;
+  const updateRule = (key, value) => { if (isHost) settings.change(key, value); };
+  async function saveRules(nextRules) {
     if (sendAction) return sendAction('okey.rules', { rules: nextRules });
-    await updateDoc(roomRef, { rules: nextRules }).catch((err) => console.error("Okey101 yazma hatası:", err));
-  };
+    await updateDoc(roomRef, { rules: nextRules });
+  }
 
   // ---- Takım yönetimi (kendisi ya da host) ----
   const handleJoinTeam = async (targetUid, team) => {
+    if (settings.locked() || settings.view().saving) return;
     if (sendAction) return sendAction('okey.team', { targetUid, team });
     if (!(isHost || targetUid === user.uid)) return;
     await runTransaction(db, async (t) => {
@@ -52,6 +63,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
   };
 
   const handleLeaveTeam = async (targetUid) => {
+    if (settings.locked() || settings.view().saving) return;
     if (sendAction) return sendAction('okey.team', { targetUid, team: null });
     if (!(isHost || targetUid === user.uid)) return;
     await runTransaction(db, async (t) => {
@@ -64,6 +76,7 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
   };
 
   const handleRandomDistribute = async () => {
+    if (settings.locked() || settings.view().saving) return;
     if (sendAction) return sendAction('okey.distribute');
     if (!isHost) return;
     await runTransaction(db, async (t) => {
@@ -85,7 +98,8 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
   // giren aşağıdaki "geri sayım" efekti (players.length === MAX_PLAYERS) 3sn
   // sonra oyunu başlatır, böylece host'un ayrıca oyuncu atamasına gerek kalmaz
   // ama yine de kısa bir "Maç Başlıyor" geri sayımı görünür.
-  const handleFillWithBots = async () => {
+  const handleFillWithBots = () => { if (isHost) void settings.start(); };
+  async function fillWithBots() {
     if (sendAction) return sendAction('okey.bots');
     if (!isHost) return;
     await runTransaction(db, async (t) => {
@@ -116,8 +130,8 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
       }
 
       t.update(roomRef, update);
-    }).catch((err) => console.error("Okey101 yazma hatası:", err));
-  };
+    });
+  }
 
   // ---- Geri sayım: 4 koltuk dolunca başlat, altına düşünce iptal et (sadece host yazar) ----
   useEffect(() => {
@@ -187,21 +201,25 @@ export default function Okey101Lobby({ roomData, roomCode, user, db, appId, send
           <button
             type="button"
             onClick={handleFillWithBots}
-            disabled={emptySeats === 0}
+            disabled={emptySeats === 0 || locked}
             className="text-xs font-bold bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Kalanı Botlarla Doldur {emptySeats > 0 ? `(+${emptySeats})` : ''}
+            {starting ? 'Oyun hazırlanıyor…' : <>Kalanı Botlarla Doldur {emptySeats > 0 ? `(+${emptySeats})` : ''}</>}
           </button>
         )}
       </div>
 
-      <RulesPanel rules={rules} isHost={isHost} onChange={updateRule} />
+      <RulesPanel rules={rules} isHost={isHost} locked={locked} onChange={updateRule} />
+      <div role="status" aria-live="polite" className="text-xs text-slate-400 min-h-4">
+        {locked ? 'Oyun başlıyor; seçimler kilitlendi.' : saving ? 'Seçimler kaydediliyor…' : ''}
+      </div>
 
       {rules.gameType === '2v2' ? (
         <TeamSelection
           players={players}
           teams={roomData.teams || { A: [], B: [] }}
           isHost={isHost}
+          disabled={locked || saving}
           myUid={user.uid}
           hostUid={roomData.host}
           onJoinTeam={handleJoinTeam}

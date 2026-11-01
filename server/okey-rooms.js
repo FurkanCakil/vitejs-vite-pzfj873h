@@ -218,6 +218,7 @@ export async function executeOkeyTransaction({ tx, db, root, uid, action, now, c
     requireAction(connected(connections, uid), 409, 'player_disconnected');
     if (lobbyActions.has(action.type)) {
       requireAction(data.status === 'waiting' && !data.racks, 409, 'lobby_locked');
+      requireAction(!data.countdownStartedAt || action.type === 'okey.start', 409, 'lobby_locked');
       if (!['okey.team', 'okey.start'].includes(action.type)) requireAction(data.host === uid, 403, 'host_required');
       if (action.type === 'okey.rules') data.rules = action.rules;
       if (action.type === 'okey.team') {

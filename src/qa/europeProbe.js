@@ -92,6 +92,11 @@ try {
     const created = await send(a, game === 'xox' ? 'room.create' : `${game}.create`, {
       nickname: 'Europe QA', isPublic: false, sessionId: a.sessionId });
     const room = created.roomId, held = { room, members, closed: false }; rooms.push(held);
+    if (game === 'okey') {
+      const waiting = await read(a, room);
+      await send(a, 'okey.rules', { roomId: room, expectedVersion: waiting.version, rules: {
+        gameType: 'ffa', assistedEnabled: true, foldingEnabled: false, foldToPartnerEnabled: false } });
+    }
     for (const actor of members.slice(1)) await send(actor, 'room.join', { roomId: room, nickname: 'Europe QA', sessionId: actor.sessionId });
     let state = await read(a, room);
     const turnActor = value => members.find(actor => actor.user.uid === value.turn);
@@ -104,8 +109,6 @@ try {
       await denied(getDocFromServer(doc(a.db, `${root}/public/data/roomsV2/${room}/playerData/${b.user.uid}`)));
       await replay(turnActor(state), 'battleship.shot', { roomId: room, expectedVersion: state.version, row: 0, col: 0 });
     } else if (game === 'okey') {
-      await send(a, 'okey.rules', { roomId: room, expectedVersion: state.version, rules: {
-        gameType: 'ffa', assistedEnabled: true, foldingEnabled: false, foldToPartnerEnabled: false } });
       await wait(3500); state = await read(a, room);
       await send(a, 'okey.start', { roomId: room, expectedVersion: state.version });
       state = await read(a, room);
@@ -254,13 +257,13 @@ try {
   held[0].closed = true;
   const okey = await send(a, 'okey101', 'okey.create', { nickname: 'Perf A', isPublic: false, sessionId: a.sessionId });
   held.push({ id: okey.roomId, game: 'okey101', actors: [...actors] });
-  for (const [index, actor] of actors.slice(1).entries()) await send(actor, 'okey101', 'room.join', {
-    roomId: okey.roomId, nickname: `Perf ${index + 2}`, sessionId: actor.sessionId });
   let state = await read(a, okey.roomId);
   // An existing supported room option skips the intentional 25s preparation;
   // it does not change draw/discard validation. Report the mode explicitly.
   await send(a, 'okey101', 'okey.rules', { roomId: okey.roomId, expectedVersion: state.version,
     rules: { gameType: 'ffa', assistedEnabled: true, foldingEnabled: false, foldToPartnerEnabled: false } });
+  for (const [index, actor] of actors.slice(1).entries()) await send(actor, 'okey101', 'room.join', {
+    roomId: okey.roomId, nickname: `Perf ${index + 2}`, sessionId: actor.sessionId });
   await wait(3500); state = await read(a, okey.roomId);
   await send(a, 'okey101', 'okey.start', { roomId: okey.roomId, expectedVersion: state.version });
   let draws = 0, discards = 0;
